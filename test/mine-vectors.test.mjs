@@ -252,6 +252,9 @@ class FakeWorker extends EventEmitter {
     this.opts = opts;
     this.terminated = false;
     this.hashed = [];
+    // A real worker thread keeps the event loop alive until it ends. A silent fake must too,
+    // or Node 22 ends the test before the pool's (unref'd) timeout can fire.
+    if (opts.keepAlive) this.alive = setInterval(() => {}, 1 << 30);
     setImmediate(() => !this.terminated && this.emit("message", { type: "ready", ok: opts.ok ?? true, impl: opts.ok === false ? null : "hash-wasm" }));
   }
   postMessage(msg) {
@@ -266,7 +269,7 @@ class FakeWorker extends EventEmitter {
       }
     });
   }
-  terminate() { this.terminated = true; return Promise.resolve(0); }
+  terminate() { this.terminated = true; clearInterval(this.alive); return Promise.resolve(0); }
 }
 const pw = (i) => M.passwordOf(sha256(new Uint8Array([i])), M.nonceOf(BigInt(i)));
 
@@ -314,7 +317,7 @@ test("PowPool: a killed worker rejects its task with PowError (never a result) a
     spawn: () => {
       m += 1;
       if (m === 1) return new FakeWorker({ onPost: (msg, self) => { setImmediate(() => self.emit("error", new Error("boom"))); return "handled"; } });
-      if (m === 2) return new FakeWorker({ onPost: () => "handled" });
+      if (m === 2) return new FakeWorker({ keepAlive: true, onPost: () => "handled" });
       return new FakeWorker();
     },
   });

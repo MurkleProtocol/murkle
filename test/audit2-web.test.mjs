@@ -265,8 +265,22 @@ test("V2-22: two tabs sending at once never reserve the same notes", { timeout: 
   const storedSends = async () => (await keystore.unlockVault(JSON.parse(S.storage.getItem(VAULT)), PW)).data.history.filter((h) => h.kind === "send");
 
   // No Web Locks (Node): both tabs pick the same note and prove; the second to record is refused.
+  // Each tab waits at the proof until both have selected, so a slow machine cannot let one tab
+  // record before the other selects (it would then select around it, which is also safe).
+  let arrived = 0, release;
+  const bothSelected = new Promise((r) => (release = r));
+  for (const s of [a, b]) {
+    const transfer = s.wallet.transfer;
+    s.wallet.transfer = async (...args) => {
+      if (++arrived === 2) release();
+      await bothSelected;
+      return transfer.apply(s.wallet, args);
+    };
+  }
   const asset = a.asset("TAB");
   const race = await Promise.allSettled([a.send({ asset, amount: 120n, to, via: "copy" }), b.send({ asset, amount: 120n, to, via: "copy" })]);
+  delete a.wallet.transfer;
+  delete b.wallet.transfer;
   assert.deepEqual(race.map((r) => r.status).sort(), ["fulfilled", "rejected"]);
   const lost = race.find((r) => r.status === "rejected").reason;
   assert.equal(lost.code, "notes_taken", lost.message);
