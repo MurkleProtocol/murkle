@@ -18,6 +18,8 @@ import { randomBytes } from "node:crypto";
 import * as btc from "@scure/btc-signer";
 import { Indexer } from "../src/indexer.mjs";
 import { hex, unhex } from "../src/bytes.mjs";
+import { OP } from "../src/envelope.mjs";
+import { MAGIC, VERSION } from "../src/params.mjs";
 import { createApp } from "../server/indexer-server.mjs";
 import { Relayer, writeDurable } from "../server/relayer.mjs";
 import { FakeEsplora, fundAccount, newAccount, poolCoins } from "./fixtures/relay-harness.mjs";
@@ -77,13 +79,23 @@ async function fund(r, esplora, values) {
 }
 const isCarrier = (raw) => btc.Transaction.fromRaw(unhex(raw), { allowUnknownOutputs: true }).getOutput(0).script[0] === 0x6a;
 
-/** A queued item with a synthetic 471-byte envelope (carry() never decodes it), reserved from r.payer. */
+/**
+ * 471 random bytes behind a TRANSACT header. Fully random bytes would carry the MINE_SCRIPT op
+ * byte 1 time in 256, and the relayer would then refuse to build the item as a malformed claim.
+ */
+function transferBytes() {
+  const b = randomBytes(471);
+  b.set([...MAGIC, VERSION, OP.TRANSACT]);
+  return b;
+}
+
+/** A queued item with a synthetic 471-byte envelope (carry() never decodes a transfer's), reserved from r.payer. */
 function queue(r, idx, reservation = 658) {
   const id = randomBytes(16).toString("hex");
   r.books.reserve(id, r.payer.idHex, reservation);
   r.state.items[id] = {
     id, status: "queued", nullifiers: [hash32(), hash32()], anchor: idx.height, root: String(idx.roots.get(idx.height)),
-    mode: "block", acceptedHeight: idx.height, envelope: hex(randomBytes(471)), account: r.payer.idHex, reservation, attempts: 0,
+    mode: "block", acceptedHeight: idx.height, envelope: hex(transferBytes()), account: r.payer.idHex, reservation, attempts: 0,
   };
   return r.state.items[id];
 }
@@ -315,7 +327,7 @@ test("#16 coins are picked with the fee planCarrierTx charges: the change output
   const { outpoints: [band, big] } = await fund(R, fake, [3316, 25_000]);
   fake.fee = 5;
   await R.refreshCache();
-  const envelope = randomBytes(471);
+  const envelope = transferBytes();
   assert.equal(R.carrierFee(envelope, 5), 2990, "ceil(597.5) vB at 5 sat/vB");
   assert.equal(R.carrierFee(envelope, 1), 598);
 
