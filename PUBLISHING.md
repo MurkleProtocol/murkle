@@ -39,7 +39,7 @@ An email address or an https URL you will read, then two one-line edits:
 ## 4. Check the owner-only bits (OWNER)
 
 - `.prepublish-deny` (gitignored, never published) lists values that must never appear in a published file. It holds your own signet address as `prefix...suffix`; add any other address, name, email or host of yours, one per line.
-- `scripts/build-circuit.mjs` downloads the public Powers of Tau file from Google's bucket or, as a fallback, from a release in the GitHub repository `hilawe/dash-mno-verify` (an unrelated third party; the file is accepted only if both pinned hashes match). Confirm that account is not yours. Optionally add your own mirror later (step 7).
+- `scripts/build-circuit.mjs` downloads the public Powers of Tau file from Google's bucket or, as fallbacks, from this repository's `artifacts-41d28d8899f3` release and from a release in the GitHub repository `hilawe/dash-mno-verify` (an unrelated third party). Every source is accepted only if both pinned hashes match.
 - `docs/internal/` (gitignored) holds the build plan, the feature brief and the naming research. They stay private; nothing in the code or the tests reads them.
 - Decide whether `docs/design/` is published as it is. It was edited for a public audience: the agent-workflow rules, owner notes and local paths are gone, and each file says whether it is current, historical or superseded (`docs/design/README.md`).
 

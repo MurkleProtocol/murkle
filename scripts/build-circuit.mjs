@@ -25,10 +25,11 @@ process.chdir(ROOT);
 const CIRCOM_VERSION = "2.2.2";
 const PTAU = {
   name: "powersOfTau28_hez_final_15.ptau",
-  // The original bucket answers 403 since September 2026; the mirror serves
-  // the identical file. Either source is accepted only if both hashes match.
+  // The original bucket answers 403 since September 2026; the mirrors serve
+  // the identical file. Any source is accepted only if both hashes match.
   urls: [
     "https://storage.googleapis.com/zkevm/ptau/powersOfTau28_hez_final_15.ptau",
+    "https://github.com/MurkleProtocol/murkle/releases/download/artifacts-41d28d8899f3/powersOfTau28_hez_final_15.ptau",
     "https://github.com/hilawe/dash-mno-verify/releases/download/ptau-hermez-v1/powersOfTau28_hez_final_15.ptau",
   ],
   size: 37831832,
