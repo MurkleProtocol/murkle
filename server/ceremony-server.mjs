@@ -718,6 +718,8 @@ export function createCeremonyServer({
   });
   server.requestTimeout = uploadTimeoutMs + 60_000;
   server.headersTimeout = 30_000;
+  // Longer than the proxy keeps an idle upstream connection (deploy/caddy: 60 s).
+  server.keepAliveTimeout = 65_000;
 
   const timer = setInterval(() => {
     try {

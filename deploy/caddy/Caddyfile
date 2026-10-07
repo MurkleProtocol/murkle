@@ -33,6 +33,8 @@
 				read_timeout 600s
 				write_timeout 600s
 				response_header_timeout 660s
+				# Below the coordinator's own 65 s, so an idle connection is never reused as it closes.
+				keepalive 60s
 			}
 		}
 	}
@@ -44,6 +46,10 @@
 		reverse_proxy {$INDEXER_UPSTREAM:127.0.0.1:8787} {
 			# Overwrite, never append: the relayer rate-limits by this address.
 			header_up X-Forwarded-For {remote_host}
+			transport http {
+				# Below the indexer's own 65 s, so an idle connection is never reused as it closes.
+				keepalive 60s
+			}
 		}
 	}
 }

@@ -328,6 +328,9 @@ test("Caddyfile and nginx: HTTPS, HSTS, ceremony routes to the coordinator, X-Fo
   assert.match(caddy, /handle @ceremony \{[\s\S]*?max_size 32MB[\s\S]*?reverse_proxy \{\$CEREMONY_UPSTREAM:127\.0\.0\.1:8790\}[\s\S]*?header_up X-Forwarded-For \{remote_host\}[\s\S]*?read_timeout 600s/);
   assert.match(caddy, /handle \{[\s\S]*?reverse_proxy \{\$INDEXER_UPSTREAM:127\.0\.0\.1:8787\} \{\s*#[^\n]*\n\s*header_up X-Forwarded-For \{remote_host\}/);
   assert.match(caddy, /Strict-Transport-Security "max-age=31536000"/);
+  // Caddy drops an idle upstream connection before the servers do, so it never reuses one they are closing.
+  assert.equal((caddy.match(/^\s*keepalive 60s$/gm) ?? []).length, 2, "both upstreams: keepalive 60s");
+  for (const f of ["server/indexer-server.mjs", "server/ceremony-server.mjs"]) assert.match(read(f), /server\.keepAliveTimeout = 65_000;/, f);
   const code = caddy.split("\n").filter((l) => !l.trim().startsWith("#")).join("\n");
   assert.doesNotMatch(code, /^\s*log\b/m, "no access log");
   assert.doesNotMatch(code, /trusted_proxies/, "Caddy is the edge: no incoming X-Forwarded-For is believed");

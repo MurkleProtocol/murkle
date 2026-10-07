@@ -1117,6 +1117,9 @@ export function createApp({
     });
   });
   server.requestTimeout = 30_000;
+  // Longer than the proxy keeps an idle upstream connection (deploy/caddy: 60 s), so it never
+  // reuses a socket this server is closing (a 502, unretried on a POST).
+  server.keepAliveTimeout = 65_000;
   return { server, tick, publish, status, hashAt, view: () => view, health: healthBody };
 }
 

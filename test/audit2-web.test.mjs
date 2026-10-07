@@ -264,9 +264,10 @@ test("V2-22: two tabs sending at once never reserve the same notes", { timeout: 
   const to = encodeAddress(bob.address);
   const storedSends = async () => (await keystore.unlockVault(JSON.parse(S.storage.getItem(VAULT)), PW)).data.history.filter((h) => h.kind === "send");
 
-  // No Web Locks (Node): both tabs pick the same note and prove; the second to record is refused.
-  // Each tab waits at the proof until both have selected, so a slow machine cannot let one tab
+  // No Web Locks (a browser without them; Node 24.5+ has its own, hidden here): both tabs pick
+  // the same note and prove; the second to record is refused. Each tab waits at the proof until both have selected, so a slow machine cannot let one tab
   // record before the other selects (it would then select around it, which is also safe).
+  if (nav) Object.defineProperty(nav, "locks", { configurable: true, value: undefined });
   let arrived = 0, release;
   const bothSelected = new Promise((r) => (release = r));
   for (const s of [a, b]) {
