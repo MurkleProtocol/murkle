@@ -1,0 +1,360 @@
+{
+  "format": "murkle-mine-vectors/1",
+  "argon2": {
+    "type": "argon2id",
+    "version": 19,
+    "memoryKiB": 4096,
+    "passes": 1,
+    "lanes": 1,
+    "tagLength": 32,
+    "salt": "murkle/mine/salt"
+  },
+  "label": "murkle/mine/v1",
+  "rfc9106": {
+    "password": "0101010101010101010101010101010101010101010101010101010101010101",
+    "salt": "02020202020202020202020202020202",
+    "secret": "0303030303030303",
+    "ad": "040404040404040404040404",
+    "memoryKiB": 32,
+    "passes": 3,
+    "lanes": 4,
+    "tagLength": 32,
+    "tag": "0d640df58d78766c08c037a34a8b53c9d01ef0452d75b65eb52520e96b01e659"
+  },
+  "rfc9106NoAd": {
+    "password": "0101010101010101010101010101010101010101010101010101010101010101",
+    "salt": "02020202020202020202020202020202",
+    "secret": "0303030303030303",
+    "memoryKiB": 32,
+    "passes": 3,
+    "lanes": 4,
+    "tagLength": 32,
+    "tag": "0034de3c8a75efc1148100eaf5ba9b1ce6d50ba5cdf6ae4018c54a4fc03ac10d"
+  },
+  "generatedBy": "@noble/hashes 1.8.0 argon2id (reference), each tag checked against hash-wasm 4.12.0",
+  "vectors": [
+    {
+      "name": "illustrative",
+      "asset": "1395864371200007",
+      "refHeight": 325100,
+      "refHash": "0000000000000000000000000000000000000000000000000000000000000abc",
+      "reward": "1000",
+      "commitments": [
+        "1",
+        "2"
+      ],
+      "nonce": "0000000000000000",
+      "challenge": "f9181c09f98cb253ed91f856cc42eab177a0639e22df4de67f8d5d9176121661",
+      "password": "f9181c09f98cb253ed91f856cc42eab177a0639e22df4de67f8d5d91761216610000000000000000",
+      "solutionId": "1bb0f3380801d593ed3d3ae627ce16a8209f228bceea9e7d6ca2921fcc2008f4",
+      "powHash": "8ce2b336274d4c3a60b8c69f8902776ea6e657318fb1bd8d44edcfad4d44c372",
+      "difficulty": "1000",
+      "target": "004189374bc6a7ef9db22d0e5604189374bc6a7ef9db22d0e5604189374bc6a7",
+      "valid": false
+    },
+    {
+      "name": "nonce-max",
+      "asset": "1395864371200007",
+      "refHeight": 325100,
+      "refHash": "0000000000000000000000000000000000000000000000000000000000000abc",
+      "reward": "1000",
+      "commitments": [
+        "1",
+        "2"
+      ],
+      "nonce": "ffffffffffffffff",
+      "challenge": "f9181c09f98cb253ed91f856cc42eab177a0639e22df4de67f8d5d9176121661",
+      "password": "f9181c09f98cb253ed91f856cc42eab177a0639e22df4de67f8d5d9176121661ffffffffffffffff",
+      "solutionId": "974de0617bf53efcb730a62b95fe9540cf704f385105c8c918364584134e59a1",
+      "powHash": "0d3ff34d5645bb1df6d4299f81f4a376670bc8c8dae0f0d62c30d2dd74324719",
+      "difficulty": "256",
+      "target": "00ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "valid": false
+    },
+    {
+      "name": "zero-ref-hash",
+      "asset": "1395864371200007",
+      "refHeight": 325100,
+      "refHash": "0000000000000000000000000000000000000000000000000000000000000000",
+      "reward": "1000",
+      "commitments": [
+        "1",
+        "2"
+      ],
+      "nonce": "0000000000000000",
+      "challenge": "b613a1724ed55667c232dfcf27adb9f30a4a25806e9b7518ed94b7f253a6c772",
+      "password": "b613a1724ed55667c232dfcf27adb9f30a4a25806e9b7518ed94b7f253a6c7720000000000000000",
+      "solutionId": "377d6b7974a16bd1a7aaf9dc98d348afafde110e4139b319a181ede3067ad59a",
+      "powHash": "a18c7372a73941e408d2abe1ea9cb86bc8bb44eb9b9dafeb0c6c02483ca82178",
+      "difficulty": "1",
+      "target": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "valid": true
+    },
+    {
+      "name": "random-ref-hash",
+      "asset": "1395864371200007",
+      "refHeight": 325100,
+      "refHash": "c272b5c0f28d6be8fd1f2822a2f186819ed41215e0ace1bbda69dba3e1ac9591",
+      "reward": "1000",
+      "commitments": [
+        "1",
+        "2"
+      ],
+      "nonce": "b5de245c0da064ce",
+      "challenge": "efd0eaa1c3b4c041aca3f8e257cb0460a5b67d49cb34f2d9190a74a509be4922",
+      "password": "efd0eaa1c3b4c041aca3f8e257cb0460a5b67d49cb34f2d9190a74a509be4922b5de245c0da064ce",
+      "solutionId": "7b062d72af4ab47f6079e3b8a07cdeeb5514be557d791d5a1e245f689fa29e9b",
+      "powHash": "520e782eb2c7672991a42b595ec1282018a184c33fd37bd5dd2fe7ef5deef411",
+      "difficulty": "256",
+      "target": "00ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "valid": false
+    },
+    {
+      "name": "field-max-commitments",
+      "asset": "1395864371200007",
+      "refHeight": 325100,
+      "refHash": "0000000000000000000000000000000000000000000000000000000000000abc",
+      "reward": "1000",
+      "commitments": [
+        "21888242871839275222246405745257275088548364400416034343698204186575808495616",
+        "21888242871839275222246405745257275088548364400416034343698204186575808495616"
+      ],
+      "nonce": "0000000000000000",
+      "challenge": "f09d7984bdf67836afc34213a7f7fb9c2732a146f04aea44243fa41fdceff9ea",
+      "password": "f09d7984bdf67836afc34213a7f7fb9c2732a146f04aea44243fa41fdceff9ea0000000000000000",
+      "solutionId": "de0721a6de00b4d230cce8b12611f532e01354f099f1faa792a563182b64d690",
+      "powHash": "30589f8b8cfd3ce47cd84edb802058d3f4c11822dafef7532e270f669538ce83",
+      "difficulty": "1000",
+      "target": "004189374bc6a7ef9db22d0e5604189374bc6a7ef9db22d0e5604189374bc6a7",
+      "valid": false
+    },
+    {
+      "name": "asset-zero",
+      "asset": "0",
+      "refHeight": 325100,
+      "refHash": "0000000000000000000000000000000000000000000000000000000000000abc",
+      "reward": "1000",
+      "commitments": [
+        "1",
+        "2"
+      ],
+      "nonce": "0000000000000000",
+      "challenge": "f3c646797d88e03bf9a1bf21c901c908ccb49a5bc20611bc1ce5179f59a88304",
+      "password": "f3c646797d88e03bf9a1bf21c901c908ccb49a5bc20611bc1ce5179f59a883040000000000000000",
+      "solutionId": "5368cd06de053d672720c2a13f3fd34c45fab9b877e5a486bf86440d9c43c4db",
+      "powHash": "869d596b6a6bbc228cc876f779847a902d340def3caca3eeb4b5aa297a858430",
+      "difficulty": "256",
+      "target": "00ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "valid": false
+    },
+    {
+      "name": "asset-max",
+      "asset": "18446744073709551615",
+      "refHeight": 325100,
+      "refHash": "0000000000000000000000000000000000000000000000000000000000000abc",
+      "reward": "1000",
+      "commitments": [
+        "1",
+        "2"
+      ],
+      "nonce": "0000000000000000",
+      "challenge": "f9a5774d561e91244321205a4a676d205aa9e15bbbdea9ca11aa8c1a7c06729d",
+      "password": "f9a5774d561e91244321205a4a676d205aa9e15bbbdea9ca11aa8c1a7c06729d0000000000000000",
+      "solutionId": "8d1438efac7bb6c89dbdf280ba5c2bc0613e9676a3f1613fd04729f064a4649f",
+      "powHash": "cc49dd79afc785437369ba851e4a0c2eeae8cdbd9519a548f15e954f67bcbe6e",
+      "difficulty": "256",
+      "target": "00ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "valid": false
+    },
+    {
+      "name": "reward-one",
+      "asset": "1395864371200007",
+      "refHeight": 325100,
+      "refHash": "0000000000000000000000000000000000000000000000000000000000000abc",
+      "reward": "1",
+      "commitments": [
+        "1",
+        "2"
+      ],
+      "nonce": "0000000000000000",
+      "challenge": "584e8802215a8ea3984070f262707a39f0b9141c6560311783abf3042de4bbf5",
+      "password": "584e8802215a8ea3984070f262707a39f0b9141c6560311783abf3042de4bbf50000000000000000",
+      "solutionId": "804fd81a1bac3a9cc48fb8f6846839c5f74250863ee19c93c1e468ac064b003c",
+      "powHash": "f210dec0f8542f3cdcefaa5e3b6ade0cfa3ab2edc9638141d135384a4349eaa4",
+      "difficulty": "256",
+      "target": "00ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "valid": false
+    },
+    {
+      "name": "reward-max",
+      "asset": "1395864371200007",
+      "refHeight": 325100,
+      "refHash": "0000000000000000000000000000000000000000000000000000000000000abc",
+      "reward": "9223372036854775807",
+      "commitments": [
+        "1",
+        "2"
+      ],
+      "nonce": "0000000000000000",
+      "challenge": "f0c89504a2dfd44b2843c467746415b187a365b9b76c28cb9b9f50724cb282c0",
+      "password": "f0c89504a2dfd44b2843c467746415b187a365b9b76c28cb9b9f50724cb282c00000000000000000",
+      "solutionId": "892e0c5dab7a3f9d4039374d46685508c0205acde151f5aacc2a4a1e4787f3b7",
+      "powHash": "07ce294109791a4e62b229ba39125101399d13b698750ca4f981567afaf7a678",
+      "difficulty": "256",
+      "target": "00ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "valid": false
+    },
+    {
+      "name": "difficulty-one",
+      "asset": "1395864371200007",
+      "refHeight": 325100,
+      "refHash": "c7fc8f8018269d6bfc62c9f19e71d7578e9187c9fa4cd1dd093c34a3f5c05458",
+      "reward": "1000",
+      "commitments": [
+        "1",
+        "2"
+      ],
+      "nonce": "0000000000000000",
+      "challenge": "a7868acf27ef0de52027539ca1ac3067c08f9eb8c2ff91b8410551e2cd99da01",
+      "password": "a7868acf27ef0de52027539ca1ac3067c08f9eb8c2ff91b8410551e2cd99da010000000000000000",
+      "solutionId": "94ce71d5175f536b8c3f197aeb86ac5b43866dd62f4ca95ae26921b1f4b0ce19",
+      "powHash": "f39f9d15b57205ff93c5b6b25a38f561e584911067c7f5b0511b88327ecae81e",
+      "difficulty": "1",
+      "target": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "valid": true
+    },
+    {
+      "name": "difficulty-max",
+      "asset": "1395864371200007",
+      "refHeight": 325100,
+      "refHash": "316afc824b883fd66455a6aadb21f53d7bb19922668f5e5b8f49758a6699048f",
+      "reward": "1000",
+      "commitments": [
+        "8219989834161703821675277657260459917061064593392099526687179479562316758451",
+        "6963089030522429114442904988486896071937521606298256110847574963705768434046"
+      ],
+      "nonce": "0000000000000000",
+      "challenge": "c11cdd51e494466836336bf98bff2e195d317444042a6af6cfec8ac41194d1e6",
+      "password": "c11cdd51e494466836336bf98bff2e195d317444042a6af6cfec8ac41194d1e60000000000000000",
+      "solutionId": "45d0bc1c6b3f8f1d51ddd5d22ac6e1378cfced83ba8b08275d35d85cd5f53f5a",
+      "powHash": "45a014d25505a6925977290961c15d41fa710af7ced491c1cac9b77eb7bf5835",
+      "difficulty": "9223372036854775807",
+      "target": "0000000000000002000000000000000400000000000000080000000000000010",
+      "valid": false
+    },
+    {
+      "name": "ref-height-max",
+      "asset": "1395864371200007",
+      "refHeight": 4294967295,
+      "refHash": "7ebf5f87ee0e8ba093d7a98265482fb1119b4a9e72145fc28db275dfd5f4d1d1",
+      "reward": "1000",
+      "commitments": [
+        "1",
+        "2"
+      ],
+      "nonce": "0000000000000000",
+      "challenge": "7c4267472596ad0ab5aafa618db55333a8ab9ecf3809aff839771fd2b4f41fb1",
+      "password": "7c4267472596ad0ab5aafa618db55333a8ab9ecf3809aff839771fd2b4f41fb10000000000000000",
+      "solutionId": "45dacf38caa49e5e082704df375525399c7135c8a4c59285e5c359984f874f08",
+      "powHash": "cb91f1d6c4d2ec21040bb695ef57f208d988f9e0bf70962ea9e251064dfc54c3",
+      "difficulty": "1000",
+      "target": "004189374bc6a7ef9db22d0e5604189374bc6a7ef9db22d0e5604189374bc6a7",
+      "valid": false
+    },
+    {
+      "name": "random-nonce",
+      "asset": "1395864371200007",
+      "refHeight": 325100,
+      "refHash": "d77a65ada2bc511a2cd1707fb82b34d05a31fa3bd53acf629f89be84ed4ae4f6",
+      "reward": "1000",
+      "commitments": [
+        "1",
+        "2"
+      ],
+      "nonce": "06b1623b6bf2ef38",
+      "challenge": "186b04a5903953f923dfc9b64a8fca31a317077a60e5a93309edac401695e6e6",
+      "password": "186b04a5903953f923dfc9b64a8fca31a317077a60e5a93309edac401695e6e606b1623b6bf2ef38",
+      "solutionId": "6792b67f421773f46273c8a36635aa52817708ef6ace9f6bbd89871ace89d228",
+      "powHash": "4e11d7f318564a4656ee15b0630774c50d172803ec48aa7e24dd84cb51e6eb60",
+      "difficulty": "1000",
+      "target": "004189374bc6a7ef9db22d0e5604189374bc6a7ef9db22d0e5604189374bc6a7",
+      "valid": false
+    },
+    {
+      "name": "mined-256",
+      "asset": "1395864371200007",
+      "refHeight": 325100,
+      "refHash": "3550e1cb2b97f7e76c551ac25ca54533e608cc13e371ce497d696e9f2b51b3dc",
+      "reward": "1000",
+      "commitments": [
+        "11",
+        "12"
+      ],
+      "nonce": "5700000000000000",
+      "challenge": "c1ec2639c3f4abd16bdefcd4e325751867739f33f71bdd20b01cf9fc378ff565",
+      "password": "c1ec2639c3f4abd16bdefcd4e325751867739f33f71bdd20b01cf9fc378ff5655700000000000000",
+      "solutionId": "972a601f4868c6bc68cabc8dda4208a3c7088d2f20d7d9f84aa2bd4ccb7d858b",
+      "powHash": "003da0735bbfc81afe99870c99fdfb677f9095122e276ee446fb042aab227223",
+      "difficulty": "256",
+      "target": "00ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "valid": true
+    },
+    {
+      "name": "mined-1000",
+      "asset": "1395864371200007",
+      "refHeight": 325100,
+      "refHash": "a4ba0f4a44a55c7318f8b2ac835fa2aa742b28e1357656c83ad37a84be56e6f6",
+      "reward": "1000",
+      "commitments": [
+        "21",
+        "22"
+      ],
+      "nonce": "ed01000000000000",
+      "challenge": "b0ba73bb5fd504ac7ce5cb8ac9617677409be912d1d29ea0d8ad3748e013f5df",
+      "password": "b0ba73bb5fd504ac7ce5cb8ac9617677409be912d1d29ea0d8ad3748e013f5dfed01000000000000",
+      "solutionId": "71a0eb7e6c655c6070294ca17504352da955abdc3197b4fece7e95d774380338",
+      "powHash": "003c0c04a9b27b5d061a78badd5ae681ca0f4f44bfc919a405e985fce36bae17",
+      "difficulty": "1000",
+      "target": "004189374bc6a7ef9db22d0e5604189374bc6a7ef9db22d0e5604189374bc6a7",
+      "valid": true
+    },
+    {
+      "name": "equality",
+      "asset": "1395864371200007",
+      "refHeight": 325100,
+      "refHash": "dc3dd57e3c5b074bb4dac79083c4537d28c7de9c607133066b3e4f157caade35",
+      "reward": "1000",
+      "commitments": [
+        "31",
+        "32"
+      ],
+      "nonce": "0102030405060708",
+      "challenge": "4d4177d7ccb4509b1744838cfaa0dfa129b83dcdf36bec45780b08c9231fc5b1",
+      "password": "4d4177d7ccb4509b1744838cfaa0dfa129b83dcdf36bec45780b08c9231fc5b10102030405060708",
+      "solutionId": "5579029c83228556dbac89da13ed4bc8d2bd6d35266483feecbfc08a6657f226",
+      "powHash": "e22d5f9a9f236ba8bd236d108c6221aed2be98a236eae2298408552e1e902816",
+      "difficulty": null,
+      "target": "e22d5f9a9f236ba8bd236d108c6221aed2be98a236eae2298408552e1e902816",
+      "valid": true
+    },
+    {
+      "name": "equality-minus-one",
+      "asset": "1395864371200007",
+      "refHeight": 325100,
+      "refHash": "dc3dd57e3c5b074bb4dac79083c4537d28c7de9c607133066b3e4f157caade35",
+      "reward": "1000",
+      "commitments": [
+        "31",
+        "32"
+      ],
+      "nonce": "0102030405060708",
+      "challenge": "4d4177d7ccb4509b1744838cfaa0dfa129b83dcdf36bec45780b08c9231fc5b1",
+      "password": "4d4177d7ccb4509b1744838cfaa0dfa129b83dcdf36bec45780b08c9231fc5b10102030405060708",
+      "solutionId": "5579029c83228556dbac89da13ed4bc8d2bd6d35266483feecbfc08a6657f226",
+      "powHash": "e22d5f9a9f236ba8bd236d108c6221aed2be98a236eae2298408552e1e902816",
+      "difficulty": null,
+      "target": "e22d5f9a9f236ba8bd236d108c6221aed2be98a236eae2298408552e1e902815",
+      "valid": false
+    }
+  ]
+}

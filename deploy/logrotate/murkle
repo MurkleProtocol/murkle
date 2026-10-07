@@ -1,0 +1,22 @@
+# /etc/logrotate.d/murkle. The Murkle services log to the journal (deploy/journald/murkle.conf);
+# this covers file logs the operator turns on elsewhere: the reverse proxy's error logs (access
+# logs are off by default for privacy) and anything written under /var/log/murkle.
+/var/log/murkle/*.log
+/var/log/nginx/murkle*.log
+/var/log/caddy/murkle*.log
+{
+	daily
+	rotate 14
+	maxsize 200M
+	missingok
+	notifempty
+	compress
+	delaycompress
+	dateext
+	create 0640 root adm
+	sharedscripts
+	postrotate
+		# nginx reopens its files; Caddy rolls its own files and ignores this.
+		if [ -f /run/nginx.pid ]; then kill -USR1 "$(cat /run/nginx.pid)"; fi
+	endscript
+}

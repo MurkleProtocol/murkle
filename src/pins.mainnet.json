@@ -1,0 +1,17 @@
+{
+  "manifestSha256": null,
+  "artifacts": {
+    "wasm": "7b9f73d4c5eccdb982f0a132979f5ceedd0bc08b569b94c022dcf0718ca0fe7d",
+    "zkey": null,
+    "vkey": null
+  },
+  "genesisTxid": null,
+  "activationHeight": null,
+  "activations": [
+    {
+      "name": "mining",
+      "height": null,
+      "digestV": 2
+    }
+  ]
+}

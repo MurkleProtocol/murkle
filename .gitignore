@@ -1,0 +1,53 @@
+node_modules/
+build/
+data/
+*.tmp
+web/dist/
+
+# Private notes that stay out of the public repository
+docs/internal/
+.prepublish-deny
+
+# Keys, wallets and relayer state, wherever MURKLE_DATA_DIR or MURKLE_RELAY_* point
+*.key
+*.pem
+*.p12
+*.pfx
+*.wif
+wallets/
+relay-balance/
+relayer.json
+state.json
+mnemonic*
+seed*.txt
+
+# Local environment
+.env
+.env.*
+
+# Deployment settings and backups: real env files (the *.example files stay), the compose env
+# file, encrypted relayer backups and the backup public key (the private key is caught by *.key)
+deploy/**/*.env
+deploy/docker/compose.env
+*.mbk
+*.key.pub
+
+# Logs, partial downloads and test leftovers
+*.log
+*.part
+.fixtures-tmp*
+*-tmp.*
+.vite/
+
+# Editors and operating systems
+.vscode/
+.idea/
+.claude/
+*.swp
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Social and brand working files (published to X, not part of the source)
+brand/

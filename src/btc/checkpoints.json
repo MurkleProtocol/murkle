@@ -1,0 +1,28 @@
+{
+  "signet": [
+    {
+      "height": 324592,
+      "hash": "0000000418f25af53b4ddd1b227ce058f27672d3352dec005466dcacf38cf715",
+      "label": "Murkle signet genesis (ATTEST 4c324438…)",
+      "base": {
+        "bits": 487902130,
+        "time": 1790913499,
+        "periodStartTime": 1790905711,
+        "prevTimes": [1790906897, 1790907492, 1790908032, 1790908922, 1790909410, 1790909570, 1790911370, 1790912223, 1790912438, 1790912477]
+      }
+    }
+  ],
+  "mainnet": [
+    {
+      "height": 969696,
+      "hash": "000000000000000000001e39df127cbab82a824ac43cfcdbf62e59f6a08b9f0b",
+      "label": "Bitcoin mainnet retarget boundary 969696 (pre-launch base; cross-check from your own node before launch, docs/MAINNET.md G3)",
+      "base": {
+        "bits": 386014960,
+        "time": 1791011796,
+        "periodStartTime": 1791011796,
+        "prevTimes": [1791008952, 1791009272, 1791010080, 1791010220, 1791010445, 1791010706, 1791011033, 1791011604, 1791011664, 1791011720]
+      }
+    }
+  ]
+}

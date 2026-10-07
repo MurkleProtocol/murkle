@@ -1,0 +1,62 @@
+{
+  "name": "murkle",
+  "version": "0.0.1",
+  "private": true,
+  "license": "GPL-3.0-or-later",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "circuit:build": "node scripts/build-circuit.mjs",
+    "test": "node --test \"test/*.test.mjs\"",
+    "audit:picus": "bash scripts/audit-picus.sh",
+    "dev": "node scripts/dev.mjs",
+    "indexer": "node server/indexer-server.mjs",
+    "web:build": "node scripts/facts.mjs && vite build --config web/vite.config.mjs && node scripts/copy-notices.mjs",
+    "murkle": "node bin/murkle.mjs",
+    "artifacts:fetch": "node scripts/fetch-artifacts.mjs",
+    "artifacts:check": "node scripts/fetch-artifacts.mjs --check",
+    "release:assets": "node scripts/release-assets.mjs",
+    "prepublish:check": "node scripts/prepublish-check.mjs",
+    "ceremony": "node server/ceremony-server.mjs",
+    "ceremony:contribute": "node scripts/ceremony/contribute.mjs",
+    "ceremony:verify": "node scripts/ceremony/verify.mjs",
+    "ceremony:init": "node scripts/ceremony/init.mjs",
+    "ceremony:admin": "node scripts/ceremony/admin.mjs",
+    "ceremony:finalize": "node scripts/ceremony/finalize.mjs",
+    "headers:checkpoint": "node scripts/checkpoint.mjs",
+    "replay:compare": "node scripts/replay-compare.mjs",
+    "monitor": "node deploy/bin/monitor.mjs",
+    "backup": "node deploy/bin/backup.mjs"
+  },
+  "dependencies": {
+    "@fontsource/instrument-sans": "^5.3.0",
+    "@fontsource/instrument-serif": "^5.3.0",
+    "@fontsource/jetbrains-mono": "^5.3.0",
+    "@noble/ciphers": "^1.3.0",
+    "@noble/curves": "^1.9.7",
+    "@noble/hashes": "1.8.0",
+    "@scure/base": "^1.2.6",
+    "@scure/bip39": "^1.6.0",
+    "@scure/btc-signer": "^1.8.1",
+    "circomlib": "2.0.5",
+    "hash-wasm": "4.12.0",
+    "poseidon-lite": "^0.3.0",
+    "snarkjs": "0.7.5"
+  },
+  "devDependencies": {
+    "vite": "^6.4.3"
+  },
+  "overrides": {
+    "underscore": "1.13.8"
+  },
+  "description": "Murkle: private tokens on Bitcoin L1. Every proof lives on-chain; your browser checks every one.",
+  "bin": {
+    "murkle": "bin/murkle.mjs"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/MurkleProtocol/murkle.git"
+  }
+}

@@ -1,0 +1,186 @@
+# Murkle with its own Bitcoin Core, behind Caddy. The default path is Bitcoin Core plus the RPC
+# source (MURKLE_BTC_SOURCE=bitcoind, cookie from a shared volume). Optional profiles:
+#   ceremony  the trusted-setup coordinator (docs/CEREMONY.md)
+#   electrs   an Esplora-compatible API on the same node, for operators who want one
+#
+#   cp deploy/docker/compose.env.example deploy/docker/compose.env   # then edit it
+#   docker compose -f deploy/docker/docker-compose.yml --env-file deploy/docker/compose.env up -d
+#   docker compose -f deploy/docker/docker-compose.yml --env-file deploy/docker/compose.env --profile ceremony up -d
+#
+# The paid relayer is off (MURKLE_RELAYER=0). Its keys and books hold users' prepaid deposits;
+# set up the encrypted backups before switching it on (docs/OPERATIONS.md).
+# A host install with systemd units is in deploy/systemd and docs/OPERATIONS.md.
+
+name: murkle
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "20m"
+    max-file: "5"
+
+services:
+  bitcoind:
+    build:
+      context: .
+      dockerfile: bitcoind.Dockerfile
+      args:
+        BITCOIN_VERSION: ${BITCOIN_VERSION:?set BITCOIN_VERSION in compose.env}
+        BITCOIN_SHA256: ${BITCOIN_SHA256:?set BITCOIN_SHA256 in compose.env}
+    command:
+      - -chain=${BITCOIN_CHAIN:-signet}
+      - -server=1
+      - -txindex=1
+      - -prune=0
+      - -disablewallet=1
+      - -rpccookieperms=group
+      - -rpcbind=0.0.0.0
+      - -rpcallowip=10.0.0.0/8
+      - -rpcallowip=172.16.0.0/12
+      - -rpcallowip=192.168.0.0/16
+      - -dbcache=4000
+    volumes:
+      - bitcoin-data:/data
+    # P2P only (mainnet 8333, signet 38333); the RPC port stays on the compose network.
+    ports:
+      - "8333:8333"
+      - "38333:38333"
+    restart: unless-stopped
+    stop_grace_period: 5m
+    healthcheck:
+      test: ["CMD", "bitcoin-cli", "-datadir=/data", "-chain=${BITCOIN_CHAIN:-signet}", "getblockcount"]
+      interval: 60s
+      timeout: 10s
+      retries: 5
+      start_period: 5m
+    logging: *logging
+
+  murkle-indexer:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+      args:
+        MURKLE_NETWORK: ${MURKLE_NETWORK:-signet}
+        MURKLE_ARTIFACTS_URL: ${MURKLE_ARTIFACTS_URL:-}
+    environment:
+      MURKLE_NETWORK: ${MURKLE_NETWORK:-signet}
+      MURKLE_BTC_SOURCE: bitcoind
+      MURKLE_BITCOIND_URL: http://bitcoind:${BITCOIN_RPC_PORT:-38332}
+      MURKLE_BITCOIND_COOKIE: ${BITCOIN_COOKIE:-/bitcoin/signet/.cookie}
+      MURKLE_PUBLIC_URL: ${MURKLE_PUBLIC_URL:-}
+      MURKLE_ARTIFACTS_URL: ${MURKLE_ARTIFACTS_URL:-}
+      MURKLE_TRUST_PROXY: "1"
+      # Empty: the server enforces the CSP on mainnet and keeps it Report-Only on signet.
+      MURKLE_CSP_ENFORCE: ${MURKLE_CSP_ENFORCE:-}
+      MURKLE_RELAYER: "0"
+    volumes:
+      - murkle-data:/app/data
+      - murkle-build:/app/build
+      - bitcoin-data:/bitcoin:ro
+    depends_on:
+      bitcoind:
+        condition: service_healthy
+    restart: unless-stopped
+    stop_grace_period: 30s
+    # Liveness only (/api/health answers 200 while the process serves): a halted relayer or a
+    # lagging indexer never restarts the container; the monitor reports them.
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8787/api/health').then(r=>process.exit(r.status===200?0:1),()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 2m
+    logging: *logging
+
+  murkle-ceremony:
+    profiles: ["ceremony"]
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+      args:
+        MURKLE_NETWORK: ${MURKLE_NETWORK:-signet}
+    command: ["node", "server/ceremony-server.mjs"]
+    environment:
+      MURKLE_NETWORK: ${MURKLE_NETWORK:-signet}
+      MURKLE_CEREMONY_HOST: 0.0.0.0
+      MURKLE_CEREMONY_PORT: "8790"
+      MURKLE_CEREMONY_DIR: /app/data/ceremony/${CEREMONY_ID:-murkle-mainnet-1}
+      MURKLE_CEREMONY_TRUST_PROXY: "1"
+      # The circuit's r1cs and the phase-1 ptau are not in the artifacts release: copy them into
+      # the ceremony volume (docs/CEREMONY.md, docs/OPERATIONS.md); init checks both pins.
+      MURKLE_CEREMONY_R1CS: /app/data/ceremony/inputs/transaction.r1cs
+      MURKLE_CEREMONY_PTAU: /app/data/ceremony/inputs/powersOfTau28_hez_final_15.ptau
+      MURKLE_BTC_SOURCE: bitcoind
+      MURKLE_BITCOIND_URL: http://bitcoind:${BITCOIN_RPC_PORT:-38332}
+      MURKLE_BITCOIND_COOKIE: ${BITCOIN_COOKIE:-/bitcoin/signet/.cookie}
+    volumes:
+      - ceremony-data:/app/data/ceremony
+      - bitcoin-data:/bitcoin:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8790/ceremony/api/health').then(r=>process.exit(r.status===200?0:1),()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 1m
+    logging: *logging
+
+  electrs:
+    profiles: ["electrs"]
+    image: ${ELECTRS_IMAGE:-mempool/electrs:latest}
+    # Check these flags against the electrs build you pin.
+    command:
+      - --network=${BITCOIN_CHAIN:-signet}
+      - --daemon-dir=/bitcoin
+      - --daemon-rpc-addr=bitcoind:${BITCOIN_RPC_PORT:-38332}
+      - --db-dir=/electrs
+      - --http-addr=0.0.0.0:3002
+    volumes:
+      - bitcoin-data:/bitcoin:ro
+      - electrs-data:/electrs
+    depends_on:
+      bitcoind:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3002/blocks/tip/height || exit 1"]
+      interval: 60s
+      timeout: 10s
+      retries: 5
+      start_period: 10m
+    logging: *logging
+
+  caddy:
+    image: caddy:2
+    environment:
+      SITE_DOMAIN: ${SITE_DOMAIN:?set SITE_DOMAIN in compose.env}
+      ACME_EMAIL: ${ACME_EMAIL:?set ACME_EMAIL in compose.env}
+      INDEXER_UPSTREAM: murkle-indexer:8787
+      CEREMONY_UPSTREAM: murkle-ceremony:8790
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ../caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      murkle-indexer:
+        condition: service_started
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:2019/config/"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+    logging: *logging
+
+volumes:
+  bitcoin-data:
+  murkle-data:
+  murkle-build:
+  ceremony-data:
+  electrs-data:
+  caddy-data:
+  caddy-config:

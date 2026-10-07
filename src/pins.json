@@ -1,0 +1,17 @@
+{
+  "manifestSha256": "41d28d8899f3ac657b25b3bb9bca32545a78c8ae276f736a472d4e243bcaf2a0",
+  "artifacts": {
+    "wasm": "7b9f73d4c5eccdb982f0a132979f5ceedd0bc08b569b94c022dcf0718ca0fe7d",
+    "zkey": "511df703529958a75ffb26b0e285aee902d8b4efe8d19617bf126372ba6915fa",
+    "vkey": "893e125967e305cedb1b2d6748ef906a2903779849ef51989ed74969d193a557"
+  },
+  "genesisTxid": "4c32443828131fe142d899007c1b8885aef7e62da3034c6f03e4ff7096c6dfad",
+  "activationHeight": 324592,
+  "activations": [
+    {
+      "name": "mining",
+      "height": 325138,
+      "digestV": 2
+    }
+  ]
+}

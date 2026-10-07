@@ -1,0 +1,28 @@
+/* The ceremony page (web/ceremony.html). Tokens and base rules come from ../styles. */
+
+.cer-page { max-width: var(--max-app); margin: 0 auto; padding: var(--s6) var(--gutter) var(--s8); display: flex; flex-direction: column; gap: var(--s6); }
+.cer-head { display: flex; flex-direction: column; gap: var(--s3); }
+.cer-head .display { font-size: clamp(36px, 6vw, 56px); }
+.cer-card { background: var(--surface-1); border: 1px solid var(--line); border-radius: var(--radius-l); padding: var(--s5); display: flex; flex-direction: column; gap: var(--s4); box-shadow: var(--shadow-1); }
+.cer-card h2 { font: 600 18px/24px var(--font-ui); }
+.cer-list { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: var(--s2); color: var(--text-2); }
+.cer-facts { display: grid; grid-template-columns: max-content 1fr; gap: var(--s2) var(--s4); margin: 0; }
+.cer-facts dt { color: var(--text-3); font-size: 13px; }
+.cer-facts dd { margin: 0; overflow-wrap: anywhere; }
+@media (max-width: 560px) { .cer-facts { grid-template-columns: 1fr; } .cer-facts dd { margin-bottom: var(--s2); } }
+.cer-chip { display: inline-flex; align-items: center; height: 22px; padding: 0 8px; border-radius: var(--radius-pill); font: 600 10px/1 var(--font-mono); letter-spacing: .08em; text-transform: uppercase; border: 1px solid var(--line-strong); color: var(--text-2); }
+.cer-chip--open { color: var(--proof-text); border-color: var(--proof-line); background: var(--proof-wash); }
+.cer-chip--paused { color: var(--warn); border-color: var(--warn-line); background: var(--warn-wash); }
+.cer-chip--closed, .cer-chip--finalized { color: var(--text-2); }
+.cer-form { display: flex; flex-direction: column; gap: var(--s4); }
+.cer-row { display: flex; flex-wrap: wrap; gap: var(--s2); align-items: center; }
+.cer-note { color: var(--text-3); min-height: 18px; }
+.cer-steps { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 4px; color: var(--text-3); }
+.cer-steps li.is-done { color: var(--text-2); }
+.cer-steps li.is-now { color: var(--text); font-weight: 600; }
+.cer-progress { display: flex; flex-direction: column; gap: var(--s2); }
+.cer-bar { height: 6px; border-radius: 3px; background: var(--surface-3); overflow: hidden; }
+.cer-bar-fill { height: 100%; background: var(--btc); transition: width var(--d-ui) var(--ease); }
+.cer-log, .cer-receipt { margin: 0; padding: var(--s3); background: var(--surface-inset); border: 1px solid var(--line); border-radius: var(--radius); font-size: 12px; line-height: 18px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.cer-error { color: var(--danger); }
+.cer-warn { color: var(--warn); }

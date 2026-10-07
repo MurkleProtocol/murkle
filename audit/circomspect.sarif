@@ -1,0 +1,802 @@
+{
+  "runs": [
+    {
+      "results": [
+        {
+          "level": "note",
+          "locations": [
+            {
+              "id": 0,
+              "message": {
+                "text": "Field element arithmetic here."
+              },
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "circuits/lib.circom"
+                },
+                "region": {
+                  "endColumn": 40,
+                  "endLine": 120,
+                  "startColumn": 37,
+                  "startLine": 120
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "Field element arithmetic could overflow, which may produce unexpected results."
+          },
+          "relatedLocations": [],
+          "rule": {
+            "id": "CS0004"
+          },
+          "ruleId": "CS0004"
+        },
+        {
+          "level": "note",
+          "locations": [
+            {
+              "id": 0,
+              "message": {
+                "text": "Field element arithmetic here."
+              },
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "circuits/lib.circom"
+                },
+                "region": {
+                  "endColumn": 30,
+                  "endLine": 132,
+                  "startColumn": 9,
+                  "startLine": 132
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "Field element arithmetic could overflow, which may produce unexpected results."
+          },
+          "relatedLocations": [],
+          "rule": {
+            "id": "CS0004"
+          },
+          "ruleId": "CS0004"
+        },
+        {
+          "level": "note",
+          "locations": [
+            {
+              "id": 0,
+              "message": {
+                "text": "Field element arithmetic here."
+              },
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "circuits/lib.circom"
+                },
+                "region": {
+                  "endColumn": 34,
+                  "endLine": 96,
+                  "startColumn": 31,
+                  "startLine": 96
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "Field element arithmetic could overflow, which may produce unexpected results."
+          },
+          "relatedLocations": [],
+          "rule": {
+            "id": "CS0004"
+          },
+          "ruleId": "CS0004"
+        },
+        {
+          "level": "note",
+          "locations": [
+            {
+              "id": 0,
+              "message": {
+                "text": "Field element arithmetic here."
+              },
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "circuits/lib.circom"
+                },
+                "region": {
+                  "endColumn": 32,
+                  "endLine": 149,
+                  "startColumn": 9,
+                  "startLine": 149
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "Field element arithmetic could overflow, which may produce unexpected results."
+          },
+          "relatedLocations": [],
+          "rule": {
+            "id": "CS0004"
+          },
+          "ruleId": "CS0004"
+        },
+        {
+          "level": "note",
+          "locations": [
+            {
+              "id": 0,
+              "message": {
+                "text": "Field element arithmetic here."
+              },
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "circuits/lib.circom"
+                },
+                "region": {
+                  "endColumn": 35,
+                  "endLine": 139,
+                  "startColumn": 32,
+                  "startLine": 139
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "Field element arithmetic could overflow, which may produce unexpected results."
+          },
+          "relatedLocations": [],
+          "rule": {
+            "id": "CS0004"
+          },
+          "ruleId": "CS0004"
+        },
+        {
+          "level": "note",
+          "locations": [
+            {
+              "id": 0,
+              "message": {
+                "text": "Field element arithmetic here."
+              },
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "circuits/lib.circom"
+                },
+                "region": {
+                  "endColumn": 51,
+                  "endLine": 153,
+                  "startColumn": 30,
+                  "startLine": 153
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "Field element arithmetic could overflow, which may produce unexpected results."
+          },
+          "relatedLocations": [],
+          "rule": {
+            "id": "CS0004"
+          },
+          "ruleId": "CS0004"
+        },
+        {
+          "level": "note",
+          "locations": [
+            {
+              "id": 0,
+              "message": {
+                "text": "Field element arithmetic here."
+              },
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "circuits/lib.circom"
+                },
+                "region": {
+                  "endColumn": 33,
+                  "endLine": 155,
+                  "startColumn": 25,
+                  "startLine": 155
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "Field element arithmetic could overflow, which may produce unexpected results."
+          },
+          "relatedLocations": [],
+          "rule": {
+            "id": "CS0004"
+          },
+          "ruleId": "CS0004"
+        },
+        {
+          "level": "note",
+          "locations": [
+            {
+              "id": 0,
+              "message": {
+                "text": "Field element arithmetic here."
+              },
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "circuits/lib.circom"
+                },
+                "region": {
+                  "endColumn": 27,
+                  "endLine": 156,
+                  "startColumn": 22,
+                  "startLine": 156
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "Field element arithmetic could overflow, which may produce unexpected results."
+          },
+          "relatedLocations": [],
+          "rule": {
+            "id": "CS0004"
+          },
+          "ruleId": "CS0004"
+        },
+        {
+          "level": "note",
+          "locations": [
+            {
+              "id": 0,
+              "message": {
+                "text": "Field element arithmetic here."
+              },
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "circuits/lib.circom"
+                },
+                "region": {
+                  "endColumn": 16,
+                  "endLine": 161,
+                  "startColumn": 13,
+                  "startLine": 161
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "Field element arithmetic could overflow, which may produce unexpected results."
+          },
+          "relatedLocations": [],
+          "rule": {
+            "id": "CS0004"
+          },
+          "ruleId": "CS0004"
+        },
+        {
+          "level": "note",
+          "locations": [
+            {
+              "id": 0,
+              "message": {
+                "text": "Field element arithmetic here."
+              },
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "circuits/lib.circom"
+                },
+                "region": {
+                  "endColumn": 42,
+                  "endLine": 156,
+                  "startColumn": 39,
+                  "startLine": 156
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "Field element arithmetic could overflow, which may produce unexpected results."
+          },
+          "relatedLocations": [],
+          "rule": {
+            "id": "CS0004"
+          },
+          "ruleId": "CS0004"
+        },
+        {
+          "level": "note",
+          "locations": [
+            {
+              "id": 0,
+              "message": {
+                "text": "Field element arithmetic here."
+              },
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "circuits/lib.circom"
+                },
+                "region": {
+                  "endColumn": 38,
+                  "endLine": 155,
+                  "startColumn": 35,
+                  "startLine": 155
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "Field element arithmetic could overflow, which may produce unexpected results."
+          },
+          "relatedLocations": [],
+          "rule": {
+            "id": "CS0004"
+          },
+          "ruleId": "CS0004"
+        },
+        {
+          "level": "note",
+          "locations": [
+            {
+              "id": 0,
+              "message": {
+                "text": "Field element arithmetic here."
+              },
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "circuits/lib.circom"
+                },
+                "region": {
+                  "endColumn": 26,
+                  "endLine": 167,
+                  "startColumn": 5,
+                  "startLine": 167
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "Field element arithmetic could overflow, which may produce unexpected results."
+          },
+          "relatedLocations": [],
+          "rule": {
+            "id": "CS0004"
+          },
+          "ruleId": "CS0004"
+        },
+        {
+          "level": "note",
+          "locations": [
+            {
+              "id": 0,
+              "message": {
+                "text": "Field element arithmetic here."
+              },
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "circuits/lib.circom"
+                },
+                "region": {
+                  "endColumn": 41,
+                  "endLine": 170,
+                  "startColumn": 5,
+                  "startLine": 170
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "Field element arithmetic could overflow, which may produce unexpected results."
+          },
+          "relatedLocations": [],
+          "rule": {
+            "id": "CS0004"
+          },
+          "ruleId": "CS0004"
+        },
+        {
+          "level": "note",
+          "locations": [
+            {
+              "id": 0,
+              "message": {
+                "text": "Field element arithmetic here."
+              },
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "circuits/lib.circom"
+                },
+                "region": {
+                  "endColumn": 55,
+                  "endLine": 173,
+                  "startColumn": 30,
+                  "startLine": 173
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "Field element arithmetic could overflow, which may produce unexpected results."
+          },
+          "relatedLocations": [],
+          "rule": {
+            "id": "CS0004"
+          },
+          "ruleId": "CS0004"
+        },
+        {
+          "level": "note",
+          "locations": [
+            {
+              "id": 0,
+              "message": {
+                "text": "Field element comparison here."
+              },
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "circuits/lib.circom"
+                },
+                "region": {
+                  "endColumn": 29,
+                  "endLine": 96,
+                  "startColumn": 21,
+                  "startLine": 96
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "Comparisons with field elements greater than `p/2` may produce unexpected results."
+          },
+          "relatedLocations": [],
+          "rule": {
+            "id": "CS0003"
+          },
+          "ruleId": "CS0003"
+        },
+        {
+          "level": "note",
+          "locations": [
+            {
+              "id": 0,
+              "message": {
+                "text": "Field element comparison here."
+              },
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "circuits/lib.circom"
+                },
+                "region": {
+                  "endColumn": 35,
+                  "endLine": 120,
+                  "startColumn": 25,
+                  "startLine": 120
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "Comparisons with field elements greater than `p/2` may produce unexpected results."
+          },
+          "relatedLocations": [],
+          "rule": {
+            "id": "CS0003"
+          },
+          "ruleId": "CS0003"
+        },
+        {
+          "level": "note",
+          "locations": [
+            {
+              "id": 0,
+              "message": {
+                "text": "Field element comparison here."
+              },
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "circuits/lib.circom"
+                },
+                "region": {
+                  "endColumn": 30,
+                  "endLine": 139,
+                  "startColumn": 21,
+                  "startLine": 139
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "Comparisons with field elements greater than `p/2` may produce unexpected results."
+          },
+          "relatedLocations": [],
+          "rule": {
+            "id": "CS0003"
+          },
+          "ruleId": "CS0003"
+        },
+        {
+          "level": "note",
+          "locations": [
+            {
+              "id": 0,
+              "message": {
+                "text": "Field element comparison here."
+              },
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "circuits/lib.circom"
+                },
+                "region": {
+                  "endColumn": 33,
+                  "endLine": 155,
+                  "startColumn": 21,
+                  "startLine": 155
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "Comparisons with field elements greater than `p/2` may produce unexpected results."
+          },
+          "relatedLocations": [],
+          "rule": {
+            "id": "CS0003"
+          },
+          "ruleId": "CS0003"
+        },
+        {
+          "level": "note",
+          "locations": [
+            {
+              "id": 0,
+              "message": {
+                "text": "Field element comparison here."
+              },
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "circuits/lib.circom"
+                },
+                "region": {
+                  "endColumn": 37,
+                  "endLine": 156,
+                  "startColumn": 29,
+                  "startLine": 156
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "Comparisons with field elements greater than `p/2` may produce unexpected results."
+          },
+          "relatedLocations": [],
+          "rule": {
+            "id": "CS0003"
+          },
+          "ruleId": "CS0003"
+        },
+        {
+          "level": "warning",
+          "locations": [
+            {
+              "id": 0,
+              "message": {
+                "text": "The intermediate signal `extDataSquare` is declared here."
+              },
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "circuits/lib.circom"
+                },
+                "region": {
+                  "endColumn": 55,
+                  "endLine": 173,
+                  "startColumn": 5,
+                  "startLine": 173
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "Intermediate signals should typically occur in at least two separate constraints."
+          },
+          "relatedLocations": [
+            {
+              "id": 0,
+              "message": {
+                "text": "The intermediate signal `extDataSquare` is constrained here."
+              },
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "circuits/lib.circom"
+                },
+                "region": {
+                  "endColumn": 55,
+                  "endLine": 173,
+                  "startColumn": 5,
+                  "startLine": 173
+                }
+              }
+            }
+          ],
+          "rule": {
+            "id": "CS0017"
+          },
+          "ruleId": "CS0017"
+        },
+        {
+          "level": "note",
+          "locations": [
+            {
+              "id": 0,
+              "message": {
+                "text": "Field element arithmetic here."
+              },
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "circuits/lib.circom"
+                },
+                "region": {
+                  "endColumn": 55,
+                  "endLine": 56,
+                  "startColumn": 50,
+                  "startLine": 56
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "Field element arithmetic could overflow, which may produce unexpected results."
+          },
+          "relatedLocations": [],
+          "rule": {
+            "id": "CS0004"
+          },
+          "ruleId": "CS0004"
+        },
+        {
+          "level": "note",
+          "locations": [
+            {
+              "id": 0,
+              "message": {
+                "text": "Field element arithmetic here."
+              },
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "circuits/lib.circom"
+                },
+                "region": {
+                  "endColumn": 36,
+                  "endLine": 54,
+                  "startColumn": 33,
+                  "startLine": 54
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "Field element arithmetic could overflow, which may produce unexpected results."
+          },
+          "relatedLocations": [],
+          "rule": {
+            "id": "CS0004"
+          },
+          "ruleId": "CS0004"
+        },
+        {
+          "level": "note",
+          "locations": [
+            {
+              "id": 0,
+              "message": {
+                "text": "Field element arithmetic here."
+              },
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "circuits/lib.circom"
+                },
+                "region": {
+                  "endColumn": 31,
+                  "endLine": 64,
+                  "startColumn": 21,
+                  "startLine": 64
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "Field element arithmetic could overflow, which may produce unexpected results."
+          },
+          "relatedLocations": [],
+          "rule": {
+            "id": "CS0004"
+          },
+          "ruleId": "CS0004"
+        },
+        {
+          "level": "note",
+          "locations": [
+            {
+              "id": 0,
+              "message": {
+                "text": "Field element comparison here."
+              },
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "circuits/lib.circom"
+                },
+                "region": {
+                  "endColumn": 31,
+                  "endLine": 54,
+                  "startColumn": 21,
+                  "startLine": 54
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "Comparisons with field elements greater than `p/2` may produce unexpected results."
+          },
+          "relatedLocations": [],
+          "rule": {
+            "id": "CS0003"
+          },
+          "ruleId": "CS0003"
+        },
+        {
+          "level": "warning",
+          "locations": [
+            {
+              "id": 0,
+              "message": {
+                "text": "Circomlib template `Num2Bits` instantiated here."
+              },
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "circuits/lib.circom"
+                },
+                "region": {
+                  "endColumn": 43,
+                  "endLine": 49,
+                  "startColumn": 27,
+                  "startLine": 49
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "Using `Num2Bits` to convert field elements to bits may lead to aliasing issues."
+          },
+          "relatedLocations": [],
+          "rule": {
+            "id": "CS0010"
+          },
+          "ruleId": "CS0010"
+        }
+      ],
+      "tool": {
+        "driver": {
+          "downloadUri": "https://github.com/trailofbits/circomspect",
+          "name": "Circomspect",
+          "organization": "Trail of Bits",
+          "rules": [
+            {
+              "id": "CS0017",
+              "name": "under-constrained-signal"
+            },
+            {
+              "id": "CS0004",
+              "name": "field-element-arithmetic"
+            },
+            {
+              "id": "CS0003",
+              "name": "field-element-comparison"
+            },
+            {
+              "id": "CS0010",
+              "name": "non-strict-binary-conversion"
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "version": "2.1.0"
+}

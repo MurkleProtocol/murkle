@@ -1,0 +1,49 @@
+# Caddy in front of a Murkle node: TLS (automatic certificates), HSTS, and two upstreams.
+#   /ceremony/api/*, /ceremony/files/*, /ceremony/transcript.json -> the ceremony coordinator (:8790)
+#   everything else (the site, /api/*, /artifacts/*, the /ceremony page) -> the indexer (:8787)
+# Environment: SITE_DOMAIN (required), ACME_EMAIL (required: certificate notices), INDEXER_UPSTREAM and
+# CEREMONY_UPSTREAM (defaults for a host install; the compose file sets the service names).
+# Set MURKLE_TRUST_PROXY=1 and MURKLE_CEREMONY_TRUST_PROXY=1 only behind this proxy.
+#
+# Privacy: no access log (there is no "log" directive in the site block). The server sends its
+# own Content-Security-Policy and security headers; MURKLE_CSP_ENFORCE=1 makes the CSP enforcing.
+{
+	email {$ACME_EMAIL}
+	# No trusted_proxies: Caddy is the edge, so the client address is the TCP peer and an
+	# incoming X-Forwarded-For is never believed ({remote_host} below).
+}
+
+{$SITE_DOMAIN} {
+	encode zstd gzip
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		-Server
+	}
+
+	@ceremony path /ceremony/api/* /ceremony/files/* /ceremony/transcript.json
+	handle @ceremony {
+		# A contribution upload is the size of the zkey (about 12 MB) plus a margin.
+		request_body {
+			max_size 32MB
+		}
+		reverse_proxy {$CEREMONY_UPSTREAM:127.0.0.1:8790} {
+			# Overwrite, never append: the coordinator rate-limits by this address.
+			header_up X-Forwarded-For {remote_host}
+			transport http {
+				read_timeout 600s
+				write_timeout 600s
+				response_header_timeout 660s
+			}
+		}
+	}
+
+	handle {
+		request_body {
+			max_size 1MB
+		}
+		reverse_proxy {$INDEXER_UPSTREAM:127.0.0.1:8787} {
+			# Overwrite, never append: the relayer rate-limits by this address.
+			header_up X-Forwarded-For {remote_host}
+		}
+	}
+}

@@ -1,0 +1,11 @@
+[Unit]
+Description=Hourly Murkle encrypted backup
+
+[Timer]
+OnCalendar=hourly
+RandomizedDelaySec=120
+Persistent=true
+Unit=murkle-backup.service
+
+[Install]
+WantedBy=timers.target

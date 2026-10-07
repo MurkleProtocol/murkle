@@ -1,0 +1,7 @@
+# Install with the relayer drop-in (murkle-indexer.service.d/relayer.conf.example): copy to
+# /etc/systemd/system/murkle-backup.service.d/relayer.conf, then systemctl daemon-reload.
+# With it a backup that lacks relay-balance/pool.key, change.key or relayer.json in
+# /var/lib/murkle/<network> fails (and the monitor's backup check alerts) instead of
+# succeeding without the keys that control users' prepaid deposits.
+[Service]
+Environment=MURKLE_BACKUP_REQUIRE_RELAYER=1

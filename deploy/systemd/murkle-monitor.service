@@ -1,0 +1,35 @@
+# One monitor run (deploy/bin/monitor.mjs), started every minute by murkle-monitor.timer.
+# Exit 1 is a warning and exit 2 is critical: both mark this unit failed, so
+# "systemctl --failed" and the journal show them; MURKLE_MONITOR_WEBHOOK, when set, gets the
+# same JSON line only when the alerts change (--state).
+[Unit]
+Description=Murkle monitor (indexer lag, relayer books, disk)
+Documentation=file:///opt/murkle/current/docs/OPERATIONS.md
+After=murkle-indexer.service
+
+[Service]
+Type=oneshot
+User=murkle
+Group=murkle
+WorkingDirectory=/opt/murkle/current
+EnvironmentFile=/etc/murkle/murkle.env
+ExecStart=/usr/bin/node deploy/bin/monitor.mjs --state /var/lib/murkle/monitor-last.json
+TimeoutStartSec=60
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ReadWritePaths=/var/lib/murkle
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+UMask=0077
+MemoryMax=256M

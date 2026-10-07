@@ -1,0 +1,48 @@
+# Murkle trusted-setup ceremony coordinator (docs/CEREMONY.md). A separate process; the reverse
+# proxy sends /ceremony/api/*, /ceremony/files/* and /ceremony/transcript.json to it.
+[Unit]
+Description=Murkle ceremony coordinator
+Documentation=file:///opt/murkle/current/docs/CEREMONY.md
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=murkle
+Group=murkle
+WorkingDirectory=/opt/murkle/current
+EnvironmentFile=/etc/murkle/ceremony.env
+ExecStart=/usr/bin/node server/ceremony-server.mjs
+Restart=on-failure
+RestartSec=5
+# A contribution being verified is lost on stop; the contributor's slot handling decides what
+# happens to it (docs/CEREMONY.md).
+TimeoutStopSec=30
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ReadWritePaths=/var/lib/murkle/ceremony
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+AmbientCapabilities=
+UMask=0022
+# Verifying a contribution against the real circuit holds the r1cs, the ptau and two zkeys.
+MemoryMax=4G
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,674 @@
+{
+  "schema": 1,
+  "network": "mainnet",
+  "testCount": 915,
+  "circuit": {
+    "constraints": 18411,
+    "proofSystem": "Groth16",
+    "curve": "BN254",
+    "hash": "Poseidon",
+    "treeDepth": 32,
+    "inputs": 2,
+    "outputs": 2,
+    "circom": null,
+    "setup": null,
+    "gitCommit": null
+  },
+  "manifest": {
+    "sha256": null,
+    "present": false
+  },
+  "artifacts": {
+    "vkey": {
+      "file": "verification_key.json",
+      "sha256": null,
+      "bytes": null,
+      "pinned": null,
+      "matchesPin": null
+    },
+    "zkey": {
+      "file": "transaction.zkey",
+      "sha256": null,
+      "bytes": null,
+      "pinned": null,
+      "matchesPin": null
+    },
+    "wasm": {
+      "file": "transaction.wasm",
+      "sha256": "7b9f73d4c5eccdb982f0a132979f5ceedd0bc08b569b94c022dcf0718ca0fe7d",
+      "bytes": 3146866,
+      "pinned": "7b9f73d4c5eccdb982f0a132979f5ceedd0bc08b569b94c022dcf0718ca0fe7d",
+      "matchesPin": true
+    }
+  },
+  "genesis": {
+    "txid": null,
+    "height": null
+  },
+  "audit": {
+    "total": 61,
+    "bySeverity": {
+      "Info": 17,
+      "Low": 37,
+      "Medium": 6,
+      "High": 1
+    },
+    "fixed": 50,
+    "partial": 3,
+    "open": 0,
+    "mediumFixed": 6,
+    "circomspectFindings": 25,
+    "findings": [
+      {
+        "id": "A-1",
+        "severity": "Info",
+        "severityNote": "Info (critical had the protections been absent)",
+        "location": "envelope / indexer",
+        "title": "Public input aliasing",
+        "description": "Public input aliasing. Nullifier n + r is the same field element but a different string in the nullifier set, i.e. a double spend of the same note. Two protections: strict parsing (field < r) and the check in snarkjs 0.7.5",
+        "status": "regression test",
+        "state": "tested"
+      },
+      {
+        "id": "A-2",
+        "severity": "Low",
+        "severityNote": null,
+        "location": "DEPLOY",
+        "title": "mintAmount > 2^63−1 passed validation, but MINT (publicAmount as i64) cannot carry it: the token could never be minted",
+        "description": "mintAmount > 2^63−1 passed validation, but MINT (publicAmount as i64) cannot carry it: the token could never be minted",
+        "status": "fixed + test",
+        "state": "fixed"
+      },
+      {
+        "id": "A-3",
+        "severity": "Medium",
+        "severityNote": null,
+        "location": "block parser",
+        "title": "Merkle root was not verified",
+        "description": "Merkle root was not verified: the data source (API) could add, remove or alter transactions in a block while keeping a valid header. A duplicate check (CVE-2012-2459) was added as well",
+        "status": "fixed + test",
+        "state": "fixed"
+      },
+      {
+        "id": "A-4",
+        "severity": "Medium",
+        "severityNote": null,
+        "location": "proof verification",
+        "title": "snarkjs accepts the point at infinity and G2 points outside the subgroup (it only checks that points lie on the curve)",
+        "description": "snarkjs accepts the point at infinity and G2 points outside the subgroup (it only checks that points lie on the curve). Found while developing the codec",
+        "status": "fixed in proof-codec.mjs + test",
+        "state": "fixed"
+      },
+      {
+        "id": "A-5",
+        "severity": "Info",
+        "severityNote": null,
+        "location": "circuit ↔ indexer",
+        "title": "Cross-layer invariant",
+        "description": "Cross-layer invariant. The circuit does not range-check publicAmount; the balance is sound only when |publicAmount| < 2^63. This is currently enforced by the indexer: i64 in the envelope, TRANSACT = 0, MINT = mintAmount",
+        "status": "documented. Any new operation (unshield) must preserve this invariant",
+        "state": "documented"
+      },
+      {
+        "id": "A-6",
+        "severity": "Low",
+        "severityNote": "Low (economic)",
+        "location": "MINT",
+        "title": "Someone else's MINT envelope from the mempool could be copied into one's own transaction with a treasury payment",
+        "description": "Someone else's MINT envelope from the mempool could be copied into one's own transaction with a treasury payment. The note still went to the original recipient, but if the copy was included in a block first, the original transaction was rejected and its payment was burned",
+        "status": "fixed: the MINT body contains bindOutpoint, and the indexer requires it to be the first input. Test A-6 + live check on signet. For wallets that select inputs themselves (Unisat), MINT_SCRIPT was added: binding to the payer's scriptPubKey. Test + live check. A mint over the cap still burns the payment — by design, as with Runes",
+        "state": "fixed"
+      },
+      {
+        "id": "A-7",
+        "severity": "Info",
+        "severityNote": null,
+        "location": "design",
+        "title": "Note encryption is not proven in the circuit",
+        "description": "Note encryption is not proven in the circuit. A sender can send a garbage ciphertext, in which case the recipient will not find the note and the payment is effectively burned. Deliberate trade-off (SPEC §1)",
+        "status": "documented",
+        "state": "documented"
+      },
+      {
+        "id": "A-8",
+        "severity": "Info",
+        "severityNote": null,
+        "location": "setup",
+        "title": "build/dev is a single-participant dev setup; zkey verify — OK",
+        "description": "build/dev is a single-participant dev setup; zkey verify — OK",
+        "status": "mainnet: public ceremony tooling ready (docs/CEREMONY.md), open until the ceremony runs; signet: DEV setup by design (its genesis pins it)",
+        "state": "documented"
+      },
+      {
+        "id": "A-9",
+        "severity": "Info",
+        "severityNote": null,
+        "location": "sync",
+        "title": "The indexer takes the header chain from the API on trust (does not verify PoW)",
+        "description": "The indexer takes the header chain from the API on trust (does not verify PoW)",
+        "status": "partially fixed: headers verified (linkage, proof of work, retarget, MTP, version, checkpoints, most work among what the source serves) in the indexer, CLI and browser replay; receipts check linked or bounded headers; a Bitcoin Core RPC source lets an operator index from their own node; open: a single source can withhold blocks; the signet signature (BIP325) is not checked",
+        "state": "partial"
+      },
+      {
+        "id": "A-10",
+        "severity": "Info",
+        "severityNote": "Invariant",
+        "location": "protocol / relayer",
+        "title": "TRANSACT validity must never depend on its carrier transaction: extDataHash covers only the envelope body",
+        "description": "TRANSACT validity must never depend on its carrier transaction: extDataHash covers only the envelope body. Any future unshield must put its BTC destination and any relayer fee inside the body bound by extDataHash.",
+        "status": "documented; relied on by anyone who carries an envelope (copy envelope and the paid relayer)",
+        "state": "documented"
+      },
+      {
+        "id": "A-11",
+        "severity": "Low",
+        "severityNote": null,
+        "location": "prevout lookup",
+        "title": "prevoutScript (used by MINT_SCRIPT) now reads raw transaction hex and checks its txid before using the output script, instead of trusting the explorer's JSON",
+        "description": "prevoutScript (used by MINT_SCRIPT) now reads raw transaction hex and checks its txid before using the output script, instead of trusting the explorer's JSON.",
+        "status": "fixed (v1)",
+        "state": "fixed"
+      },
+      {
+        "id": "A-12",
+        "severity": "Medium",
+        "severityNote": null,
+        "location": "indexer / MINT_SCRIPT",
+        "title": "A MINT_SCRIPT carried in a coinbase halted every replayer",
+        "description": "A MINT_SCRIPT carried in a coinbase halted every replayer. The binding check looked up the output spent by the first input, but a coinbase's only input is the null outpoint, which no data source can serve, so the server, the CLI and the browser all retried that block forever. Such a MINT_SCRIPT is now rejected as MINT not bound to this payer with no lookup (SPEC §7). Only block producers can build one; none exists on signet since activation height 324,592, so no past verdict changes. Blocks also apply all or nothing, so a failed lookup never leaves a half-applied block.",
+        "status": "fixed (v1 review round) + test",
+        "state": "fixed"
+      },
+      {
+        "id": "W-1",
+        "severity": "Info",
+        "severityNote": "Invariant",
+        "location": "wallet",
+        "title": "An envelope handed to anyone (relayer or mempool) stays valid until anchor + 100, because anyone can re-carry it",
+        "description": "An envelope handed to anyone (relayer or mempool) stays valid until anchor + 100, because anyone can re-carry it. Its notes may only be used to retry that same transfer until then, or until its nullifiers are spent, so a retry can never double-pay.",
+        "status": "implemented in the wallet; tested",
+        "state": "tested"
+      },
+      {
+        "id": "R-1",
+        "severity": "Info",
+        "severityNote": null,
+        "location": "relayer",
+        "title": "A relayer cannot alter or redirect a transfer and sees no plaintext, but it sees the submitter's IP and timing",
+        "description": "A relayer cannot alter or redirect a transfer and sees no plaintext, but it sees the submitter's IP and timing. Liveness and censorship by IP are trusted. The free relayer this row first described (\"Ghost Relay\") is retired, see R-2.",
+        "status": "documented in the UI and README",
+        "state": "documented"
+      },
+      {
+        "id": "R-2",
+        "severity": "High",
+        "severityNote": "High (operator funds)",
+        "location": "relayer",
+        "title": "A sponsored relayer can be drained by anyone",
+        "description": "A sponsored relayer can be drained by anyone. The free relayer (\"Ghost Relay\") paid every private transfer's carrier from the operator's own BTC. A zero-value transfer is valid and needs no tokens (an input with inAmount = 0 skips the Merkle check, ForceEqualIfEnabled), so anyone with CPU for proofs could make it pay carrier fees without end. Budget caps, rate limits and the proof-of-work only capped the loss per day and turned it into a denial of service.",
+        "status": "fixed: the free relayer is retired (stage 0 of docs/design/paid-relay.md); the server refuses to start a relayer without a relay balance configuration, and relaying is paid only from prepaid relay balances, in confirmed BTC credited before carriage (R-3). Test: test/paid-relay-stage0.test.mjs",
+        "state": "fixed"
+      },
+      {
+        "id": "R-3",
+        "severity": "Info",
+        "severityNote": "Invariant",
+        "location": "relayer",
+        "title": "I-PAY: the operator never pays any part of a user's transaction",
+        "description": "I-PAY: the operator never pays any part of a user's transaction. I0 provenance (assertProvenance), I1 coverage (signPoolTx, the only signing call site, which charges the exact fee before any signature) and I2 books (checkBooks / RelayBooks.checkI2, which halts the relayer on any mismatch).",
+        "status": "implemented in the relayer; tested in test/relay-books.test.mjs, test/relay-balance-relayer.test.mjs, test/relay-account.test.mjs, test/relay-balance-cli.test.mjs and end to end in test/relay-balance-e2e.test.mjs",
+        "state": "tested"
+      },
+      {
+        "id": "V2-01",
+        "severity": "Low",
+        "severityNote": null,
+        "location": "supply chain (found by the circuit auditor)",
+        "title": "Vite 6.3.5 dev server and underscore (via snarkjs, bfj, jsonpath) have known advisories; npm audit reported 4 high",
+        "description": "Vite 6.3.5 dev server and underscore (via snarkjs, bfj, jsonpath) have known advisories; npm audit reported 4 high",
+        "status": "partially fixed: vite ^6.4.3 and an underscore 1.13.8 override in package.json and the lockfile (npm audit --package-lock-only: 0) + test audit2-tooling; the installed packages and the running Vite stay old until the owner runs npm ci and restarts",
+        "state": "partial"
+      },
+      {
+        "id": "V2-02",
+        "severity": "Low",
+        "severityNote": null,
+        "location": "indexer",
+        "title": "A DEPLOY ticker with a UTF-8 BOM decodes to a plain ASCII ticker, so a SPEC-conformant replayer would diverge",
+        "description": "A DEPLOY ticker with a UTF-8 BOM decodes to a plain ASCII ticker, so a SPEC-conformant replayer would diverge",
+        "status": "fixed on mainnet from genesis (raw ticker bytes must be 1-16 of A-Z0-9); signet keeps the historical rule, and the integration replay checks that no signet DEPLOY is affected",
+        "state": "fixed"
+      },
+      {
+        "id": "V2-03",
+        "severity": "Low",
+        "severityNote": null,
+        "location": "indexer",
+        "title": "SPEC omitted two DEPLOY rules the decoder enforces (mintAmount at most 2^63-1, endHeight not before startHeight)",
+        "description": "SPEC omitted two DEPLOY rules the decoder enforces (mintAmount at most 2^63-1, endHeight not before startHeight)",
+        "status": "fixed (SPEC §7) + test audit2-protocol",
+        "state": "fixed"
+      },
+      {
+        "id": "V2-04",
+        "severity": "Low",
+        "severityNote": null,
+        "location": "indexer",
+        "title": "The OP_RETURN payload extraction rule was under-specified",
+        "description": "The OP_RETURN payload extraction rule was under-specified",
+        "status": "fixed (SPEC §6 rule 1 states the exact rule; code unchanged) + test audit2-protocol",
+        "state": "fixed"
+      },
+      {
+        "id": "V2-05",
+        "severity": "Low",
+        "severityNote": null,
+        "location": "indexer",
+        "title": "SPEC claimed a pool withdrawal bound that does not exist and overstated what the cap guarantees",
+        "description": "SPEC claimed a pool withdrawal bound that does not exist and overstated what the cap guarantees",
+        "status": "fixed (SPEC §6 corrected; the check ships with withdrawals) + test audit2-docs",
+        "state": "fixed"
+      },
+      {
+        "id": "V2-06",
+        "severity": "Info",
+        "severityNote": null,
+        "location": "indexer",
+        "title": "treasurySats counts the minter's change paid back to the treasury script",
+        "description": "treasurySats counts the minter's change paid back to the treasury script",
+        "status": "fixed: defined as gross sats in SPEC §11, relabelled on the token page and in the CLI + test audit2-protocol, audit2-integration",
+        "state": "fixed"
+      },
+      {
+        "id": "V2-07",
+        "severity": "Low",
+        "severityNote": null,
+        "location": "bitcoin",
+        "title": "Esplora.feeRate() worked only against mempool.space, so MURKLE_ESPLORA broke the relayer and every CLI carrier command",
+        "description": "Esplora.feeRate() worked only against mempool.space, so MURKLE_ESPLORA broke the relayer and every CLI carrier command",
+        "status": "fixed + test audit2-protocol",
+        "state": "fixed"
+      },
+      {
+        "id": "V2-08",
+        "severity": "Low",
+        "severityNote": null,
+        "location": "bitcoin",
+        "title": "txSizes() looped without bound on hostile raw-tx hex and hung the in-browser verifier",
+        "description": "txSizes() looped without bound on hostile raw-tx hex and hung the in-browser verifier",
+        "status": "fixed + test audit2-protocol",
+        "state": "fixed"
+      },
+      {
+        "id": "V2-09",
+        "severity": "Low",
+        "severityNote": null,
+        "location": "bitcoin",
+        "title": "scripts/send-btc.mjs built non-relayable transactions (dust change, early stop, fixed 1 sat/vB)",
+        "description": "scripts/send-btc.mjs built non-relayable transactions (dust change, early stop, fixed 1 sat/vB)",
+        "status": "fixed + test audit2-tooling",
+        "state": "fixed"
+      },
+      {
+        "id": "V2-10",
+        "severity": "Low",
+        "severityNote": null,
+        "location": "server",
+        "title": "Any /embed/* path made the whole wallet app frameable",
+        "description": "Any /embed/* path made the whole wallet app frameable",
+        "status": "fixed (headers deny framing everywhere; client frame guard) + test audit2-server, audit2-integration",
+        "state": "fixed"
+      },
+      {
+        "id": "V2-11",
+        "severity": "Low",
+        "severityNote": null,
+        "location": "server",
+        "title": "/api/state tipHash and recentHashes read the live indexer, not the published view",
+        "description": "/api/state tipHash and recentHashes read the live indexer, not the published view",
+        "status": "fixed + test audit2-server",
+        "state": "fixed"
+      },
+      {
+        "id": "V2-12",
+        "severity": "Info",
+        "severityNote": null,
+        "location": "server",
+        "title": "/api/roots?height= with an empty value answered 404 instead of 400",
+        "description": "/api/roots?height= with an empty value answered 404 instead of 400",
+        "status": "fixed + test audit2-server",
+        "state": "fixed"
+      },
+      {
+        "id": "V2-13",
+        "severity": "Info",
+        "severityNote": null,
+        "location": "server",
+        "title": "og:image and twitter:image were relative when MURKLE_PUBLIC_URL is unset",
+        "description": "og:image and twitter:image were relative when MURKLE_PUBLIC_URL is unset",
+        "status": "fixed + test audit2-server",
+        "state": "fixed"
+      },
+      {
+        "id": "V2-14",
+        "severity": "Info",
+        "severityNote": null,
+        "location": "server",
+        "title": "docs/API.md left deploys, attests and height out of /api/stats",
+        "description": "docs/API.md left deploys, attests and height out of /api/stats",
+        "status": "fixed + test audit2-docs",
+        "state": "fixed"
+      },
+      {
+        "id": "V2-15",
+        "severity": "Medium",
+        "severityNote": null,
+        "location": "relayer",
+        "title": "The real explorer answers 200 {confirmed:false} for an unknown txid, so the relayer's \"explorer does not know this txid\" branches never ran in production",
+        "description": "The real explorer answers 200 {confirmed:false} for an unknown txid, so the relayer's \"explorer does not know this txid\" branches never ran in production",
+        "status": "fixed + test audit2-server, audit2-integration; the test explorer now answers like mempool.space",
+        "state": "fixed"
+      },
+      {
+        "id": "V2-16",
+        "severity": "Low",
+        "severityNote": null,
+        "location": "relayer",
+        "title": "A lone deposit was never merged at 3 sat/vB or more, yet sends were accepted with 202 and then expired",
+        "description": "A lone deposit was never merged at 3 sat/vB or more, yet sends were accepted with 202 and then expired",
+        "status": "fixed + test audit2-server",
+        "state": "fixed"
+      },
+      {
+        "id": "V2-17",
+        "severity": "Low",
+        "severityNote": null,
+        "location": "relayer",
+        "title": "item.unknownOutcome was write-only: a carrier whose first answer was lost could later be refunded and still be mined",
+        "description": "item.unknownOutcome was write-only: a carrier whose first answer was lost could later be refunded and still be mined",
+        "status": "fixed for carriers + test audit2-server; see the residuals below for merges and fan-outs",
+        "state": "fixed"
+      },
+      {
+        "id": "V2-18",
+        "severity": "Low",
+        "severityNote": null,
+        "location": "wallet",
+        "title": "The relay deposit address used the network the server reported, so a hostile relayer could show a mainnet address labelled SIGNET",
+        "description": "The relay deposit address used the network the server reported, so a hostile relayer could show a mainnet address labelled SIGNET",
+        "status": "fixed + test audit2-web",
+        "state": "fixed"
+      },
+      {
+        "id": "V2-19",
+        "severity": "Low",
+        "severityNote": null,
+        "location": "wallet",
+        "title": "With localStorage full, a vault write went to memory and the next pull deleted the new W-1 entry",
+        "description": "With localStorage full, a vault write went to memory and the next pull deleted the new W-1 entry",
+        "status": "fixed + test audit2-web",
+        "state": "fixed"
+      },
+      {
+        "id": "V2-20",
+        "severity": "Low",
+        "severityNote": null,
+        "location": "wallet",
+        "title": "After an indexer switch, top-ups derived deposit addresses from the old relayer's pool key",
+        "description": "After an indexer switch, top-ups derived deposit addresses from the old relayer's pool key",
+        "status": "fixed + test audit2-web",
+        "state": "fixed"
+      },
+      {
+        "id": "V2-21",
+        "severity": "Low",
+        "severityNote": null,
+        "location": "wallet",
+        "title": "An indexer switch kept the old indexer's log and verdicts",
+        "description": "An indexer switch kept the old indexer's log and verdicts",
+        "status": "fixed + test audit2-web",
+        "state": "fixed"
+      },
+      {
+        "id": "V2-22",
+        "severity": "Low",
+        "severityNote": null,
+        "location": "wallet",
+        "title": "The W-1 reservation started only after proving, so two tabs could spend the same notes",
+        "description": "The W-1 reservation started only after proving, so two tabs could spend the same notes",
+        "status": "fixed + test audit2-web",
+        "state": "fixed"
+      },
+      {
+        "id": "V2-23",
+        "severity": "Low",
+        "severityNote": null,
+        "location": "wallet",
+        "title": "Lock in one tab left every other tab unlocked",
+        "description": "Lock in one tab left every other tab unlocked",
+        "status": "fixed + test audit2-web",
+        "state": "fixed"
+      },
+      {
+        "id": "V2-24",
+        "severity": "Low",
+        "severityNote": null,
+        "location": "wallet",
+        "title": "Streamer mode in one tab did not mask other open tabs",
+        "description": "Streamer mode in one tab did not mask other open tabs",
+        "status": "fixed + test audit2-web",
+        "state": "fixed"
+      },
+      {
+        "id": "V2-25",
+        "severity": "Low",
+        "severityNote": null,
+        "location": "wallet",
+        "title": "Unisat payments never re-checked that Unisat was still on signet",
+        "description": "Unisat payments never re-checked that Unisat was still on signet",
+        "status": "fixed + test audit2-web",
+        "state": "fixed"
+      },
+      {
+        "id": "V2-26",
+        "severity": "Low",
+        "severityNote": null,
+        "location": "wallet",
+        "title": "Every /embed/* path served the full wallet app without framing protection (same issue as V2-10)",
+        "description": "Every /embed/* path served the full wallet app without framing protection (same issue as V2-10)",
+        "status": "fixed with V2-10 + test audit2-server",
+        "state": "fixed"
+      },
+      {
+        "id": "V2-27",
+        "severity": "Low",
+        "severityNote": null,
+        "location": "wallet",
+        "title": "The Settings phrase reveal stayed visible when the window lost focus",
+        "description": "The Settings phrase reveal stayed visible when the window lost focus",
+        "status": "fixed + test audit2-web",
+        "state": "fixed"
+      },
+      {
+        "id": "V2-28",
+        "severity": "Low",
+        "severityNote": null,
+        "location": "verification",
+        "title": "A rebuild-root mismatch (indexer caught inconsistent) was reported as a failed proof that agreed with the browser",
+        "description": "A rebuild-root mismatch (indexer caught inconsistent) was reported as a failed proof that agreed with the browser",
+        "status": "fixed + test audit2-protocol",
+        "state": "fixed"
+      },
+      {
+        "id": "V2-29",
+        "severity": "Medium",
+        "severityNote": null,
+        "location": "verification",
+        "title": "A pairing failure against an untrusted anchor root counted as a rule violation and agreed with an indexer rejection",
+        "description": "A pairing failure against an untrusted anchor root counted as a rule violation and agreed with an indexer rejection",
+        "status": "fixed + test audit2-protocol, audit2-integration",
+        "state": "fixed"
+      },
+      {
+        "id": "V2-30",
+        "severity": "Low",
+        "severityNote": null,
+        "location": "verification",
+        "title": "An indexer that accepts a double spend or an over-cap mint got \"They agree\" with a YOU chip",
+        "description": "An indexer that accepts a double spend or an over-cap mint got \"They agree\" with a YOU chip",
+        "status": "fixed (history rules labelled IDX unless a local replay covers them) + test audit2-protocol, audit2-integration",
+        "state": "fixed"
+      },
+      {
+        "id": "V2-31",
+        "severity": "Low",
+        "severityNote": null,
+        "location": "verification",
+        "title": "A root rebuilt from indexer-served commitments was labelled YOU, as were Root Match and \"State verified\"",
+        "description": "A root rebuilt from indexer-served commitments was labelled YOU, as were Root Match and \"State verified\"",
+        "status": "fixed + test audit2-web",
+        "state": "fixed"
+      },
+      {
+        "id": "V2-32",
+        "severity": "Low",
+        "severityNote": null,
+        "location": "verification",
+        "title": "A saved replay's root was used without checking the anchor block was still on the active chain",
+        "description": "A saved replay's root was used without checking the anchor block was still on the active chain",
+        "status": "fixed + test audit2-web",
+        "state": "fixed"
+      },
+      {
+        "id": "V2-33",
+        "severity": "Low",
+        "severityNote": null,
+        "location": "cli-supply",
+        "title": "CLI wallet files were written world-readable, non-atomically, and last writer wins across concurrent commands",
+        "description": "CLI wallet files were written world-readable, non-atomically, and last writer wins across concurrent commands",
+        "status": "fixed + test audit2-tooling",
+        "state": "fixed"
+      },
+      {
+        "id": "V2-34",
+        "severity": "Low",
+        "severityNote": null,
+        "location": "cli-supply",
+        "title": "Relay commands accepted plain http:// to any host, so a network attacker could redirect top-ups",
+        "description": "Relay commands accepted plain http:// to any host, so a network attacker could redirect top-ups",
+        "status": "fixed + test audit2-tooling",
+        "state": "fixed"
+      },
+      {
+        "id": "V2-35",
+        "severity": "Low",
+        "severityNote": null,
+        "location": "cli-supply",
+        "title": "pending and retry asked the wrong relayer whether relaying was open, then looked up batch entries before release",
+        "description": "pending and retry asked the wrong relayer whether relaying was open, then looked up batch entries before release",
+        "status": "fixed + test audit2-tooling",
+        "state": "fixed"
+      },
+      {
+        "id": "V2-36",
+        "severity": "Low",
+        "severityNote": null,
+        "location": "cli-supply",
+        "title": "deploy and attest genesis silently ignored unknown or mistyped flags",
+        "description": "deploy and attest genesis silently ignored unknown or mistyped flags",
+        "status": "fixed + test audit2-tooling",
+        "state": "fixed"
+      },
+      {
+        "id": "V2-37",
+        "severity": "Low",
+        "severityNote": null,
+        "location": "cli-supply",
+        "title": "Self-paid send wrote its W-1 entry only after broadcast and did not validate the amount",
+        "description": "Self-paid send wrote its W-1 entry only after broadcast and did not validate the amount",
+        "status": "fixed + test audit2-tooling",
+        "state": "fixed"
+      },
+      {
+        "id": "V2-38",
+        "severity": "Info",
+        "severityNote": null,
+        "location": "cli-supply",
+        "title": ".dockerignore missed secret patterns, the runtime code was writable by the service user, images and actions are pinned by tag",
+        "description": ".dockerignore missed secret patterns, the runtime code was writable by the service user, images and actions are pinned by tag",
+        "status": "partially fixed: secret patterns added and code copied as root + test audit2-tooling; image and action digests are not pinned",
+        "state": "partial"
+      },
+      {
+        "id": "V2-39",
+        "severity": "Info",
+        "severityNote": null,
+        "location": "cli-supply",
+        "title": "The powers-of-tau download was not size-capped before hashing",
+        "description": "The powers-of-tau download was not size-capped before hashing",
+        "status": "fixed + test audit2-tooling",
+        "state": "fixed"
+      },
+      {
+        "id": "V2-40",
+        "severity": "Medium",
+        "severityNote": null,
+        "location": "live-consistency",
+        "title": "murkle audit stopped on the first network reset and threw away the whole replay",
+        "description": "murkle audit stopped on the first network reset and threw away the whole replay",
+        "status": "fixed + test audit2-protocol, audit2-integration; confirmed live (below)",
+        "state": "fixed"
+      },
+      {
+        "id": "V2-41",
+        "severity": "Low",
+        "severityNote": null,
+        "location": "live-consistency",
+        "title": "The CLI and the live server wrote the same state.json through the same temp path",
+        "description": "The CLI and the live server wrote the same state.json through the same temp path",
+        "status": "fixed (unique temp files; the CLI keeps cli-state.json) + test audit2-protocol, audit2-integration",
+        "state": "fixed"
+      },
+      {
+        "id": "V2-42",
+        "severity": "Low",
+        "severityNote": null,
+        "location": "live-consistency",
+        "title": "\"Treasury received\" counted the minter's change (same issue as V2-06)",
+        "description": "\"Treasury received\" counted the minter's change (same issue as V2-06)",
+        "status": "fixed with V2-06 + test audit2-integration",
+        "state": "fixed"
+      },
+      {
+        "id": "V2-43",
+        "severity": "Low",
+        "severityNote": null,
+        "location": "live-consistency",
+        "title": "README said MURKLE_ALLOW_UNPINNED relaxes the verification key check; it only relaxes the manifest check",
+        "description": "README said MURKLE_ALLOW_UNPINNED relaxes the verification key check; it only relaxes the manifest check",
+        "status": "fixed + test audit2-docs",
+        "state": "fixed"
+      },
+      {
+        "id": "V2-44",
+        "severity": "Info",
+        "severityNote": null,
+        "location": "live-consistency",
+        "title": "/api/state.artifacts was a startup snapshot, never rechecked against the files served",
+        "description": "/api/state.artifacts was a startup snapshot, never rechecked against the files served",
+        "status": "fixed + test audit2-server",
+        "state": "fixed"
+      },
+      {
+        "id": "V2-45",
+        "severity": "Info",
+        "severityNote": null,
+        "location": "live-consistency",
+        "title": "docs/API.md left fields out of /api/stats (same issue as V2-14)",
+        "description": "docs/API.md left fields out of /api/stats (same issue as V2-14)",
+        "status": "fixed with V2-14 + test audit2-docs",
+        "state": "fixed"
+      }
+    ]
+  }
+}

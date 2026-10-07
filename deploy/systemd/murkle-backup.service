@@ -1,0 +1,38 @@
+# One encrypted backup (deploy/bin/backup.mjs) of /var/lib/murkle/<network>: the relayer's keys
+# and books, the indexer state and the header chain. Started hourly by murkle-backup.timer and
+# when relayer.json changes (murkle-backup.path); --min-interval skips a run when the newest
+# backup is under 5 minutes old, so a busy relayer does not flood the backup directory.
+# Copying /var/backups/murkle off this server is the operator's job (docs/OPERATIONS.md).
+[Unit]
+Description=Murkle encrypted backup
+Documentation=file:///opt/murkle/current/docs/OPERATIONS.md
+
+[Service]
+Type=oneshot
+User=murkle
+Group=murkle
+WorkingDirectory=/opt/murkle/current
+EnvironmentFile=/etc/murkle/murkle.env
+ExecStart=/usr/bin/node deploy/bin/backup.mjs backup --min-interval 300 --keep-daily 14
+TimeoutStartSec=300
+Nice=10
+IOSchedulingClass=idle
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ReadOnlyPaths=/var/lib/murkle
+ReadWritePaths=/var/backups/murkle
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_UNIX
+RestrictNamespaces=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+UMask=0077
+MemoryMax=2G

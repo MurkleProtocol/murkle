@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Murkle · Trusted setup ceremony</title>
+    <meta name="description" content="Add your randomness to the Murkle proving key. The key is sound if at least one contributor discards their secret." />
+    <meta name="color-scheme" content="dark light" />
+    <meta name="referrer" content="no-referrer" />
+    <meta name="robots" content="noindex" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <!-- Applies the saved theme before first paint. A file, not inline: the CSP forbids inline script. -->
+    <script src="/theme-boot.js"></script>
+  </head>
+  <body>
+    <noscript>
+      <p style="padding:16px;font:15px/24px system-ui,sans-serif">The ceremony runs in your browser, so it needs JavaScript. Enable it and reload the page, or contribute from the command line (docs/CEREMONY.md).</p>
+    </noscript>
+    <main class="cer-page">
+      <header class="cer-head">
+        <p class="eyebrow">Murkle · phase 2 · Groth16</p>
+        <h1 class="display">Trusted setup ceremony</h1>
+        <p class="lead">Murkle's private transfers are checked with a Groth16 proving key. Whoever knew all the randomness used to make that key could forge proofs. This ceremony makes the key from many people's randomness, one after another: it is sound if at least one contributor generated their secret honestly and discarded it.</p>
+      </header>
+
+      <section class="cer-card" aria-labelledby="status-h">
+        <h2 id="status-h">Status</h2>
+        <div id="status"><p class="cer-note">Loading…</p></div>
+        <p class="small"><a id="transcript-link" href="/ceremony/api/transcript.json">Public transcript</a> · every accepted contribution, its hash, name and time.</p>
+      </section>
+
+      <section class="cer-card" aria-labelledby="join-h">
+        <h2 id="join-h">Contribute</h2>
+        <ul class="cer-list small">
+          <li>Your browser downloads the latest key (about 12 MB), mixes in fresh random numbers and uploads the result. It takes a minute or two and needs this tab to stay open.</li>
+          <li>Your computer must not be compromised while it runs: malware that reads this tab's memory could learn your secret. Closing the tab afterwards discards it.</li>
+          <li>The name you enter is public: it goes into the key and the transcript. Use a handle if you prefer.</li>
+          <li>The coordinator sees your IP address (for rate limits) and can refuse or delay you. Once it accepts your contribution it cannot change or fake it without that showing: anyone can verify the transcript, and you can check that your hash, computed here, is in it.</li>
+          <li>This page and its code come from the coordinator's site, so contributing here means trusting that site not to serve modified code. To remove that trust, contribute from the command line with a checkout you reviewed (docs/CEREMONY.md).</li>
+        </ul>
+        <form id="join-form" class="cer-form" autocomplete="off">
+          <label class="field">
+            <span class="field-label">Public name</span>
+            <input id="name" class="input" maxlength="64" required spellcheck="false" placeholder="e.g. satoshi-fan-42" />
+          </label>
+          <label class="field">
+            <span class="field-label">Extra randomness (optional)</span>
+            <input id="extra" class="input" spellcheck="false" placeholder="Type anything. It is mixed in, never sent or stored." />
+          </label>
+          <div class="cer-row">
+            <button id="join-btn" class="btn btn--neutral" type="submit" disabled>Join the queue</button>
+            <span id="join-note" class="cer-note small" role="status"></span>
+          </div>
+        </form>
+        <div id="run" class="cer-progress" role="status" aria-live="polite" hidden></div>
+      </section>
+
+      <section id="receipt" class="cer-card" aria-live="polite" hidden></section>
+
+      <section class="cer-card" aria-labelledby="lookup-h">
+        <h2 id="lookup-h">Check a contribution hash</h2>
+        <form id="lookup-form" class="cer-form" autocomplete="off">
+          <label class="field">
+            <span class="field-label">Contribution hash (128 hex characters, spaces allowed)</span>
+            <input id="lookup-hash" class="input mono" spellcheck="false" />
+          </label>
+          <div class="cer-row"><button class="btn btn--secondary btn--sm" type="submit">Look it up</button></div>
+          <p id="lookup-out" class="small" role="status"></p>
+        </form>
+      </section>
+
+      <section class="cer-card" aria-labelledby="after-h">
+        <h2 id="after-h">After the queue closes</h2>
+        <p class="small">The queue closes a few blocks before a Bitcoin block height announced in advance, and the operator publishes a commitment to the list of contributions at once. The hash of that block, which nobody can know earlier, is applied as a final public step (the beacon). The close height is the coordinator's own statement: the beacon rules out a last contribution chosen after the block was known only if that commitment was publicly witnessed before the block. The final key, every intermediate key and the transcript are published, and anyone can re-run the whole check with <span class="mono">scripts/ceremony/verify.mjs</span>.</p>
+      </section>
+    </main>
+    <script type="module" src="/src/ceremony/main.js"></script>
+  </body>
+</html>

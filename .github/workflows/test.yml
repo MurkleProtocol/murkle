@@ -1,0 +1,61 @@
+name: test
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test (${{ matrix.os }}, Node ${{ matrix.node }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        node: [22, 24]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      - run: npm ci
+
+      # The pinned circuit artifacts are not in git (the zkey alone is 12 MB and cannot be
+      # rebuilt). Set the repository variable MURKLE_ARTIFACTS_URL to the release that carries
+      # them, e.g. https://github.com/<owner>/<repo>/releases/download/<tag> (PUBLISHING.md).
+      - name: Restore cached artifacts
+        uses: actions/cache@v4
+        with:
+          path: build
+          key: murkle-artifacts-${{ hashFiles('src/pins.json') }}
+
+      - name: Fetch and verify the pinned artifacts
+        id: artifacts
+        shell: bash
+        env:
+          MURKLE_ARTIFACTS_URL: ${{ vars.MURKLE_ARTIFACTS_URL }}
+        run: |
+          if node scripts/fetch-artifacts.mjs --check --quiet; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          elif [ -z "$MURKLE_ARTIFACTS_URL" ]; then
+            echo "::notice title=Tests skipped::The repository variable MURKLE_ARTIFACTS_URL is not set, so the pinned circuit artifacts cannot be fetched and npm test is skipped. Publish the artifacts release and set the variable (PUBLISHING.md)."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            node scripts/fetch-artifacts.mjs
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: npm test
+        if: steps.artifacts.outputs.ready == 'true'
+        run: npm test
+
+      - name: Check what the repository publishes
+        run: node scripts/prepublish-check.mjs

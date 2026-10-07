@@ -1,0 +1,46 @@
+# Keep secrets, local state and generated files out of the image build context.
+.git
+.github
+node_modules
+build
+data
+web/dist
+docs/internal
+**/.prepublish-deny
+**/*.key
+**/*.pem
+**/*.p12
+**/*.pfx
+**/*.wif
+# Recovery phrases, seed backups and editor swap or backup copies (of a key, say), as .gitignore.
+**/mnemonic*
+**/seed*.txt
+**/*.swp
+**/*.swo
+**/*~
+**/wallets
+**/relay-balance
+**/relayer.json
+**/state.json
+**/.env
+**/.env.*
+**/.fixtures-tmp*
+**/*-tmp.*
+**/*.log
+**/*.tmp
+**/*.part
+# Deployment settings and backups: real env files (the *.example files stay), the compose env
+# file, encrypted backups and backup keys (keygen writes <name>.key, caught by **/*.key, and <name>.key.pub).
+deploy/**/*.env
+deploy/docker/compose.env
+**/*.mbk
+**/*.key.pub
+.vite
+.vscode
+.idea
+.claude
+**/.DS_Store
+**/Thumbs.db
+**/desktop.ini
+LICENSE-CHOICE.md
+PUBLISHING.md

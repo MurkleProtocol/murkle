@@ -1,0 +1,14 @@
+# Starts a backup when the paid relayer's books change (a credit, a charge, a refund).
+# A template: the instance is the network, so the path cannot name the wrong one.
+#   systemctl enable --now murkle-backup@<network>.path   (the instance is signet or mainnet)
+# The service's --min-interval keeps this to one backup per 5 minutes at most; the hourly
+# timer runs as well.
+[Unit]
+Description=Back up Murkle when the %i relayer books change
+
+[Path]
+PathChanged=/var/lib/murkle/%i/relay-balance/relayer.json
+Unit=murkle-backup.service
+
+[Install]
+WantedBy=multi-user.target

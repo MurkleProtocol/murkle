@@ -1,0 +1,216 @@
+circomspect: analyzing template 'Transaction'
+note: Field element arithmetic could overflow, which may produce unexpected results.
+    ┌─ circuits/lib.circom:120:37
+    │
+120 │         for (var j = 0; j < levels; j++) {
+    │                                     ^^^ Field element arithmetic here.
+    │
+    = For more details, see https://github.com/trailofbits/circomspect/blob/main/doc/analysis_passes.md#field-element-arithmetic.
+
+note: Field element arithmetic could overflow, which may produce unexpected results.
+    ┌─ circuits/lib.circom:132:9
+    │
+132 │         sumIns += inAmount[i];
+    │         ^^^^^^^^^^^^^^^^^^^^^ Field element arithmetic here.
+    │
+    = For more details, see https://github.com/trailofbits/circomspect/blob/main/doc/analysis_passes.md#field-element-arithmetic.
+
+note: Field element arithmetic could overflow, which may produce unexpected results.
+   ┌─ circuits/lib.circom:96:31
+   │
+96 │     for (var i = 0; i < nIns; i++) {
+   │                               ^^^ Field element arithmetic here.
+   │
+   = For more details, see https://github.com/trailofbits/circomspect/blob/main/doc/analysis_passes.md#field-element-arithmetic.
+
+note: Field element arithmetic could overflow, which may produce unexpected results.
+    ┌─ circuits/lib.circom:149:9
+    │
+149 │         sumOuts += outAmount[i];
+    │         ^^^^^^^^^^^^^^^^^^^^^^^ Field element arithmetic here.
+    │
+    = For more details, see https://github.com/trailofbits/circomspect/blob/main/doc/analysis_passes.md#field-element-arithmetic.
+
+note: Field element arithmetic could overflow, which may produce unexpected results.
+    ┌─ circuits/lib.circom:139:32
+    │
+139 │     for (var i = 0; i < nOuts; i++) {
+    │                                ^^^ Field element arithmetic here.
+    │
+    = For more details, see https://github.com/trailofbits/circomspect/blob/main/doc/analysis_passes.md#field-element-arithmetic.
+
+note: Field element arithmetic could overflow, which may produce unexpected results.
+    ┌─ circuits/lib.circom:153:30
+    │
+153 │     component sameNullifiers[nIns * (nIns - 1) / 2];
+    │                              ^^^^^^^^^^^^^^^^^^^^^ Field element arithmetic here.
+    │
+    = For more details, see https://github.com/trailofbits/circomspect/blob/main/doc/analysis_passes.md#field-element-arithmetic.
+
+note: Field element arithmetic could overflow, which may produce unexpected results.
+    ┌─ circuits/lib.circom:155:25
+    │
+155 │     for (var i = 0; i < nIns - 1; i++) {
+    │                         ^^^^^^^^ Field element arithmetic here.
+    │
+    = For more details, see https://github.com/trailofbits/circomspect/blob/main/doc/analysis_passes.md#field-element-arithmetic.
+
+note: Field element arithmetic could overflow, which may produce unexpected results.
+    ┌─ circuits/lib.circom:156:22
+    │
+156 │         for (var j = i + 1; j < nIns; j++) {
+    │                      ^^^^^ Field element arithmetic here.
+    │
+    = For more details, see https://github.com/trailofbits/circomspect/blob/main/doc/analysis_passes.md#field-element-arithmetic.
+
+note: Field element arithmetic could overflow, which may produce unexpected results.
+    ┌─ circuits/lib.circom:161:13
+    │
+161 │             k++;
+    │             ^^^ Field element arithmetic here.
+    │
+    = For more details, see https://github.com/trailofbits/circomspect/blob/main/doc/analysis_passes.md#field-element-arithmetic.
+
+note: Field element arithmetic could overflow, which may produce unexpected results.
+    ┌─ circuits/lib.circom:156:39
+    │
+156 │         for (var j = i + 1; j < nIns; j++) {
+    │                                       ^^^ Field element arithmetic here.
+    │
+    = For more details, see https://github.com/trailofbits/circomspect/blob/main/doc/analysis_passes.md#field-element-arithmetic.
+
+note: Field element arithmetic could overflow, which may produce unexpected results.
+    ┌─ circuits/lib.circom:155:35
+    │
+155 │     for (var i = 0; i < nIns - 1; i++) {
+    │                                   ^^^ Field element arithmetic here.
+    │
+    = For more details, see https://github.com/trailofbits/circomspect/blob/main/doc/analysis_passes.md#field-element-arithmetic.
+
+note: Field element arithmetic could overflow, which may produce unexpected results.
+    ┌─ circuits/lib.circom:167:5
+    │
+167 │     sumIns + publicAmount === sumOuts;
+    │     ^^^^^^^^^^^^^^^^^^^^^ Field element arithmetic here.
+    │
+    = For more details, see https://github.com/trailofbits/circomspect/blob/main/doc/analysis_passes.md#field-element-arithmetic.
+
+note: Field element arithmetic could overflow, which may produce unexpected results.
+    ┌─ circuits/lib.circom:170:5
+    │
+170 │     publicAmount * (asset - publicAsset) === 0;
+    │     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Field element arithmetic here.
+    │
+    = For more details, see https://github.com/trailofbits/circomspect/blob/main/doc/analysis_passes.md#field-element-arithmetic.
+
+note: Field element arithmetic could overflow, which may produce unexpected results.
+    ┌─ circuits/lib.circom:173:30
+    │
+173 │     signal extDataSquare <== extDataHash * extDataHash;
+    │                              ^^^^^^^^^^^^^^^^^^^^^^^^^ Field element arithmetic here.
+    │
+    = For more details, see https://github.com/trailofbits/circomspect/blob/main/doc/analysis_passes.md#field-element-arithmetic.
+
+note: Comparisons with field elements greater than `p/2` may produce unexpected results.
+   ┌─ circuits/lib.circom:96:21
+   │
+96 │     for (var i = 0; i < nIns; i++) {
+   │                     ^^^^^^^^ Field element comparison here.
+   │
+   = Field elements are always normalized to the interval `(-p/2, p/2]` before they are compared.
+   = For more details, see https://github.com/trailofbits/circomspect/blob/main/doc/analysis_passes.md#field-element-comparison.
+
+note: Comparisons with field elements greater than `p/2` may produce unexpected results.
+    ┌─ circuits/lib.circom:120:25
+    │
+120 │         for (var j = 0; j < levels; j++) {
+    │                         ^^^^^^^^^^ Field element comparison here.
+    │
+    = Field elements are always normalized to the interval `(-p/2, p/2]` before they are compared.
+    = For more details, see https://github.com/trailofbits/circomspect/blob/main/doc/analysis_passes.md#field-element-comparison.
+
+note: Comparisons with field elements greater than `p/2` may produce unexpected results.
+    ┌─ circuits/lib.circom:139:21
+    │
+139 │     for (var i = 0; i < nOuts; i++) {
+    │                     ^^^^^^^^^ Field element comparison here.
+    │
+    = Field elements are always normalized to the interval `(-p/2, p/2]` before they are compared.
+    = For more details, see https://github.com/trailofbits/circomspect/blob/main/doc/analysis_passes.md#field-element-comparison.
+
+note: Comparisons with field elements greater than `p/2` may produce unexpected results.
+    ┌─ circuits/lib.circom:155:21
+    │
+155 │     for (var i = 0; i < nIns - 1; i++) {
+    │                     ^^^^^^^^^^^^ Field element comparison here.
+    │
+    = Field elements are always normalized to the interval `(-p/2, p/2]` before they are compared.
+    = For more details, see https://github.com/trailofbits/circomspect/blob/main/doc/analysis_passes.md#field-element-comparison.
+
+note: Comparisons with field elements greater than `p/2` may produce unexpected results.
+    ┌─ circuits/lib.circom:156:29
+    │
+156 │         for (var j = i + 1; j < nIns; j++) {
+    │                             ^^^^^^^^ Field element comparison here.
+    │
+    = Field elements are always normalized to the interval `(-p/2, p/2]` before they are compared.
+    = For more details, see https://github.com/trailofbits/circomspect/blob/main/doc/analysis_passes.md#field-element-comparison.
+
+warning: Intermediate signals should typically occur in at least two separate constraints.
+    ┌─ circuits/lib.circom:173:5
+    │
+173 │     signal extDataSquare <== extDataHash * extDataHash;
+    │     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    │     │
+    │     The intermediate signal `extDataSquare` is declared here.
+    │     The intermediate signal `extDataSquare` is constrained here.
+    │
+    = For more details, see https://github.com/trailofbits/circomspect/blob/main/doc/analysis_passes.md#under-constrained-signal.
+
+circomspect: analyzing template 'Keypair'
+circomspect: analyzing template 'Signature'
+circomspect: analyzing template 'MerkleProof'
+note: Field element arithmetic could overflow, which may produce unexpected results.
+   ┌─ circuits/lib.circom:56:50
+   │
+56 │         switcher[i].L <== i == 0 ? leaf : hasher[i - 1].out;
+   │                                                  ^^^^^ Field element arithmetic here.
+   │
+   = For more details, see https://github.com/trailofbits/circomspect/blob/main/doc/analysis_passes.md#field-element-arithmetic.
+
+note: Field element arithmetic could overflow, which may produce unexpected results.
+   ┌─ circuits/lib.circom:54:33
+   │
+54 │     for (var i = 0; i < levels; i++) {
+   │                                 ^^^ Field element arithmetic here.
+   │
+   = For more details, see https://github.com/trailofbits/circomspect/blob/main/doc/analysis_passes.md#field-element-arithmetic.
+
+note: Field element arithmetic could overflow, which may produce unexpected results.
+   ┌─ circuits/lib.circom:64:21
+   │
+64 │     root <== hasher[levels - 1].out;
+   │                     ^^^^^^^^^^ Field element arithmetic here.
+   │
+   = For more details, see https://github.com/trailofbits/circomspect/blob/main/doc/analysis_passes.md#field-element-arithmetic.
+
+note: Comparisons with field elements greater than `p/2` may produce unexpected results.
+   ┌─ circuits/lib.circom:54:21
+   │
+54 │     for (var i = 0; i < levels; i++) {
+   │                     ^^^^^^^^^^ Field element comparison here.
+   │
+   = Field elements are always normalized to the interval `(-p/2, p/2]` before they are compared.
+   = For more details, see https://github.com/trailofbits/circomspect/blob/main/doc/analysis_passes.md#field-element-comparison.
+
+warning: Using `Num2Bits` to convert field elements to bits may lead to aliasing issues.
+   ┌─ circuits/lib.circom:49:27
+   │
+49 │     component indexBits = Num2Bits(levels);
+   │                           ^^^^^^^^^^^^^^^^ Circomlib template `Num2Bits` instantiated here.
+   │
+   = Consider using `Num2Bits_strict` if the input size may be >= than the prime size.
+   = For more details, see https://github.com/trailofbits/circomspect/blob/main/doc/analysis_passes.md#non-strict-binary-conversion.
+
+circomspect: Result written to `audit/circomspect.sarif`.
+circomspect: 25 issues found.

@@ -1,0 +1,11 @@
+[Unit]
+Description=Run the Murkle monitor every minute
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=1min
+AccuracySec=5s
+Unit=murkle-monitor.service
+
+[Install]
+WantedBy=timers.target

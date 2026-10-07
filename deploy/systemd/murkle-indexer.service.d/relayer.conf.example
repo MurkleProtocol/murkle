@@ -1,0 +1,19 @@
+# Paid relayer (relay balances: users prepay, the operator never pays a user's fee; there is
+# no free mode). Copy to /etc/systemd/system/murkle-indexer.service.d/relayer.conf, set the
+# network in MURKLE_RELAY_DIR (the relayer refuses a directory that names the other network),
+# install murkle-backup.service.d/relayer.conf.example too, then:
+# systemctl daemon-reload && systemctl restart murkle-indexer.
+# Its keys and books (relay-balance/) hold users' prepaid deposits: the backup timer must run
+# before this is switched on (docs/OPERATIONS.md "Backups").
+#
+# Do not also set these names in /etc/murkle/murkle.env: EnvironmentFile= values override
+# Environment= lines.
+[Service]
+Environment=MURKLE_RELAYER=1
+Environment=MURKLE_RELAY_MODE=balance
+Environment=MURKLE_RELAY_DIR=/var/lib/murkle/signet/relay-balance
+# Relayer limits default per network (docs/design/mainnet-readiness.md section 4.7); override
+# only after an I-PAY review at current fee levels, for example:
+# Environment=MURKLE_MAX_FEE_RATE=50
+# Environment=MURKLE_MAX_FEE_PER_TX=45000
+# Environment=MURKLE_RELAY_MIN_DEPOSIT_SATS=70000

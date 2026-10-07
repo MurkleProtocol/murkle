@@ -1,0 +1,35 @@
+# Bitcoin Core for a Murkle node (bitcoin.conf). Bitcoin Core 30 or later: its default
+# datacarriersize relays the 471-515 byte OP_RETURN carriers Murkle uses; older or filtering
+# nodes do not (docs/MAINNET.md).
+#
+# Murkle's RPC source (MURKLE_BTC_SOURCE=bitcoind) needs:
+#   - txindex=1: prevout lookups of arbitrary transactions (MINT_SCRIPT, MINE_SCRIPT), so the
+#     node cannot be pruned (about 1.5 TB of SSD on mainnet with the index);
+#   - RPC on localhost (or the compose network), cookie authentication.
+# No wallet: Murkle never asks the node to hold or sign anything.
+
+# Pick the chain: comment this line out for mainnet.
+chain=signet
+
+server=1
+txindex=1
+prune=0
+disablewallet=1
+listen=1
+
+# Cookie authentication (no rpcpassword here). Bitcoin Core 28 and later can make the cookie
+# readable by the node's group, so the murkle user (a member of that group) can read it.
+rpccookieperms=group
+
+dbcache=4000
+maxmempool=300
+
+[main]
+rpcbind=127.0.0.1
+rpcallowip=127.0.0.1
+rpcport=8332
+
+[signet]
+rpcbind=127.0.0.1
+rpcallowip=127.0.0.1
+rpcport=38332

@@ -1,0 +1,112 @@
+/* Design tokens (visual.md section 3). Values are copied verbatim from the spec.
+ * Two additions, both selector-only so values never drift:
+ * - `[data-scope="dark"]` / `[data-scope="light"]` let a subtree render in a fixed theme
+ *   (the /_kit review page shows both themes side by side);
+ * - the scoped rule at the bottom re-declares the composite tokens, because a custom
+ *   property that references another one is resolved where it is declared (on :root).
+ */
+:root, [data-scope="dark"] {
+  color-scheme: dark;
+  /* ink */
+  --bg:#0A0B0D; --bg-lattice:rgba(232,235,238,.035);
+  --surface-1:#101215; --surface-2:#15181C; --surface-3:#1B1F24; --surface-inset:#0C0E10;
+  --line:#23272D; --line-strong:#333941;
+  --text:#E8EBEE; --text-2:#A2AAB4; --text-3:#7A828C;
+  --inverse:#E8EBEE; --inverse-hover:#FFFFFF; --inverse-ink:#0A0B0D;
+  /* bitcoin: chain data + chain-writing actions only */
+  --btc:#F7931A; --btc-hover:#FFA53D; --btc-press:#E2830F; --btc-text:#F7931A; --btc-ink:#1A0E00;
+  --btc-wash:rgba(247,147,26,.10); --btc-line:rgba(247,147,26,.38);
+  /* proof: "checked" only */
+  --proof:#3FD8A0; --proof-text:#3FD8A0; --proof-ink:#03140D;
+  --proof-wash:rgba(63,216,160,.10); --proof-line:rgba(63,216,160,.36);
+  /* status */
+  --link:#8DB0FF; --focus:#9FB8FF;
+  --warn:#E9B949; --warn-wash:rgba(233,185,73,.10); --warn-line:rgba(233,185,73,.36);
+  --danger:#F26B5E; --danger-wash:rgba(242,107,94,.10); --danger-line:rgba(242,107,94,.40);
+  /* redaction */
+  --redact:#262B31; --redact-hatch:rgba(255,255,255,.07);
+  --hatch:repeating-linear-gradient(135deg,var(--redact-hatch) 0 2px,transparent 2px 6px);
+  /* envelope anatomy (byte grid + legend only) */
+  --f-header:#9AA3AD; --f-anchor:#F7931A; --f-public:#C3A6FF; --f-bind:#E9B949;
+  --f-nullifier:#FF8F8A; --f-commitment:#6FC3FF; --f-cipher:#7D8794; --f-proof:#3FD8A0;
+  /* token sigils (identity only; never orange/green/red) */
+  --sg-1:#7FA7FF; --sg-2:#B79CFF; --sg-3:#F28DB5; --sg-4:#5CC8E0; --sg-5:#D8C59A; --sg-6:#A9B4C0;
+  /* misc */
+  --scrim:rgba(5,6,8,.72); --qr-tile:#FFFFFF; --qr-ink:#0A0B0D;
+  --shadow-1:none;
+  --shadow-pop:0 16px 40px rgba(0,0,0,.55),0 0 0 1px var(--line-strong);
+  /* type */
+  --font-display:"Instrument Serif","Iowan Old Style",Georgia,serif;
+  --font-ui:"Instrument Sans",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  --font-mono:"JetBrains Mono",ui-monospace,"Cascadia Code",Consolas,monospace;
+  /* space (4px grid) */
+  --s1:4px; --s2:8px; --s3:12px; --s4:16px; --s5:24px; --s6:32px; --s7:48px; --s8:72px; --s9:96px;
+  --gutter:16px;
+  /* shape */
+  --radius-s:6px; --radius-btn:8px; --radius:10px; --radius-l:14px; --radius-pill:999px;
+  /* layout */
+  --max-public:1120px; --max-app:880px; --max-form:640px;
+  --h-ribbon:28px; --h-top:56px; --h-ledger:32px; --h-tabbar:64px; --w-rail:232px; --w-rail-compact:64px; --w-inspector:320px;
+  --z-sticky:30; --z-pop:40; --z-sheet:50; --z-toast:60;
+  /* motion */
+  --ease:cubic-bezier(.2,.7,.2,1);
+  --d-press:120ms; --d-ui:180ms; --d-sheet:240ms; --d-chip:300ms; --d-stamp:500ms;
+}
+@media (min-width:768px){ :root{ --gutter:24px; } }
+@media (min-width:1024px){ :root{ --gutter:32px; } }
+
+/* LIGHT: identical block in both selectors */
+:root[data-theme="light"], [data-scope="light"] {
+  color-scheme:light;
+  --bg:#F6F5F1; --bg-lattice:rgba(17,19,22,.045);
+  --surface-1:#FFFFFF; --surface-2:#F2F1EC; --surface-3:#E9E7E1; --surface-inset:#F0EEE8;
+  --line:#E3E0D8; --line-strong:#CBC7BD;
+  --text:#111316; --text-2:#48505A; --text-3:#646B74;
+  --inverse:#111316; --inverse-hover:#2A2E34; --inverse-ink:#F6F5F1;
+  --btc:#E8820C; --btc-hover:#D27300; --btc-press:#BD6800; --btc-text:#A85400; --btc-ink:#1A0E00;
+  --btc-wash:rgba(232,130,12,.09); --btc-line:rgba(168,84,0,.34);
+  --proof:#0E9F6E; --proof-text:#0B7F58; --proof-ink:#03140D;
+  --proof-wash:rgba(14,159,110,.09); --proof-line:rgba(11,127,88,.34);
+  --link:#2C56C9; --focus:#2C56C9;
+  --warn:#9A6500; --warn-wash:rgba(154,101,0,.08); --warn-line:rgba(154,101,0,.32);
+  --danger:#C2392D; --danger-wash:rgba(194,57,45,.08); --danger-line:rgba(194,57,45,.34);
+  --redact:#DAD7CF; --redact-hatch:rgba(17,19,22,.08);
+  --f-header:#5E6670; --f-anchor:#B65F00; --f-public:#7A4FD0; --f-bind:#8E6200;
+  --f-nullifier:#C2413F; --f-commitment:#1F72B8; --f-cipher:#8A929B; --f-proof:#0B8A5F;
+  --sg-1:#3D66D6; --sg-2:#7A4FD0; --sg-3:#C2457E; --sg-4:#157F99; --sg-5:#8A7440; --sg-6:#5E6670;
+  --scrim:rgba(17,19,22,.45);
+  --shadow-1:0 1px 2px rgba(17,19,22,.05);
+  --shadow-pop:0 1px 2px rgba(17,19,22,.06),0 14px 36px rgba(17,19,22,.12);
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    color-scheme:light;
+    --bg:#F6F5F1; --bg-lattice:rgba(17,19,22,.045);
+    --surface-1:#FFFFFF; --surface-2:#F2F1EC; --surface-3:#E9E7E1; --surface-inset:#F0EEE8;
+    --line:#E3E0D8; --line-strong:#CBC7BD;
+    --text:#111316; --text-2:#48505A; --text-3:#646B74;
+    --inverse:#111316; --inverse-hover:#2A2E34; --inverse-ink:#F6F5F1;
+    --btc:#E8820C; --btc-hover:#D27300; --btc-press:#BD6800; --btc-text:#A85400; --btc-ink:#1A0E00;
+    --btc-wash:rgba(232,130,12,.09); --btc-line:rgba(168,84,0,.34);
+    --proof:#0E9F6E; --proof-text:#0B7F58; --proof-ink:#03140D;
+    --proof-wash:rgba(14,159,110,.09); --proof-line:rgba(11,127,88,.34);
+    --link:#2C56C9; --focus:#2C56C9;
+    --warn:#9A6500; --warn-wash:rgba(154,101,0,.08); --warn-line:rgba(154,101,0,.32);
+    --danger:#C2392D; --danger-wash:rgba(194,57,45,.08); --danger-line:rgba(194,57,45,.34);
+    --redact:#DAD7CF; --redact-hatch:rgba(17,19,22,.08);
+    --f-header:#5E6670; --f-anchor:#B65F00; --f-public:#7A4FD0; --f-bind:#8E6200;
+    --f-nullifier:#C2413F; --f-commitment:#1F72B8; --f-cipher:#8A929B; --f-proof:#0B8A5F;
+    --sg-1:#3D66D6; --sg-2:#7A4FD0; --sg-3:#C2457E; --sg-4:#157F99; --sg-5:#8A7440; --sg-6:#5E6670;
+    --scrim:rgba(17,19,22,.45);
+    --shadow-1:0 1px 2px rgba(17,19,22,.05);
+    --shadow-pop:0 1px 2px rgba(17,19,22,.06),0 14px 36px rgba(17,19,22,.12);
+  }
+}
+
+/* Scoped subtrees re-resolve the composite tokens against their own palette. */
+[data-scope] {
+  --hatch:repeating-linear-gradient(135deg,var(--redact-hatch) 0 2px,transparent 2px 6px);
+  background:var(--bg);
+  color:var(--text);
+}
+[data-scope="dark"] { --shadow-pop:0 16px 40px rgba(0,0,0,.55),0 0 0 1px var(--line-strong); }

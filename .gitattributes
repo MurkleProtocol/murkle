@@ -1,0 +1,11 @@
+# Store every file byte for byte. Some files are CRLF and some LF on purpose, and tests
+# assert those bytes (CONTRIBUTING.md), so git must never convert line endings, whatever
+# core.autocrlf says on the machine that commits or clones.
+* -text
+
+*.png binary
+*.bin binary
+*.woff2 binary
+*.zkey binary
+*.wasm binary
+*.ptau binary

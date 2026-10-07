@@ -1,0 +1,54 @@
+# Murkle indexer and API (and the paid relayer when the relayer drop-in is installed).
+# Install: docs/OPERATIONS.md "Install". Code in /opt/murkle/current (root-owned, read-only),
+# state in /var/lib/murkle/<network>, settings in /etc/murkle/murkle.env.
+[Unit]
+Description=Murkle indexer and API
+Documentation=file:///opt/murkle/current/docs/OPERATIONS.md
+Wants=network-online.target
+After=network-online.target
+# With a local Bitcoin Core (MURKLE_BTC_SOURCE=bitcoind) add a drop-in with
+# "Wants=bitcoind.service" and "After=bitcoind.service".
+
+[Service]
+Type=simple
+User=murkle
+Group=murkle
+WorkingDirectory=/opt/murkle/current
+EnvironmentFile=/etc/murkle/murkle.env
+# Refuse to start with artifacts that do not match the network's pins.
+ExecStartPre=/usr/bin/node scripts/fetch-artifacts.mjs --check --quiet
+ExecStart=/usr/bin/node server/indexer-server.mjs
+Restart=on-failure
+RestartSec=5
+# The relayer journals before it broadcasts and every state file is replaced atomically, so a
+# stop at any point is safe; give an in-flight block a moment to finish.
+TimeoutStopSec=30
+KillSignal=SIGTERM
+
+# Hardening. No MemoryDenyWriteExecute: Node's JIT and WebAssembly (snarkjs) need it off.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ReadWritePaths=/var/lib/murkle
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+AmbientCapabilities=
+UMask=0077
+MemoryMax=6G
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target
