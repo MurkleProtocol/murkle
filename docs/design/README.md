@@ -14,3 +14,5 @@ Precedence when documents disagree: `SPEC.md` (consensus rules) first, then the 
 | `paid-relay.md` | Superseded, not built | The rejected prepaid-ticket design, kept as a record. Only its stage 0 (retiring the free relayer) shipped. |
 
 Also: `../API.md` (the indexer HTTP API) and `../CLAIMS.md` (what the project may and may not claim).
+
+> Note 2026-10-11: the owner dropped the trusted-setup ceremony in favour of a single-party mainnet key made by the Murkle operator (`docs/MAINNET.md`); where these notes describe the ceremony as the plan, read it as the original plan.

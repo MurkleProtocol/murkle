@@ -71,11 +71,11 @@ const FAQ = [
   ["What is still visible?", "That a protocol transaction happened, when, its size, its fee and the address that paid the fee. For mints and launches, the token and amount are public too. For private transfers, the token, the amount and the recipient are hidden. Whether anyone can tell who sent one depends on who pays its fee and how many others use the pool."],
   ["What can your server see?", "That you downloaded the public pool data, which every wallet downloads in full. Not your balance, and not which notes are yours. If you relay from a relay balance, the relayer also sees your IP address, the envelope it broadcasts, and the address you topped up from."],
   ...(IS_SIGNET
-    ? [["What is still trusted on signet?", "A single-party development setup for the proving keys, and block data from a public API instead of our own Bitcoin node. Both are replaced before mainnet."]]
-    : [["What is still trusted on mainnet?", "The phase-2 setup is sound if at least one participant of the public ceremony discarded their secret. Block headers are checked from a pinned checkpoint, but a data source can still hide or delay blocks; your own node removes it. There is no external audit yet."]]),
+    ? [["What is still trusted on signet?", "A single-party development setup for the proving keys, and block data from a public API instead of our own Bitcoin node."]]
+    : [["What is still trusted on mainnet?", "The proving key is a single-party key made by the Murkle operator. Block headers are checked from a pinned checkpoint, but a data source can still hide or delay blocks; your own node removes it. There is no external audit yet."]]),
   ["What if I lose my phrase or password?", "Your 24 words are the only backup. The password only unlocks this browser; with the words you can restore anywhere. Nobody, including us, can recover your notes."],
   IS_SIGNET
-    ? ["When mainnet?", "After a multi-party setup ceremony, an external audit and our own Bitcoin node. Until then, test coins only."]
+    ? ["When mainnet?", "After an external audit and our own Bitcoin node. Until then, test coins only."]
     : ["Is mainnet launched?", NOT_LAUNCHED ? MAINNET_NOT_LAUNCHED_TEXT : "A genesis is pinned, so the pool runs on Bitcoin mainnet. It is experimental software: tokens can be lost to bugs."],
 ];
 
@@ -107,9 +107,8 @@ function statusBoard() {
     [`Internal review: ${v(a.total)} findings, ${v(medium)} medium, ${a.mediumFixed != null && a.mediumFixed === medium ? "all fixed with regression tests" : `${v(a.mediumFixed)} fixed`}`, "DONE"],
     [`${v(facts.testCount)} automated tests`, "DONE"],
     ...(IS_SIGNET
-      ? [["Trusted setup: single-party development setup", "SIGNET"], ["MPC setup ceremony", "MAINNET"], ["Block headers from a public API", "SIGNET"]]
+      ? [["Trusted setup: single-party development setup", "SIGNET"], ["Block headers from a public API", "SIGNET"]]
       : [
-        ["MPC setup ceremony (public phase 2)", NOT_LAUNCHED ? "MAINNET" : "DONE"],
         ["Block headers checked from a pinned checkpoint; a data source can still hide blocks", "DESIGN"],
       ]),
     ["Note encryption isn't proven in the circuit; a bad sender can only hurt their own payment's recipient", "DESIGN"],
@@ -261,9 +260,9 @@ export function render(root) {
         <div class="ld-trust">
           <div class="panel ld-trust-col ld-trust--btc"><h3>${icon("block", { size: 18 })}Bitcoin guarantees</h3><ul>${["The envelope bytes are in a block.", "Their order and time.", "The mint payment is in the same transaction."].map((t) => html`<li>${icon("check", { size: 14 })}<span>${t}</span></li>`)}</ul></div>
           <div class="panel ld-trust-col ld-trust--you"><h3>${icon("proof", { size: 18 })}Your browser checks</h3><ul>${["The Groth16 proof against the published key.", "The hash binding the proof to these exact bytes.", "Valid curve and subgroup points.", "The pool root, rebuilt from every commitment.", "Which notes are yours, by local trial decryption. The server never learns."].map((t) => html`<li>${icon("check", { size: 14 })}<span>${t}</span></li>`)}</ul></div>
-          <div class="panel ld-trust-col ld-trust--still"><h3>${icon("warn", { size: 18 })}Still trusted on ${IS_SIGNET ? "signet" : "mainnet"}</h3><ul>${[...(IS_SIGNET ? ["Proving keys from a single-party development setup.", "Block data from a public API, not yet our own Bitcoin node."] : ["Proving keys from the public ceremony: sound if one participant discarded their secret.", "A data source can hide or delay blocks; headers are checked from a pinned checkpoint."]), "Our transaction list: Verify the Pool catches a wrong state (Root Match only shows the list agrees with its own root), not a hidden transaction. Run your own indexer to close that gap."].map((t) => html`<li>${icon("info", { size: 14 })}<span>${t}</span></li>`)}</ul></div>
+          <div class="panel ld-trust-col ld-trust--still"><h3>${icon("warn", { size: 18 })}Still trusted on ${IS_SIGNET ? "signet" : "mainnet"}</h3><ul>${[...(IS_SIGNET ? ["Proving keys from a single-party development setup.", "Block data from a public API, not yet our own Bitcoin node."] : ["Proving key made by one party, the Murkle operator.", "A data source can hide or delay blocks; headers are checked from a pinned checkpoint."]), "Our transaction list: Verify the Pool catches a wrong state (Root Match only shows the list agrees with its own root), not a hidden transaction. Run your own indexer to close that gap."].map((t) => html`<li>${icon("info", { size: 14 })}<span>${t}</span></li>`)}</ul></div>
         </div>
-        ${IS_SIGNET ? html`<p class="ld-mainnet">${tag("BEFORE MAINNET", "danger")}<span>Multi-party setup ceremony, external audit, our own Bitcoin node.</span></p>` : html`<p class="ld-mainnet">${tag(NOT_LAUNCHED ? "NOT LAUNCHED" : "EXPERIMENTAL", "danger")}<span>${NOT_LAUNCHED ? MAINNET_NOT_LAUNCHED_TEXT : "No external audit yet. Tokens can be lost to bugs."}</span></p>`}
+        ${IS_SIGNET ? html`<p class="ld-mainnet">${tag("BEFORE MAINNET", "danger")}<span>External audit, our own Bitcoin node.</span></p>` : html`<p class="ld-mainnet">${tag(NOT_LAUNCHED ? "NOT LAUNCHED" : "EXPERIMENTAL", "danger")}<span>${NOT_LAUNCHED ? MAINNET_NOT_LAUNCHED_TEXT : "No external audit yet. Tokens can be lost to bugs."}</span></p>`}
         <div class="ld-tools">
           <div class="panel ld-tool">
             <div class="eyebrow">ROOT MATCH</div>

@@ -352,7 +352,7 @@ test("server startRefusal: signet never refuses; mainnet refuses pre-genesis, an
   assert.equal(startRefusal(), null, "this checkout on signet");
   assert.equal(startRefusal({ test: true, preGenesis: true, vkeyPinned: false, miningHeight: null }), null, "signet pre-genesis runs, as before");
   const main = { network: "mainnet", test: false, preGenesis: true, vkeyPinned: false, miningHeight: null, mineFeeReason: "x", allowPreGenesis: false };
-  assert.match(startRefusal(main), /mainnet artifacts are not pinned yet .*run the ceremony/);
+  assert.match(startRefusal(main), /mainnet artifacts are not pinned yet .*run npm run key:mainnet/);
   assert.match(startRefusal({ ...main, vkeyPinned: true }), /has not launched on mainnet: no genesis is pinned/);
   assert.equal(startRefusal({ ...main, vkeyPinned: true, allowPreGenesis: true }), null, "staging");
   assert.match(startRefusal({ ...main, vkeyPinned: true, allowPreGenesis: true, miningHeight: 900000, mineFeeReason: P.mineFeeReady(P.MINE_FEES.mainnet) }), /TODO_PLATFORM_ADDRESS.*pins a mining height/);
@@ -397,7 +397,7 @@ test("chain source fallback: without src/btc/source.mjs signet uses Esplora unve
   assert.deepEqual(got.opts, { network: "signet", headersPath: join(DIR, "hs.json") });
 });
 
-// ---------------------------------------------------------------- /api/health, /api/state.chain, build marker, /ceremony
+// ---------------------------------------------------------------- /api/health, /api/state.chain, build marker
 
 async function serve(opts) {
   const app = createApp({ log: silent, ...opts });
@@ -467,7 +467,7 @@ test("GET /api/health without headers or relayer; /api/state.chain says esplora 
   }
 });
 
-test("web build marker: a dist for another network is not served; no marker counts as signet; /ceremony routes", async () => {
+test("web build marker: a dist for another network is not served; no marker counts as signet", async () => {
   const dist = join(DIR, "dist-marker");
   mkdirSync(dist, { recursive: true });
   writeFileSync(join(dist, "index.html"), "<!doctype html><html><head><title>M</title></head><body></body></html>");
@@ -477,19 +477,6 @@ test("web build marker: a dist for another network is not served; no marker coun
   const { base, close } = await serve({ idx, webDist: dist });
   try {
     assert.equal((await fetch(`${base}/`)).status, 200, "no marker: signet");
-    assert.equal((await fetch(`${base}/ceremony`)).status, 404, "no ceremony page built");
-    for (const p of ["/ceremony/api/status", "/ceremony/files/0001.zkey", "/ceremony/transcript.json", "/ceremony/api"]) {
-      const r = await fetch(`${base}${p}`);
-      assert.equal(r.status, 404, p);
-      assert.equal((await r.json()).error.code, "not_found");
-    }
-    writeFileSync(join(dist, "ceremony.html"), "<!doctype html><title>ceremony</title>");
-    for (const p of ["/ceremony", "/ceremony/"]) {
-      const r = await fetch(`${base}${p}`);
-      assert.equal(r.status, 200, p);
-      assert.match(await r.text(), /ceremony/);
-      assert.ok(r.headers.get("content-security-policy-report-only") || r.headers.get("content-security-policy"), "the CSP goes with it");
-    }
     writeFileSync(join(dist, "murkle-build.json"), JSON.stringify({ network: "mainnet", manifestSha256: null, genesisTxid: null }));
     const r = await fetch(`${base}/`);
     assert.equal(r.status, 503);
@@ -631,11 +618,11 @@ test("mainnet relayer defaults, funding network and the pool script", async () =
   assert.equal(r.bech32, "bc");
 });
 
-test("mainnet server: refuses to start before the ceremony, and before genesis (never binds a port)", async () => {
+test("mainnet server: refuses to start before its key is pinned, and before genesis (never binds a port)", async () => {
   const env = { MURKLE_NETWORK: "mainnet", MURKLE_INDEXER_PORT: "0", MURKLE_STATE_PATH: join(DIR, "m-state.json"), MURKLE_RELAYER: "0" };
   let out = await run(["server/indexer-server.mjs"], env);
   assert.equal(out.code, 1);
-  assert.match(out.stderr, /refusing to start: mainnet artifacts are not pinned yet \(src\/pins\.mainnet\.json has no vkey\): run the ceremony/);
+  assert.match(out.stderr, /refusing to start: mainnet artifacts are not pinned yet \(src\/pins\.mainnet\.json has no vkey\): run npm run key:mainnet/);
   out = await run(["server/indexer-server.mjs"], { ...env, MURKLE_ALLOW_PRE_GENESIS: "1" });
   assert.equal(out.code, 1, "staging still refuses an unpinned verification key");
   assert.match(out.stderr, /artifacts are not pinned yet/);
@@ -756,7 +743,7 @@ test("Unisat payer: the chain check names the network (mock wallet, nothing is p
   assert.equal(sig.err, "Unisat is no longer on Bitcoin Signet (it was switched to another network). Nothing was paid. Switch Unisat back to Signet, or connect it again, then retry.");
 });
 
-test("Vite config: the network define, the ceremony entry only when its file exists, the dev proxy and the build marker plugin", async () => {
+test("Vite config: the network define, the single entry, the dev proxy and the build marker plugin", async () => {
   const code = `
     const m = (await import("./web/vite.config.mjs")).default;
     console.log(JSON.stringify({ define: m.define, input: Object.keys(m.build.rollupOptions.input), proxy: Object.keys(m.server.proxy), plugins: m.plugins.map((p) => p.name) }));`;
@@ -764,8 +751,8 @@ test("Vite config: the network define, the ceremony entry only when its file exi
   assert.deepEqual(main.define, { __MURKLE_NETWORK__: JSON.stringify("mainnet") });
   const sig = await child(code, { MURKLE_NETWORK: "" });
   assert.deepEqual(sig.define, { __MURKLE_NETWORK__: JSON.stringify("signet") });
-  assert.deepEqual(sig.input, existsSync("web/ceremony.html") ? ["index", "ceremony"] : ["index"]);
-  assert.deepEqual(sig.proxy, ["/api", "/artifacts", "/ceremony/api", "/ceremony/files"]);
+  assert.deepEqual(sig.input, ["index"]);
+  assert.deepEqual(sig.proxy, ["/api", "/artifacts"]);
   assert.ok(sig.plugins.includes("murkle-build-marker"));
   assert.ok(sig.plugins.includes("murkle-network-html"));
   await assert.rejects(child(code, { MURKLE_NETWORK: "regtest" }), /MURKLE_NETWORK must be "signet" or "mainnet"/);
@@ -811,7 +798,7 @@ test("SPEC.md and README.md name the network rules", () => {
   const readme = readFileSync("README.md", "utf8");
   assert.match(readme, /MURKLE_NETWORK/);
   assert.match(readme, /docs\/MAINNET\.md/);
-  assert.match(readme, /docs\/CEREMONY\.md/);
+  assert.match(readme, /key:verify/);
   assert.match(readme, /docs\/OPERATIONS\.md/);
   for (const doc of [spec, readme]) assert.doesNotMatch(doc, /live on mainnet|mainnet-ready/i);
 });

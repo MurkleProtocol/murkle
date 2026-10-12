@@ -576,7 +576,7 @@ const DISCLOSURES = IS_SIGNET
   ? [
     "Signet test network; the tokens have no value.",
     "Internal review only (circomspect, Picus, manual); no external audit yet.",
-    "Development phase-2 trusted setup from a single party (A-8): whoever ran it could forge proofs until a public ceremony replaces it.",
+    "Development phase-2 trusted setup from a single party (A-8): whoever ran it could forge proofs.",
     "Chain data is read from mempool.space; proof-of-work is not checked yet (A-9).",
     "Mints are public (token, amount, payer). The address that pays a transfer's fee is tied to it on Bitcoin.",
     "The anonymity set is small while the pool is early.",
@@ -584,7 +584,7 @@ const DISCLOSURES = IS_SIGNET
   : [
     ...(NOT_LAUNCHED ? [`${BRAND} has not launched on Bitcoin mainnet. No genesis is pinned, so nothing here can move funds.`] : []),
     "Experimental software: tokens may be worth money and can be lost to bugs.",
-    "Phase-2 trusted setup from the public ceremony named in the pinned manifest (A-8): secure if at least one contributor discarded their secret.",
+    "Phase-2 proving key: single-party, made by the Murkle operator (A-8). npm run key:verify checks it.",
     "Internal review only (circomspect, Picus, manual); no external audit yet.",
     "Block headers are checked from a pinned checkpoint (A-9); the data source can still hide or delay blocks.",
     "Mints are public (token, amount, payer). The address that pays a transfer's fee is tied to it on Bitcoin.",
@@ -592,7 +592,7 @@ const DISCLOSURES = IS_SIGNET
   ];
 const FOOTER_STATUS = IS_SIGNET
   ? "Signet · Test coins have no value · Development proving keys"
-  : NOT_LAUNCHED ? "Mainnet · Not launched · No genesis pinned" : "Mainnet · Experimental software · Public ceremony setup";
+  : NOT_LAUNCHED ? "Mainnet · Not launched · No genesis pinned" : "Mainnet · Experimental software · Single-party proving key";
 
 function footerMarkup() {
   const col = (title, links) =>
@@ -638,7 +638,7 @@ function paintFooterAnchor() {
       : html` · <span class="t-warn">not anchored on Bitcoin yet (pre-genesis)</span>`;
   // The indexer must agree with the manifest pinned in this build; say so loudly if not.
   const disagree = g?.manifestSha256 && manifest && g.manifestSha256 !== manifest ? html` · ${tag("Indexer reports a different circuit", "danger")}` : "";
-  setHTML(el, html`${circuit}${anchored} · phase 2: DEV setup${disagree}`);
+  setHTML(el, html`${circuit}${anchored} · phase 2: ${IS_SIGNET ? "DEV setup" : "single-party key"}${disagree}`);
 }
 
 /** Hash the served verification key in this browser and compare it with the pinned value. */

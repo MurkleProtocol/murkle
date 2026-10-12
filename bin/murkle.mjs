@@ -40,7 +40,7 @@ const DATA = env("DATA_DIR") ?? join(ROOT, "data", NETWORK); // cli-state.json a
 const STATE = join(DATA, "cli-state.json");
 const SHARED_STATE = join(DATA, "state.json");
 const WALLETS = join(DATA, "wallets");
-// This network's artifacts (signet: the DEV setup; mainnet: build/mainnet/*, the ceremony output).
+// This network's artifacts (signet: the DEV setup; mainnet: build/mainnet/*, the single-party key from npm run key:mainnet).
 const ARTIFACTS = {
   wasm: join(ROOT, ARTIFACT_PATHS.wasm),
   zkey: join(ROOT, ARTIFACT_PATHS.zkey),
@@ -2974,7 +2974,7 @@ const commands = {
     if (what !== "genesis" || !name || name.startsWith("--")) throw new Error(usage);
     // Strict: --dryrun, --dry-run=1 or --dry_run is refused, never read as "broadcast".
     const f = parseStrictFlags(rest, { booleans: ["dry-run", "force"], usage });
-    if (!MANIFEST_SHA256) throw new Error(NETWORK === "signet" ? "no manifest is pinned in src/pins.json; run npm run circuit:build first" : `no manifest is pinned in ${PINS_FILE}; finish the ceremony and run its finalize --install first (docs/MAINNET.md)`);
+    if (!MANIFEST_SHA256) throw new Error(NETWORK === "signet" ? "no manifest is pinned in src/pins.json; run npm run circuit:build first" : `no manifest is pinned in ${PINS_FILE}; run npm run key:mainnet and pin its hashes first (docs/MAINNET.md)`);
     if (GENESIS_TXID && !f.force) throw new Error(`genesis is already pinned (${GENESIS_TXID}); a second genesis needs --force and a re-genesis`);
     // The attested hash must describe the artifacts this checkout actually serves.
     if (sha256File(ARTIFACTS.manifest) !== MANIFEST_SHA256) throw new Error(`${ARTIFACT_PATHS.manifest} does not match manifestSha256 in ${PINS_FILE}`);

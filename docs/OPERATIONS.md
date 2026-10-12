@@ -1,13 +1,12 @@
 # Operations
 
 How to install, upgrade, back up, monitor and repair a Murkle node: the indexer and its API (one
-process, which also runs the paid relayer when it is switched on) and, during a trusted-setup
-ceremony, the ceremony coordinator. The files referenced here are in `deploy/` (`deploy/README.md`
-lists them). The launch sequence and the go/no-go list are in `docs/MAINNET.md`; the ceremony is in
-`docs/CEREMONY.md`; the design and the build contract are in `docs/design/mainnet-readiness.md`.
+process, which also runs the paid relayer when it is switched on). The files referenced here are in
+`deploy/` (`deploy/README.md` lists them). The launch sequence and the go/no-go list are in
+`docs/MAINNET.md`; the design and the build contract are in `docs/design/mainnet-readiness.md`.
 
 Mainnet has not launched. A mainnet build refuses to start until the mainnet pins hold the
-ceremony's verification key and a genesis (`docs/MAINNET.md`). Signet stays the default network.
+verification key of the mainnet key (`npm run key:mainnet`) and a genesis (`docs/MAINNET.md`). Signet stays the default network.
 
 Contents
 
@@ -31,14 +30,12 @@ Contents
 | `/opt/murkle/releases/<tag>/` | one built release (code, `node_modules`, `web/dist`, `build/` artifacts) | root, read-only |
 | `/opt/murkle/current` | symlink to the running release | root |
 | `/etc/murkle/murkle.env` | settings (from `deploy/env/murkle.<network>.env.example`) | root:murkle 0640 |
-| `/etc/murkle/ceremony.env` | coordinator settings (`deploy/env/ceremony.env.example`) | root:murkle 0640 |
 | `/etc/murkle/secrets/` | secret files only (an RPC password file, if not using the cookie) | root:murkle 0750, files 0640 |
 | `/var/lib/murkle/<network>/` | `state.json`, `headers.json`, `archive/`, `relay-balance/` (relayer keys and books) | murkle 0700 |
-| `/var/lib/murkle/ceremony/<id>/` | the coordinator's queue, transcript and accepted keys | murkle |
 | `/var/backups/murkle/` | encrypted backups (`*.mbk`), to be copied off the server | murkle 0700 |
 
 Units (`deploy/systemd/`): `murkle-indexer.service` (plus the optional relayer drop-in),
-`murkle-ceremony.service`, `murkle-monitor.service` with `murkle-monitor.timer` (every minute),
+`murkle-monitor.service` with `murkle-monitor.timer` (every minute),
 `murkle-backup.service` with `murkle-backup.timer` (hourly) and the template `murkle-backup@.path`
 (on every change of the relayer's books; the instance is the network, `murkle-backup@<network>.path`). Every unit runs as the `murkle` user with `NoNewPrivileges`,
 `ProtectSystem=strict`, `ProtectHome`, `PrivateTmp`, write access to `/var/lib/murkle` only
@@ -56,7 +53,6 @@ switched on.
 |---|---|---|
 | Indexer host | 2 vCPU, 4 GB RAM, 20 GB disk (with the Esplora source) | 4+ vCPU, 16 GB RAM, 1.5 TB+ SSD (Bitcoin Core unpruned with `txindex=1`) |
 | Chain data | mempool.space (default) or your own Bitcoin Core | your own Bitcoin Core 30 or later (`MURKLE_BTC_SOURCE=bitcoind`) |
-| Ceremony coordinator | small host, 50 GB disk | same |
 | Node.js | 22 LTS | 22 LTS |
 
 Bitcoin Core must keep `txindex=1` (the indexer looks up prevouts of arbitrary transactions), so it
@@ -205,10 +201,8 @@ Do not set `MURKLE_RELAYER`, `MURKLE_RELAY_MODE` or `MURKLE_RELAY_DIR` in `murkl
 Caddy (`deploy/caddy/Caddyfile`, automatic certificates; give the Caddy service `SITE_DOMAIN` and
 `ACME_EMAIL` with `systemctl edit caddy`, `[Service]` `Environment=` lines) or nginx with certbot
 (`deploy/nginx/murkle.conf`). Both terminate TLS, send HSTS, overwrite `X-Forwarded-For` with the
-client address (the relayer and the coordinator rate-limit by it), keep no access log, and route
-`/ceremony/api/*`, `/ceremony/files/*` and `/ceremony/transcript.json` to the coordinator with a
-32 MB body limit and 600 s timeouts; everything else goes to the indexer. Set
-`MURKLE_TRUST_PROXY=1` (and `MURKLE_CEREMONY_TRUST_PROXY=1`) only behind the proxy.
+client address (the relayer rate-limits by it), keep no access log, and send everything to the
+indexer. Set `MURKLE_TRUST_PROXY=1` only behind the proxy.
 
 The server sends its own Content-Security-Policy: enforced by default on mainnet (a mainnet server
 running Report-Only, `MURKLE_CSP_ENFORCE=0`, logs a warning at start), Report-Only by default on
@@ -228,7 +222,7 @@ systemctl start murkle-backup.service && ls -l /var/backups/murkle
 `deploy/docker/docker-compose.yml` runs Bitcoin Core (built from the official tarball by
 `deploy/docker/bitcoind.Dockerfile`; `BITCOIN_VERSION` and `BITCOIN_SHA256` are required), the
 indexer from the repository's `Dockerfile` (built for `MURKLE_NETWORK`, reading the node's cookie
-from the shared volume) and Caddy. Profiles: `ceremony` (the coordinator) and `electrs` (an
+from the shared volume) and Caddy. Profile: `electrs` (an
 Esplora-compatible API on the same node, optional).
 
 ```sh
@@ -291,9 +285,6 @@ newer format is refused by an older relayer ("is a version N relayer state"): ke
   (fsync, rename) and on start reconciles its coins and items with the chain before it signs
   anything new. Balances, reservations and charges survive restarts. A carrier is re-sent with the
   same bytes and never re-signed.
-- **Coordinator.** Its queue and slot are in its state directory; a restart keeps accepted
-  contributions and the transcript. An upload in progress is lost; the contributor uploads again
-  within the slot or rejoins (`docs/CEREMONY.md`).
 - `systemctl restart` is safe at any time. Never run two indexers (or two relayers) on the same data
   directory.
 
@@ -363,8 +354,7 @@ coins match the chain.
 ## 8. Monitoring and alerts
 
 `deploy/bin/monitor.mjs` runs every minute. It reads `GET /api/health?strict=1` (falling back to
-`/api/state` and `/api/relay/info` on an older indexer), the coordinator's `/ceremony/api/health`
-when `MURKLE_MONITOR_CEREMONY_URL` is set, and the free space of `MURKLE_MONITOR_DATA_DIR`. It prints
+`/api/state` and `/api/relay/info` on an older indexer) and the free space of `MURKLE_MONITOR_DATA_DIR`. It prints
 one JSON line, exits 0 (ok), 1 (warning) or 2 (critical), and with `MURKLE_MONITOR_WEBHOOK` POSTs
 that line when the alerts change.
 
@@ -383,8 +373,6 @@ that line when the alerts change.
 | `health_not_ok` | warning | `/api/health` says `ok: false` for a reason not listed above | read `/api/health` |
 | `disk_low` | warning, critical below a quarter | free space under `MURKLE_MONITOR_MIN_FREE_GB` (20) | 10.7 |
 | `disk_unknown` | warning | the data directory cannot be read | the path in `MURKLE_MONITOR_DATA_DIR` |
-| `ceremony_down`, `ceremony_not_ok` | warning | the coordinator does not answer, or reports a problem | `journalctl -u murkle-ceremony` |
-| `ceremony_chain_stale` | critical | the coordinator's chain source has not answered for 5 polls while the queue is open: no slots, no uploads | fix the source (cookie permissions, rate limits) before the beacon height; docs/CEREMONY.md |
 | `no_backup`, `backup_old`, `backup_unknown` | critical while the relayer runs, else warning | no backup in `MURKLE_BACKUP_DIR`, the newest is older than `MURKLE_MONITOR_MAX_BACKUP_AGE_HOURS` (3), or the directory cannot be read | `systemctl status murkle-backup.service`; a failed run with the relayer on means its keys were not where the backup looks (`MURKLE_RELAY_DIR` must be `/var/lib/murkle/<network>/relay-balance`) |
 
 Test the alert path at least once before launch: stop the indexer (`systemctl stop murkle-indexer`),
@@ -577,13 +565,12 @@ Resume notice:
 > carried over unchanged. Old deposit addresses are retired: your wallet shows only new ones. What
 > happened: <short summary>. Transactions: <evacuation txids>.
 
-### 10.5 Ceremony coordinator
+### 10.5 The mainnet key
 
-The coordinator cannot forge a contribution: every accepted key is verified against the r1cs and the
-phase-1 file, and anyone can re-verify the whole transcript (`scripts/ceremony/verify.mjs`). If its
-host is compromised: pause the ceremony (`scripts/ceremony/admin.mjs --dir <dir> pause`), verify
-the transcript and every published key from scratch on another machine, then resume from the last
-verified key or restart the ceremony, and say which in the announcement channel (`docs/CEREMONY.md`).
+The mainnet key is made once, at launch, with `npm run key:mainnet` on a clean machine (docs/MAINNET.md, G1).
+Anyone can re-check a published key with `npm run key:verify -- --network mainnet`. If the served files
+stop matching the pins, that is 10.6. A new key needs a consensus activation (a release with a future
+activation height); it is not planned, and `npm run key:mainnet` must not be run again after genesis.
 
 ### 10.6 Artifacts do not match the pins
 

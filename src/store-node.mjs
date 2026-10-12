@@ -11,11 +11,11 @@ export const sha256File = (path) => createHash("sha256").update(readFileSync(pat
 /**
  * Reads verification_key.json and refuses it unless it matches the pinned
  * hash (when one is pinned): a replay with another key would accept other proofs.
- * Off a test network an unpinned key is refused outright (mainnet before the ceremony).
+ * Off a test network an unpinned key is refused outright (mainnet before its key is pinned).
  */
 export function loadPinnedVkey(path, { pinned = ARTIFACT_SHA256.vkey, requirePin = !IS_TESTNET } = {}) {
   if (requirePin && !pinned) {
-    throw new Error(`${NETWORK} artifacts are not pinned yet (${PINS_FILE} has no vkey): run the ceremony, see docs/MAINNET.md`);
+    throw new Error(`${NETWORK} artifacts are not pinned yet (${PINS_FILE} has no vkey): run npm run key:mainnet, see docs/MAINNET.md`);
   }
   const bytes = readFileSync(path);
   const actual = createHash("sha256").update(bytes).digest("hex");

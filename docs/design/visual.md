@@ -1,5 +1,7 @@
 # Murkle web design spec (signet web: landing, public explorer, wallet)
 
+> Note 2026-10-11: the owner dropped the trusted-setup ceremony in favour of a single-party mainnet key made by the Murkle operator (`docs/MAINNET.md`); where this file describes the ceremony as the plan, read it as the original plan.
+
 **Direction.** A graphite "cryptographic instrument" look. The page's real work, re-verifying a Bitcoin transaction in front of the visitor, is the hero; there is no neon or glow to bury it.
 
 The visual interest comes from real data turned into art, not from effects:

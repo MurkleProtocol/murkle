@@ -1,20 +1,20 @@
 #!/usr/bin/env node
 // A simple monitor for a Murkle node: indexer lag and sync age, sync and header errors, the
-// relayer's books check (I2: a halted relayer), the pinned artifacts, the ceremony coordinator,
+// relayer's books check (I2: a halted relayer), the pinned artifacts,
 // free disk and the age of the newest encrypted backup. Run it every minute (deploy/systemd/murkle-monitor.timer). docs/OPERATIONS.md
 // says what to do for each alert.
 //
-// Usage: node deploy/bin/monitor.mjs [--url U] [--ceremony-url U] [--data-dir D] [--max-lag N]
+// Usage: node deploy/bin/monitor.mjs [--url U] [--data-dir D] [--max-lag N]
 //                                    [--min-free-gb G] [--webhook URL] [--state <file>] [--timeout-ms MS]
 //                                    [--backup-dir D] [--max-backup-age-hours H]
-// Defaults: MURKLE_MONITOR_URL (http://127.0.0.1:8787), MURKLE_MONITOR_CEREMONY_URL (none),
+// Defaults: MURKLE_MONITOR_URL (http://127.0.0.1:8787),
 // MURKLE_MONITOR_DATA_DIR (/var/lib/murkle), MURKLE_MONITOR_MAX_LAG (3), MURKLE_MONITOR_MIN_FREE_GB (20),
 // MURKLE_MONITOR_WEBHOOK (none), MURKLE_MONITOR_BACKUP_DIR (MURKLE_BACKUP_DIR, else none: no backup check),
 // MURKLE_MONITOR_MAX_BACKUP_AGE_HOURS (3). A missing or old backup is critical while the relayer runs.
 //
 // It reads GET /api/health?strict=1 (the body is read on 200 and on 503) and falls back to
 // /api/state plus /api/relay/info on an indexer without that endpoint. It prints one JSON line:
-//   { time, level: "ok" | "warning" | "critical", alerts: [{ level, code, message }], indexer, disk, ceremony? }
+//   { time, level: "ok" | "warning" | "critical", alerts: [{ level, code, message }], indexer, disk }
 // and exits 0 (ok), 1 (warning) or 2 (critical). With a webhook it POSTs that same line, and
 // nothing else, when the level is not ok; with --state it posts only when the level or the set
 // of alerts changed since the last run (including the return to ok). The webhook URL is never printed.
@@ -24,7 +24,6 @@ import { fileURLToPath } from "node:url";
 
 export const DEFAULTS = Object.freeze({
   url: "http://127.0.0.1:8787",
-  ceremonyUrl: null,
   dataDir: "/var/lib/murkle",
   maxLag: 3,
   minFreeGb: 20,
@@ -135,16 +134,6 @@ export function evaluateBackups({ dir, files, now = Date.now(), maxAgeHours = DE
   return { alerts, summary: { dir, newestAgeHours: ageHours, count: mine.length } };
 }
 
-/** The ceremony coordinator's health -> { alerts, summary }. */
-export function evaluateCeremony({ health, error = null }) {
-  if (error || !health) return { alerts: [alert("warning", "ceremony_down", `the ceremony coordinator did not answer${error ? ` (${error})` : ""}`)], summary: { reachable: false } };
-  const alerts = [];
-  const open = health.phase === "open" || health.phase === "paused";
-  if (open && health.chain?.stale) alerts.push(alert("critical", "ceremony_chain_stale", `the ceremony coordinator has no fresh chain tip${health.chain.lastOkAt ? ` since ${health.chain.lastOkAt}` : ""}: no slots or uploads until it answers, and the close before the beacon height is at risk`));
-  else if (health.ok === false) alerts.push(alert("warning", "ceremony_not_ok", `the ceremony coordinator reports ok: false (phase ${health.phase ?? "unknown"})`));
-  return { alerts, summary: { reachable: true, phase: health.phase ?? null, contributions: health.contributions ?? null, waiting: health.waiting ?? null } };
-}
-
 export const levelOf = (alerts) => alerts.reduce((l, a) => (RANK[a.level] > RANK[l] ? a.level : l), "ok");
 export const exitCodeOf = (level) => RANK[level] ?? 2;
 
@@ -239,20 +228,8 @@ export async function runMonitor(opts = {}, { now = Date.now, statfs = statfsSyn
     out.backups = b.summary;
   }
 
-  if (o.ceremonyUrl) {
-    let c;
-    try {
-      const r = await getJson(`${base(o.ceremonyUrl)}/ceremony/api/health`, o.timeoutMs);
-      c = r.status === 200 && r.body ? evaluateCeremony({ health: r.body }) : evaluateCeremony({ health: null, error: `HTTP ${r.status}` });
-    } catch (e) {
-      c = evaluateCeremony({ health: null, error: why(e) });
-    }
-    alerts.push(...c.alerts);
-    out.ceremony = c.summary;
-  }
-
   const level = levelOf(alerts);
-  const result = { time: out.time, level, alerts, indexer: out.indexer, disk: out.disk, ...(out.backups ? { backups: out.backups } : {}), ...(out.ceremony ? { ceremony: out.ceremony } : {}) };
+  const result = { time: out.time, level, alerts, indexer: out.indexer, disk: out.disk, ...(out.backups ? { backups: out.backups } : {}) };
   const line = JSON.stringify(result);
 
   // A post that is due and fails leaves the state file as it was, so the next run tries again.
@@ -287,9 +264,9 @@ export function listBackupFiles(dir) {
   return readdirSync(dir).map((name) => ({ name, mtimeMs: statSync(join(dir, name)).mtimeMs }));
 }
 
-const NAMES = { "--url": "url", "--ceremony-url": "ceremonyUrl", "--data-dir": "dataDir", "--max-lag": "maxLag", "--min-free-gb": "minFreeGb", "--webhook": "webhook", "--state": "state", "--timeout-ms": "timeoutMs", "--backup-dir": "backupDir", "--max-backup-age-hours": "maxBackupAgeHours" };
+const NAMES = { "--url": "url", "--data-dir": "dataDir", "--max-lag": "maxLag", "--min-free-gb": "minFreeGb", "--webhook": "webhook", "--state": "state", "--timeout-ms": "timeoutMs", "--backup-dir": "backupDir", "--max-backup-age-hours": "maxBackupAgeHours" };
 const NUMERIC = new Set(["maxLag", "minFreeGb", "timeoutMs", "maxBackupAgeHours"]);
-const ENV = { url: "MURKLE_MONITOR_URL", ceremonyUrl: "MURKLE_MONITOR_CEREMONY_URL", dataDir: "MURKLE_MONITOR_DATA_DIR", maxLag: "MURKLE_MONITOR_MAX_LAG", minFreeGb: "MURKLE_MONITOR_MIN_FREE_GB", webhook: "MURKLE_MONITOR_WEBHOOK", backupDir: "MURKLE_MONITOR_BACKUP_DIR", maxBackupAgeHours: "MURKLE_MONITOR_MAX_BACKUP_AGE_HOURS" };
+const ENV = { url: "MURKLE_MONITOR_URL", dataDir: "MURKLE_MONITOR_DATA_DIR", maxLag: "MURKLE_MONITOR_MAX_LAG", minFreeGb: "MURKLE_MONITOR_MIN_FREE_GB", webhook: "MURKLE_MONITOR_WEBHOOK", backupDir: "MURKLE_MONITOR_BACKUP_DIR", maxBackupAgeHours: "MURKLE_MONITOR_MAX_BACKUP_AGE_HOURS" };
 
 /** argv and env -> options; throws a usage message. */
 export function parseOptions(argv, env = process.env) {

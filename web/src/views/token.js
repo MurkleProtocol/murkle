@@ -376,7 +376,7 @@ export function render(root, params) {
         <li>${icon("proof", { size: 14 })}<span>Private transfers must have publicAmount = 0, and the circuit's balance constraint Σin = Σout keeps the supply unchanged.</span></li>
         <li>${icon("launch", { size: 14 })}<span>No premine path: a launch creates no notes. A mint over the cap is rejected and its payment counts as burned, as with Runes.</span></li>
       </ul>
-      <div class="tk-caveat">${icon("warn", { size: 16 })}<span>Counterfeiting inside the pool would need a broken circuit or a forged proof from the development trusted setup (single-party phase 2, A-8). Supply numbers can't detect that today; a public setup ceremony before mainnet removes it.</span></div>
+      ${IS_SIGNET ? html`<div class="tk-caveat">${icon("warn", { size: 16 })}<span>Counterfeiting inside the pool would need a broken circuit or a forged proof from the development trusted setup (single-party phase 2, A-8). Supply numbers can't detect that today.</span></div>` : ""}
       <p class="small"><a href="/verify#pool" data-link>Replay the whole pool in your browser →</a> <span class="t-3">Turns every number on this page into your own result.</span></p>`;
   }
 

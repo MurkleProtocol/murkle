@@ -51,8 +51,8 @@ No Reserved Font Name is declared. The font files are shipped unmodified.
 
 ## Trusted setup inputs (data, not redistributed here)
 
-- **Phase 1**: the Perpetual Powers of Tau ceremony (https://github.com/privacy-scaling-explorations/perpetualpowersoftau), Hermez "final" preparation as listed in the snarkjs README: `powersOfTau28_hez_final_15.ptau`, 37,831,832 bytes, sha256 `3ef2ecc5b75d687048cf2d59195119b42fb07c5af639c5f283d84bfa69829e7f` and the blake2b-512 published in the snarkjs README (both pinned in `scripts/build-circuit.mjs`). The script downloads it from the original bucket or from an unofficial third-party mirror and accepts it only when both hashes match.
-- **Phase 2**: a DEV single-party contribution (audit A-8). It is not a ceremony.
+- **Phase 1**: the Perpetual Powers of Tau ceremony (https://github.com/privacy-scaling-explorations/perpetualpowersoftau), Hermez "final" preparation as listed in the snarkjs README: `powersOfTau28_hez_final_15.ptau`, 37,831,832 bytes, sha256 `3ef2ecc5b75d687048cf2d59195119b42fb07c5af639c5f283d84bfa69829e7f` and the blake2b-512 published in the snarkjs README (both pinned in `scripts/key-lib.mjs`). The script downloads it from the original bucket or from an unofficial third-party mirror and accepts it only when both hashes match.
+- **Phase 2**: on signet a DEV single-party contribution, on mainnet one contribution by the Murkle operator (`scripts/mainnet-key.mjs`) (audit A-8).
 
 ## Server-side dependencies (installed by npm, not redistributed in this repository)
 

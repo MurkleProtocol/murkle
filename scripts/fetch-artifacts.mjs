@@ -180,7 +180,7 @@ async function main() {
     }
     if (rows.every((r) => r.ok)) return 0;
     if (rows.some((r) => !r.sha256)) {
-      console.error(`${PINS_FILE} does not pin every artifact yet: on mainnet the public ceremony installs them (docs/CEREMONY.md, docs/MAINNET.md G1-G2).`);
+      console.error(`${PINS_FILE} does not pin every artifact yet: on mainnet the operator pins them after npm run key:mainnet (docs/MAINNET.md G1-G2).`);
       return 1;
     }
     console.error("Fetch the pinned files with: npm run artifacts:fetch -- --from <url>");

@@ -90,7 +90,6 @@ const HARDENING = { NoNewPrivileges: "yes", ProtectSystem: "strict", ProtectHome
 test("systemd services: sections, EnvironmentFile, hardening, restart policy, memory cap", () => {
   const services = {
     "murkle-indexer.service": { env: "/etc/murkle/murkle.env", exec: "server/indexer-server.mjs", rw: "/var/lib/murkle", type: "simple" },
-    "murkle-ceremony.service": { env: "/etc/murkle/ceremony.env", exec: "server/ceremony-server.mjs", rw: "/var/lib/murkle/ceremony", type: "simple" },
     "murkle-monitor.service": { env: "/etc/murkle/murkle.env", exec: "deploy/bin/monitor.mjs", rw: "/var/lib/murkle", type: "oneshot" },
     "murkle-backup.service": { env: "/etc/murkle/murkle.env", exec: "deploy/bin/backup.mjs backup", rw: "/var/backups/murkle", type: "oneshot" },
   };
@@ -112,9 +111,9 @@ test("systemd services: sections, EnvironmentFile, hardening, restart policy, me
       assert.equal(one(s, "RestartSec"), "5", name);
       assert.equal(one(u.Install, "WantedBy"), "multi-user.target", name);
     }
-    // The script each unit runs is in the repository (the coordinator comes from the ceremony track).
+    // The script each unit runs is in the repository.
     const script = one(s, "ExecStart").split(/\s+/)[1];
-    if (!script.startsWith("server/ceremony")) assert.ok(existsSync(join(ROOT, script)), `${name}: ${script} exists`);
+    assert.ok(existsSync(join(ROOT, script)), `${name}: ${script} exists`);
   }
   assert.ok(unit("murkle-indexer.service").Service.ExecStartPre.some((l) => l.includes("scripts/fetch-artifacts.mjs --check")), "the indexer checks its artifacts before it starts");
   assert.ok(unit("murkle-backup.service").Service.ReadOnlyPaths.includes("/var/lib/murkle"), "backups only read the data");
@@ -201,10 +200,10 @@ const SECRETISH = [
 
 test("env examples: only known MURKLE_* names, no secrets, the per-network switches", () => {
   const known = knownNames();
-  for (const n of ["MURKLE_NETWORK", "MURKLE_BTC_SOURCE", "MURKLE_BITCOIND_COOKIE", "MURKLE_MONITOR_MAX_LAG", "MURKLE_CEREMONY_TRUST_PROXY", "MURKLE_BACKUP_RECIPIENT", "MURKLE_RELAY_DIR", "MURKLE_CSP_ENFORCE"]) {
+  for (const n of ["MURKLE_NETWORK", "MURKLE_BTC_SOURCE", "MURKLE_BITCOIND_COOKIE", "MURKLE_MONITOR_MAX_LAG", "MURKLE_TRUST_PROXY", "MURKLE_BACKUP_RECIPIENT", "MURKLE_RELAY_DIR", "MURKLE_CSP_ENFORCE"]) {
     assert.ok(known.has(n), `the known-name list is built correctly (${n})`);
   }
-  const files = ["deploy/env/murkle.signet.env.example", "deploy/env/murkle.mainnet.env.example", "deploy/env/ceremony.env.example"];
+  const files = ["deploy/env/murkle.signet.env.example", "deploy/env/murkle.mainnet.env.example"];
   for (const f of files) {
     const text = read(f);
     const lines = envLines(text);
@@ -260,12 +259,11 @@ function composeServices(text) {
 test("docker-compose: services, profiles, volumes, healthchecks, log limits, the RPC source", () => {
   const text = read("deploy/docker/docker-compose.yml");
   const svc = composeServices(text);
-  assert.deepEqual(Object.keys(svc).sort(), ["bitcoind", "caddy", "electrs", "murkle-ceremony", "murkle-indexer"]);
+  assert.deepEqual(Object.keys(svc).sort(), ["bitcoind", "caddy", "electrs", "murkle-indexer"]);
   const profile = (s) => svc[s].match(/^ {4}profiles: \[(.*)\]$/m)?.[1] ?? null;
   assert.equal(profile("bitcoind"), null, "Bitcoin Core is on the default path");
   assert.equal(profile("murkle-indexer"), null);
   assert.equal(profile("caddy"), null);
-  assert.equal(profile("murkle-ceremony"), '"ceremony"');
   assert.equal(profile("electrs"), '"electrs"');
   for (const [name, body] of Object.entries(svc)) {
     assert.match(body, /^ {4}healthcheck:\n {6}test:/m, `${name}: healthcheck`);
@@ -274,7 +272,7 @@ test("docker-compose: services, profiles, volumes, healthchecks, log limits, the
   }
   assert.match(text, /x-logging: &logging\n {2}driver: json-file\n {2}options:\n {4}max-size: "\d+m"\n {4}max-file: "\d+"/);
   const vols = text.slice(text.indexOf("\nvolumes:\n")).split("\n").filter((l) => /^ {2}[a-z-]+:$/.test(l)).map((l) => l.trim().slice(0, -1));
-  for (const v of ["bitcoin-data", "murkle-data", "ceremony-data", "caddy-data"]) assert.ok(vols.includes(v), `volume ${v}`);
+  for (const v of ["bitcoin-data", "murkle-data", "caddy-data"]) assert.ok(vols.includes(v), `volume ${v}`);
   for (const [name, body] of Object.entries(svc)) {
     for (const m of body.matchAll(/^ {6}- ([a-z][a-z0-9-]*):\//gm)) assert.ok(vols.includes(m[1]), `${name}: volume ${m[1]} is declared`);
   }
@@ -290,15 +288,13 @@ test("docker-compose: services, profiles, volumes, healthchecks, log limits, the
   for (const flag of ["-txindex=1", "-prune=0", "-disablewallet=1", "-server=1", "-rpccookieperms=group"]) assert.ok(btc.includes(`- ${flag}`), flag);
   assert.doesNotMatch(btc, /"8332:|"38332:|rpcpassword|rpcuser/, "the RPC port is never published and there is no RPC password");
   assert.match(btc, /BITCOIN_SHA256: \$\{BITCOIN_SHA256:\?/, "a Bitcoin Core build needs its tarball hash");
-  assert.match(svc["murkle-ceremony"], /server\/ceremony-server\.mjs/);
-  assert.match(svc["murkle-ceremony"], /MURKLE_CEREMONY_TRUST_PROXY: "1"/);
   assert.match(svc.caddy, /\.\.\/caddy\/Caddyfile:\/etc\/caddy\/Caddyfile:ro/);
 });
 
 test("docker compose accepts the file (when the docker CLI is installed)", (t) => {
   const v = spawnSync("docker", ["compose", "version"], { encoding: "utf8", timeout: 20_000 });
   if (v.status !== 0) return t.skip("no docker compose CLI here");
-  const r = spawnSync("docker", ["compose", "-f", "deploy/docker/docker-compose.yml", "--env-file", "deploy/docker/compose.env.example", "--profile", "ceremony", "--profile", "electrs", "config", "--quiet"], { cwd: ROOT, encoding: "utf8", timeout: 60_000 });
+  const r = spawnSync("docker", ["compose", "-f", "deploy/docker/docker-compose.yml", "--env-file", "deploy/docker/compose.env.example", "--profile", "electrs", "config", "--quiet"], { cwd: ROOT, encoding: "utf8", timeout: 60_000 });
   assert.equal(r.status, 0, r.stderr);
 });
 
@@ -322,22 +318,20 @@ test("bitcoind.Dockerfile builds only a pinned, hash-checked release", () => {
   assert.match(conf, /\[signet\][\s\S]*rpcport=38332/);
 });
 
-test("Caddyfile and nginx: HTTPS, HSTS, ceremony routes to the coordinator, X-Forwarded-For overwritten, no access log", () => {
+test("Caddyfile and nginx: HTTPS, HSTS, X-Forwarded-For overwritten, no access log", () => {
   const caddy = read("deploy/caddy/Caddyfile");
-  assert.match(caddy, /@ceremony path \/ceremony\/api\/\* \/ceremony\/files\/\* \/ceremony\/transcript\.json/);
-  assert.match(caddy, /handle @ceremony \{[\s\S]*?max_size 32MB[\s\S]*?reverse_proxy \{\$CEREMONY_UPSTREAM:127\.0\.0\.1:8790\}[\s\S]*?header_up X-Forwarded-For \{remote_host\}[\s\S]*?read_timeout 600s/);
+  assert.doesNotMatch(caddy, /8790|@ceremony/, "the indexer is the only upstream");
   assert.match(caddy, /handle \{[\s\S]*?reverse_proxy \{\$INDEXER_UPSTREAM:127\.0\.0\.1:8787\} \{\s*#[^\n]*\n\s*header_up X-Forwarded-For \{remote_host\}/);
   assert.match(caddy, /Strict-Transport-Security "max-age=31536000"/);
-  // Caddy drops an idle upstream connection before the servers do, so it never reuses one they are closing.
-  assert.equal((caddy.match(/^\s*keepalive 60s$/gm) ?? []).length, 2, "both upstreams: keepalive 60s");
-  for (const f of ["server/indexer-server.mjs", "server/ceremony-server.mjs"]) assert.match(read(f), /server\.keepAliveTimeout = 65_000;/, f);
+  // Caddy drops an idle upstream connection before the server does, so it never reuses one it is closing.
+  assert.equal((caddy.match(/^\s*keepalive 60s$/gm) ?? []).length, 1, "the indexer upstream: keepalive 60s");
+  assert.match(read("server/indexer-server.mjs"), /server\.keepAliveTimeout = 65_000;/);
   const code = caddy.split("\n").filter((l) => !l.trim().startsWith("#")).join("\n");
   assert.doesNotMatch(code, /^\s*log\b/m, "no access log");
   assert.doesNotMatch(code, /trusted_proxies/, "Caddy is the edge: no incoming X-Forwarded-For is believed");
 
   const nginx = read("deploy/nginx/murkle.conf");
-  assert.match(nginx, /location ~ \^\/ceremony\/\(api\|files\)\/ \{[^}]*client_max_body_size 32m;[^}]*proxy_read_timeout 6\d0s;[^}]*proxy_pass http:\/\/127\.0\.0\.1:8790;/);
-  assert.match(nginx, /location = \/ceremony\/transcript\.json \{\s*proxy_pass http:\/\/127\.0\.0\.1:8790;/);
+  assert.doesNotMatch(nginx, /8790|ceremony/, "the indexer is the only upstream");
   assert.match(nginx, /location \/ \{\s*proxy_pass http:\/\/127\.0\.0\.1:8787;/);
   assert.match(nginx, /proxy_set_header X-Forwarded-For \$remote_addr;/);
   assert.doesNotMatch(nginx, /\$proxy_add_x_forwarded_for/, "never append to a client-supplied header");
@@ -608,7 +602,7 @@ test("monitor: each alert from /api/health and its exit code", async () => {
   assert.match(halted.alerts[0].message, /pool unspent 1 < liabilities 2/);
 });
 
-test("monitor: the /api/state fallback, an indexer that is down, disk and the coordinator", async () => {
+test("monitor: the /api/state fallback, an indexer that is down and disk", async () => {
   const state = { network: "signet", height: 100, chainTip: 108, lastSync: NOW - 30_000, lastError: null, artifacts: { ok: true }, preGenesis: false };
   let srv = await fakeServer({ "/api/state": [200, state], "/api/relay/info": [200, { code: "halted" }] });
   let r = await runAt(srv.url);
@@ -649,14 +643,6 @@ test("monitor: the /api/state fallback, an indexer that is down, disk and the co
   r = await runAt(srv.url, {}, { statfs: () => { throw Object.assign(new Error("no"), { code: "ENOENT" }); } });
   assert.deepEqual(r.result.alerts.map((a) => a.code), ["disk_unknown"]);
 
-  const cer = await fakeServer({ "/ceremony/api/health": [200, { ok: true, phase: "open", contributions: 3, waiting: 1 }] });
-  r = await runAt(srv.url, { ceremonyUrl: cer.url });
-  assert.equal(r.level, "ok");
-  assert.deepEqual(r.result.ceremony, { reachable: true, phase: "open", contributions: 3, waiting: 1 });
-  await cer.close();
-  r = await runAt(srv.url, { ceremonyUrl: cer.url });
-  assert.deepEqual(r.result.alerts.map((a) => a.code), ["ceremony_down"]);
-  assert.equal(r.code, 1);
   await srv.close();
 });
 
@@ -884,23 +870,28 @@ test("/security states A-8 and A-9 per network; mainnet is not launched before g
   assert.match(signet, /even after you replay the pool/);
   assert.doesNotMatch(signet, /A-1 to A-9/);
 
-  const pre = strip(sec.renderPage(sec.pageContext({ network: "mainnet", preGenesis: true, ceremony: null })));
+  const pre = strip(sec.renderPage(sec.pageContext({ network: "mainnet", preGenesis: true, keyPinned: false })));
   assert.match(pre, /Murkle has not launched on Bitcoin mainnet\. No genesis is pinned, so nothing here can move funds\./);
   assert.ok(pre.includes(MAINNET_A9), "mainnet A-9 copy");
-  assert.match(pre, /The public phase-2 ceremony has not run yet/);
+  assert.match(pre, /No mainnet proving key is pinned yet\./);
+  assert.doesNotMatch(pre, /ceremony has not run|public ceremony|MPC/i, "no ceremony is promised");
   assert.doesNotMatch(pre, /Signet test network|no value|Signet coins/, "no signet disclosure on mainnet");
   assert.doesNotMatch(pre, /signature that is not checked/);
   assert.doesNotMatch(pre, /Posted on mainnet|BITCOIN MAINNET/);
 
-  const post = strip(sec.renderPage(sec.pageContext({ network: "mainnet", preGenesis: false, genesisTxid: "ab".repeat(32), activationHeight: 975100, ceremony: { id: "murkle-mainnet-1", contributions: 12, beacon: { height: 975000 } } })));
-  assert.match(post, /public ceremony murkle-mainnet-1, 12 contributions, beacon block #975,000/);
-  assert.match(post, /secure if at least one contributor discarded their secret/);
+  const post = strip(sec.renderPage(sec.pageContext({ network: "mainnet", preGenesis: false, genesisTxid: "ab".repeat(32), activationHeight: 975100, keyPinned: true })));
+  // The pinned mainnet key is a bare fact (owner decision 2026-10-11): no warning copy, no ceremony.
+  assert.match(post, /single-party key made by the Murkle operator on the public Hermez powers of tau/);
+  assert.match(post, /npm run key:verify/);
+  assert.doesNotMatch(post, /secure if at least one contributor|ceremony|trustless/i);
+  assert.doesNotMatch(post, /could create hidden tokens|nobody can prove/, "the owner states the risk himself");
   assert.match(post, /tokens may be worth money and can be lost to bugs/);
   assert.match(post, /no external audit yet/i);
   assert.doesNotMatch(post, /has not launched/);
-  // The ceremony line only once the mainnet pins name it.
-  assert.doesNotMatch(strip(sec.renderPage(sec.pageContext({ network: "mainnet", preGenesis: true, ceremony: null }))), /contributions, beacon block/);
-  assert.equal(sec.setupTrust({ network: "signet", ceremony: { id: "x" } }).status, "single-party development setup", "signet never claims a ceremony");
+  // The pinned-key text only once the mainnet pins hold the key; signet keeps its development disclosure.
+  assert.doesNotMatch(pre, /single-party key made by the Murkle operator/);
+  assert.equal(sec.setupTrust({ network: "signet", keyPinned: true }).status, "single-party development setup", "signet keeps its own disclosure");
+  assert.equal(sec.setupTrust({ network: "mainnet", keyPinned: true }).status, "single-party key (Murkle operator)");
 
   assert.match(strip(sec.disclosure({ contact: null, repoUrl: null, network: "mainnet" })), /report privately first/);
   assert.match(strip(sec.disclosure({ contact: null, repoUrl: null })), /Signet coins have no value/);
@@ -910,7 +901,7 @@ test("/security states A-8 and A-9 per network; mainnet is not launched before g
 test("/verify takes its A-8 and A-9 copy from security.js, per network", async () => {
   const sec = await import("../web/src/views/security.js");
   const s = sec.verifyCopy(sec.pageContext({ network: "signet" }));
-  const m = sec.verifyCopy(sec.pageContext({ network: "mainnet", preGenesis: true, ceremony: null }));
+  const m = sec.verifyCopy(sec.pageContext({ network: "mainnet", preGenesis: true, keyPinned: true }));
   assert.equal(s.limitsTitle, "What is still trusted on signet");
   assert.equal(m.limitsTitle, "What is still trusted on mainnet");
   assert.match(s.caveats.join(" "), /signet proof of work is nearly free/);
@@ -920,7 +911,7 @@ test("/verify takes its A-8 and A-9 copy from security.js, per network", async (
   assert.match(s.limits[1][2], /\(A-9\)/);
   assert.match(m.limits[0][2], /\(A-8\)/);
   assert.deepEqual(s.setupTag, ["single-party development setup", "danger"]);
-  assert.equal(m.setupTag[1], "danger", "no mainnet key before the ceremony");
+  assert.deepEqual(m.setupTag, ["single-party key (Murkle operator)", "neutral"], "the mainnet key is a bare fact, not a warning");
 
   const src = read("web/src/views/verify.js");
   assert.match(src, /import \{ verifyCopy \} from "\.\/security\.js";/);
@@ -943,7 +934,7 @@ test("audit/REPORT.md: the A-8, A-9 and V2-02 status cells and the closing statu
   assert.equal(f["A-9"].state, "partial");
   assert.match(f["A-9"].status, /linkage, proof of work, retarget, MTP, version, checkpoints, most work/);
   assert.match(f["A-9"].status, /a single source can withhold blocks; the signet signature \(BIP325\) is not checked/);
-  assert.match(f["A-8"].status, /^mainnet: public ceremony tooling ready .*open until the ceremony runs; signet: DEV setup by design/);
+  assert.match(f["A-8"].status, /^accepted risk, owner decision 2026-10-11 \(mainnet: single-party key of the Murkle operator; signet: DEV setup by design/);
   assert.equal(f["V2-02"].state, "fixed");
   assert.match(f["V2-02"].status, /mainnet from genesis .*signet keeps the historical rule/);
   assert.doesNotMatch(report, /block headers come from mempool\.space without a proof-of-work check/);
@@ -954,9 +945,8 @@ test("audit/REPORT.md: the A-8, A-9 and V2-02 status cells and the closing statu
 test("package.json has the script names other tracks and the docs use (and no dependency change)", () => {
   const pkg = JSON.parse(read("package.json"));
   const want = {
-    ceremony: "node server/ceremony-server.mjs",
-    "ceremony:contribute": "node scripts/ceremony/contribute.mjs",
-    "ceremony:verify": "node scripts/ceremony/verify.mjs",
+    "key:mainnet": "node scripts/mainnet-key.mjs",
+    "key:verify": "node scripts/verify-key.mjs",
     "headers:checkpoint": "node scripts/checkpoint.mjs",
     "replay:compare": "node scripts/replay-compare.mjs",
     monitor: "node deploy/bin/monitor.mjs",
@@ -969,7 +959,7 @@ test("package.json has the script names other tracks and the docs use (and no de
 
 test("docs/OPERATIONS.md covers install, upgrade, restart, backups, the drill and the incident playbook", () => {
   const ops = read("docs/OPERATIONS.md");
-  for (const h of ["## 3. Install (host, systemd)", "## 4. Install (Docker Compose)", "## 5. Upgrade and rollback", "## 6. Restarts", "## 7. Backups and the restore drill", "## 8. Monitoring and alerts", "### 10.1 Relayer halt", "### 10.2 Reorg", "### 10.3 Header errors and `less-work`", "### 10.4 Key compromise", "### 10.5 Ceremony coordinator"]) {
+  for (const h of ["## 3. Install (host, systemd)", "## 4. Install (Docker Compose)", "## 5. Upgrade and rollback", "## 6. Restarts", "## 7. Backups and the restore drill", "## 8. Monitoring and alerts", "### 10.1 Relayer halt", "### 10.2 Reorg", "### 10.3 Header errors and `less-work`", "### 10.4 Key compromise"]) {
     assert.ok(ops.includes(h), h);
   }
   for (const s of ["state-rollback.mjs", "check-books.mjs", "backup.mjs verify", "Never start a relayer from a drill copy", "Never move pool coins by hand", "MURKLE_RELAYER", "npm ci", "fetch-artifacts.mjs --check", "txindex=1", "MURKLE_CSP_ENFORCE=1", "never pays a user's fee"]) {
@@ -998,7 +988,7 @@ test("no banned words or launch claims in the new docs, the deploy kit and the p
     for (const re of BANNED) assert.ok(!re.test(text), `${f}: ${re}`);
   }
   const sec = await import("../web/src/views/security.js");
-  for (const ctx of [{ network: "signet" }, { network: "mainnet", preGenesis: true, ceremony: null }, { network: "mainnet", preGenesis: false, ceremony: {} }]) {
+  for (const ctx of [{ network: "signet" }, { network: "mainnet", preGenesis: true, keyPinned: false }, { network: "mainnet", preGenesis: false, keyPinned: true }]) {
     const text = strip(sec.renderPage(sec.pageContext(ctx))) + JSON.stringify(sec.verifyCopy(sec.pageContext(ctx)));
     for (const re of BANNED) assert.ok(!re.test(text), `${JSON.stringify(ctx)}: ${re}`);
   }

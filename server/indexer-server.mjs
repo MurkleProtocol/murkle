@@ -50,7 +50,7 @@ import { SUBMIT_MESSAGE, loadV1State, pruneV1State, relayInfoOff, v1NeedsPrune, 
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 // This network's artifacts (signet: build/dev/* and build/manifest.json, unchanged; mainnet:
-// build/mainnet/*, the ceremony output). The wasm is shared: same circuit.
+// build/mainnet/*, the single-party key from npm run key:mainnet). The wasm is shared: same circuit.
 export const ARTIFACTS = Object.freeze({
   "transaction.wasm": join(ROOT, ARTIFACT_PATHS.wasm),
   "transaction.zkey": join(ROOT, ARTIFACT_PATHS.zkey),
@@ -178,7 +178,7 @@ export function startRefusal({
 } = {}) {
   if (miningHeight != null && mineFeeReason) return `${mineFeeReason}, but ${PINS_FILE} pins a mining height (${miningHeight}). See docs/MAINNET.md G5.`;
   if (test) return null;
-  if (!vkeyPinned) return `${network} artifacts are not pinned yet (${PINS_FILE} has no vkey): run the ceremony, see docs/MAINNET.md.`;
+  if (!vkeyPinned) return `${network} artifacts are not pinned yet (${PINS_FILE} has no vkey): run npm run key:mainnet, see docs/MAINNET.md.`;
   if (preGenesis && !allowPreGenesis) {
     return `${BRAND} has not launched on ${network}: no genesis is pinned in ${PINS_FILE}. Set MURKLE_ALLOW_PRE_GENESIS=1 only for a staging run (docs/MAINNET.md).`;
   }
@@ -1048,21 +1048,6 @@ export function createApp({
     return res.end(res.req?.method === "HEAD" ? undefined : message);
   }
 
-  /** /ceremony serves the ceremony page when it is built; the coordinator's API and files are not served here. */
-  function handleCeremony(res, path) {
-    if (path === "/ceremony/transcript.json" || path === "/ceremony/api" || path.startsWith("/ceremony/api/") || path.startsWith("/ceremony/files/")) {
-      return fail(res, 404, "not_found", "The ceremony coordinator is a separate service; this indexer does not serve its API or files.");
-    }
-    const build = webBuildCheck();
-    if (!build.ok) return refuseBuild(res, build.message);
-    const page = join(webDist, "ceremony.html");
-    if (!existsSync(page)) {
-      res.writeHead(404, { ...BASE_HEADERS, "content-type": "text/plain; charset=utf-8" });
-      return res.end(res.req?.method === "HEAD" ? undefined : "The ceremony page is not built.");
-    }
-    return sendFile(res, page, { cache: "no-cache", extra: htmlHeaders() });
-  }
-
   function handleStatic(res, path) {
     const build = webBuildCheck();
     if (!build.ok) return refuseBuild(res, build.message);
@@ -1097,8 +1082,6 @@ export function createApp({
       if (path === "/api" || path.startsWith("/api/")) return await handleApi(req, res, path, url.searchParams);
       if (req.method !== "GET" && req.method !== "HEAD") return fail(res, 405, "method_not_allowed", "Only GET is served here.", { allow: "GET, HEAD" });
       if (path.startsWith("/artifacts/")) return handleArtifact(res, path.slice("/artifacts/".length));
-      if (path === "/ceremony" || path === "/ceremony/" || path === "/ceremony/transcript.json" || path === "/ceremony/api"
-        || path.startsWith("/ceremony/api/") || path.startsWith("/ceremony/files/")) return handleCeremony(res, path);
       return handleStatic(res, path);
     } catch (e) {
       if (e instanceof HttpError) return fail(res, e.status, e.code, e.message);

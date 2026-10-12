@@ -2,6 +2,8 @@
 
 Status: **contract for four parallel build tracks** (headers, network, ceremony, deploy). Nothing here says mainnet is live. Signet stays the default network and must behave byte for byte as before.
 
+> Note 2026-10-11: the owner dropped the trusted-setup ceremony described here in favour of a single-party mainnet key made by the Murkle operator (`npm run key:mainnet`, `docs/MAINNET.md`). The ceremony code and docs were removed; git history keeps them. Read the ceremony parts as the original plan.
+
 Precedence: `SPEC.md` (consensus) first, then this contract for the interfaces it defines, then the other design notes. Where this file and the code disagree after the build, the code and its tests win and this file gets an "as built" note.
 
 Contents

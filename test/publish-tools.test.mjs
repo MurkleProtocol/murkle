@@ -13,10 +13,11 @@ import { sha256 } from "@noble/hashes/sha256";
 import { schnorr } from "@noble/curves/secp256k1";
 import { ARTIFACTS } from "../server/indexer-server.mjs";
 import { ARTIFACT_FILES, runCommands } from "../web/src/ui/indexer.js";
-import { ARTIFACT_SHA256, MANIFEST_SHA256 } from "../src/params.mjs";
+import { ARTIFACT_SHA256, MANIFEST_SHA256, NETWORK, NETWORKS } from "../src/params.mjs";
 import { DEFAULT_TAG, PINNED_ARTIFACTS, ROOT, sha256sums } from "../scripts/artifacts-lib.mjs";
 import { fetchArtifacts, locate, parseArgs, resolveSource, UsageError } from "../scripts/fetch-artifacts.mjs";
 import { check, findMnemonics, gitignoreMatcher, scanBinary, scanText } from "../scripts/prepublish-check.mjs";
+import { releaseNotes } from "../scripts/release-assets.mjs";
 
 const DIR = mkdtempSync(join(tmpdir(), "murkle-publish-tools-"));
 after(() => rmSync(DIR, { recursive: true, force: true }));
@@ -171,3 +172,18 @@ test("new publication files are LF and English only", () => {
   for (const s of ["artifacts:fetch", "artifacts:check", "release:assets", "prepublish:check"]) assert.ok(pkg.scripts[s], s);
 });
 
+test("release notes follow the network: signet keeps its DEV text, mainnet gets its own pins file and a neutral key line", () => {
+  const signet = releaseNotes({ network: "signet", tag: "artifacts-test", genesisTxid: "ab".repeat(32), activationHeight: 7 });
+  assert.match(signet, /pinned by sha256 in `src\/pins\.json` and anchored on signet by the genesis ATTEST transaction `(?:ab){32}` \(activation height 7\)\./);
+  assert.match(signet, /- `transaction\.zkey` comes from a DEV single-party phase-2 contribution \(audit A-8\)\. It cannot be rebuilt bit for bit, which is why it is published here; whoever made it could forge proofs\.\n/);
+  assert.doesNotMatch(signet, /key:mainnet/);
+
+  const mainnet = releaseNotes({ network: "mainnet", tag: "artifacts-test", genesisTxid: null, activationHeight: null });
+  assert.match(mainnet, /pinned by sha256 in `src\/pins\.mainnet\.json` and anchored on mainnet by the genesis ATTEST transaction `\(not pinned\)`/);
+  assert.match(mainnet, /\n- single-party key made by the Murkle operator with `npm run key:mainnet`; `npm run key:verify` checks it\n/);
+  assert.doesNotMatch(mainnet, /src\/pins\.json|signet|DEV|A-8/);
+  assert.ok(!/[\u0400-\u04FF]/.test(mainnet));
+
+  // With no arguments the notes follow the network this process runs on.
+  assert.equal(releaseNotes().includes(NETWORKS[NETWORK].pinsFile), true);
+});

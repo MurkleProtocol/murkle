@@ -1,13 +1,13 @@
 # Mainnet launch checklist
 
 Status: **Murkle has not launched on Bitcoin mainnet.** No mainnet genesis is pinned
-(`src/pins.mainnet.json` has `genesisTxid: null`), the mainnet proving key does not exist until the public
-ceremony runs, and mining on mainnet is off until the owner names the platform address. Signet stays the
+(`src/pins.mainnet.json` has `genesisTxid: null`), the mainnet proving key does not exist until the operator
+makes it (`npm run key:mainnet`), and mining on mainnet is off until the owner names the platform address. Signet stays the
 default network and keeps running unchanged.
 
 This file is the exact order of the launch, with the command and the evidence for each step, what only the
-owner can provide, and the go/no-go list. Design and interfaces: `docs/design/mainnet-readiness.md`. The
-ceremony: `docs/CEREMONY.md`. Running the servers: `docs/OPERATIONS.md`.
+owner can provide, and the go/no-go list. Design and interfaces: `docs/design/mainnet-readiness.md`. Running
+the servers: `docs/OPERATIONS.md`.
 
 Contents: 1. How the network is selected · 2. What the owner must provide · 3. Launch sequence (G0 to G8) ·
 4. Go/no-go list · 5. After launch · 6. What stays open
@@ -34,12 +34,12 @@ Contents: 1. How the network is selected · 2. What the owner must provide · 3.
 | Item | Why | Where it goes |
 |---|---|---|
 | Platform address (P2TR recommended) and the platform fee amount per mining claim | The consensus service-fee rule of mining. The code holds the placeholder `TODO_PLATFORM_ADDRESS` and refuses to mine until it is replaced | `MINE_FEES.mainnet` in `src/params.mjs` (step G5) |
-| Servers | Indexer host: 4+ vCPU, 16 GB RAM, 1.5 TB+ SSD for an unpruned Bitcoin Core with `txindex=1`. Ceremony coordinator: a small host with 50 GB disk | `docs/OPERATIONS.md` |
-| Domain and TLS | HTTPS for the site, the API and the ceremony | `deploy/caddy/Caddyfile` or `deploy/nginx/murkle.conf` |
+| Servers | Indexer host: 4+ vCPU, 16 GB RAM, 1.5 TB+ SSD for an unpruned Bitcoin Core with `txindex=1`. | `docs/OPERATIONS.md` |
+| Domain and TLS | HTTPS for the site and the API | `deploy/caddy/Caddyfile` or `deploy/nginx/murkle.conf` |
 | Bitcoin Core 30 or later | Your own node removes the third-party data source (A-9); Core 30's default `datacarriersize` relays the 471-515 byte OP_RETURN carriers, older or filtering nodes do not | `deploy/bitcoin/bitcoin.conf.example`, `MURKLE_BTC_SOURCE=bitcoind` |
 | Security contact and the public repository URL | Users must be able to report bugs privately and read the source | `SECURITY_CONTACT`, `REPO_URL` in `src/params.mjs` |
 | The offline backup key | The relayer holds users' prepaid deposits; its keys and books are backed up encrypted to this key | `deploy/bin/backup.mjs keygen` on an offline machine |
-| Ceremony participants and the announcement | The mainnet key is sound if at least one participant discarded their secret; people outside the project must take part | `docs/CEREMONY.md` |
+| A clean machine for the mainnet key | The operator makes the key once with `npm run key:mainnet` | step G1 |
 | The mainnet genesis ATTEST, paid from the owner's own funds | It is the platform's transaction (a few thousand sats), never a user's | step G4 |
 | An external audit, or an explicit decision to launch without one | A go/no-go item; without an audit every surface keeps saying "no external audit yet" | `audit/`, the site copy |
 
@@ -60,36 +60,44 @@ node scripts/replay-compare.mjs --network signet --snapshot /tmp/signet-state.js
 
 Evidence: `npm test` green; both replays print `identical through H`; the V2-02 count is zero.
 
-### G1. Ceremony (docs/CEREMONY.md)
+### G1. Mainnet key
+
+The mainnet key is single-party by owner decision of 2026-10-11; a later key change would need a consensus
+activation and is not planned. Run `npm run key:mainnet` on a clean machine at launch, publish the key files in
+a release and pin their sha256 in `src/pins.mainnet.json`; the genesis ATTEST pins that manifest.
+
+On a clean machine, with this release checked out, `npm ci` done, circom 2.2.2 on the PATH and the pinned
+`build/ptau/powersOfTau28_hez_final_15.ptau` in place (the tool checks its size, sha256 and blake2b before it
+uses it):
 
 ```bash
-node scripts/ceremony/init.mjs --dir data/ceremony/murkle-mainnet-1 --id murkle-mainnet-1 \
-  --r1cs build/transaction.r1cs --ptau build/ptau/powersOfTau28_hez_final_15.ptau --beacon-height H
-npm run ceremony                                  # the coordinator (or the murkle-ceremony systemd unit)
-# ... contributions; the queue closes itself at H - 6 ...
-node scripts/ceremony/admin.mjs status --dir data/ceremony/murkle-mainnet-1
-node scripts/ceremony/finalize.mjs --dir data/ceremony/murkle-mainnet-1 --source bitcoind --cross-check esplora
-node scripts/ceremony/verify.mjs --transcript data/ceremony/murkle-mainnet-1/transcript.json \
-  --zkey data/ceremony/murkle-mainnet-1/final/transaction.zkey [--expect-hash <a contribution hash>]
+# The same circuit as signet: compile into build/ (do NOT run npm run circuit:build; it would make a new signet key)
+circom circuits/transaction.circom --O2 --r1cs --wasm --sym -o build
+npm run key:mainnet        # one contribution, in process; writes build/mainnet/{transaction.zkey, verification_key.json, manifest.json}
+npm run key:verify -- --network mainnet
 ```
 
-Announce the schedule and the beacon height `H` (a future mainnet block, at least a week ahead) before the
-queue opens. Evidence: the published transcript and every key; at least two people outside the project ran
-`verify.mjs` and published its output; at least one contributor outside the project.
+`key:mainnet` refuses to run when `build/mainnet/` already holds a key (`--force-new` moves it aside, only
+before genesis). It verifies the new key against the r1cs and the phase-1 file before it writes anything, and it
+prints the sha256 values for G2. Run it once, close the terminal afterwards, and do not copy the process
+memory, a core dump or a swap file anywhere. Evidence: the printed manifest hash and contribution hash; at
+least one person outside the project ran `npm run key:verify` on the published files and published its output.
 
 ### G2. Artifacts
 
+Put the values `key:mainnet` printed into `src/pins.mainnet.json` by hand: `manifestSha256`, `artifacts.zkey`
+and `artifacts.vkey` (`artifacts.wasm` is already pinned; leave `genesisTxid`, `activationHeight` and
+`activations` as they are). Then:
+
 ```bash
-node scripts/ceremony/finalize.mjs --dir data/ceremony/murkle-mainnet-1 --install
 MURKLE_NETWORK=mainnet npm run artifacts:check
+npm run key:verify -- --network mainnet --require-pins
 MURKLE_NETWORK=mainnet npm run release:assets -- --out /tmp/murkle-mainnet-assets
 ```
 
-`--install` copies `transaction.zkey`, `verification_key.json` and `manifest.json` to `build/mainnet/` and
-writes `artifacts.zkey`, `artifacts.vkey` and `manifestSha256` into `src/pins.mainnet.json` (only while
-`genesisTxid` is null; it never touches `src/pins.json`). Publish the assets under the release tag of the
-mainnet manifest. Evidence: the pins printed by `--install` match the transcript's `final` block; the
-artifact check passes; `src/pins.json` is byte-identical to the previous release.
+Publish the key files (`transaction.zkey`, `verification_key.json`, `manifest.json`) in a release under the
+release tag of the mainnet manifest. The genesis ATTEST (G4) pins that manifest. Evidence: the artifact check
+and `key:verify` pass against the pins; `src/pins.json` is byte-identical to the previous release.
 
 ### G3. Header checkpoint
 
@@ -170,8 +178,7 @@ Install with `deploy/` (systemd units, `deploy/env/murkle.mainnet.env.example`, 
 
 ### G8. Announce
 
-Honest copy (docs/CLAIMS.md): experimental software; tokens can be lost to bugs; the phase-2 setup is the
-public ceremony (sound if one contributor discarded their secret); internal review only unless an external
+Honest copy (docs/CLAIMS.md): experimental software; tokens can be lost to bugs; internal review only unless an external
 audit exists; headers are checked from a pinned checkpoint but a data source can still hide blocks; mints are
 public; the anonymity set is small at first. Never call the system unbreakable or the users invisible.
 
@@ -179,8 +186,8 @@ public; the anonymity set is small at first. Never call the system unbreakable o
 
 Every line must be "go" before G8:
 
-- [ ] Ceremony done with at least one contributor outside the project, and the transcript verified
-      independently (G1).
+- [ ] Mainnet key made once on a clean machine (G1) and checked with `npm run key:verify` by at least one
+      person outside the project.
 - [ ] `src/pins.mainnet.json` complete (artifacts, manifest, genesis) and the served artifacts match it (G2, G4).
 - [ ] Header verification on, against the owner's own Bitcoin Core (G3, G6).
 - [ ] One real mainnet carrier of each size confirmed before the announcement (G7).
@@ -207,7 +214,8 @@ Every line must be "go" before G8:
 
 ## 6. What stays open
 
-- A-8: open on mainnet until the ceremony runs; signet keeps its DEV setup by design (its genesis pins it).
+- A-8: accepted risk, owner decision 2026-10-11 (single-party mainnet key). Signet keeps its DEV setup by
+  design (its genesis pins it).
 - A-9: a single data source can still withhold blocks or a better chain; the signet block signature (BIP325)
   is not checked.
 - No external audit yet.

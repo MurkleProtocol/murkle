@@ -14,7 +14,7 @@ import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative, resolve, isAbsolute } from "node:path";
 import { fileURLToPath } from "node:url";
-import { GENESIS_TXID, ACTIVATION_HEIGHT } from "../src/params.mjs";
+import { GENESIS_TXID, ACTIVATION_HEIGHT, NETWORK, NETWORKS } from "../src/params.mjs";
 import { DEFAULT_TAG, PINNED_ARTIFACTS, ROOT, checkFile, sha256sums } from "./artifacts-lib.mjs";
 
 export function outDirFrom(argv, env = process.env) {
@@ -30,11 +30,15 @@ export function outDirFrom(argv, env = process.env) {
   return out;
 }
 
-export function releaseNotes({ tag = DEFAULT_TAG, license = null } = {}) {
+export function releaseNotes({ tag = DEFAULT_TAG, license = null, network = NETWORK, genesisTxid = GENESIS_TXID, activationHeight = ACTIVATION_HEIGHT } = {}) {
+  const pinsFile = NETWORKS[network].pinsFile;
+  const keyLine = network === "mainnet"
+    ? "single-party key made by the Murkle operator with `npm run key:mainnet`; `npm run key:verify` checks it"
+    : "`transaction.zkey` comes from a DEV single-party phase-2 contribution (audit A-8). It cannot be rebuilt bit for bit, which is why it is published here; whoever made it could forge proofs.";
   const rows = PINNED_ARTIFACTS.map((a) => `| \`${a.name}\` | \`${a.path}\` | \`${a.sha256}\` |`).join("\n");
   return `# Pinned circuit artifacts (${tag})
 
-These are the proving and verification artifacts pinned by sha256 in \`src/pins.json\` and anchored on signet by the genesis ATTEST transaction \`${GENESIS_TXID ?? "(not pinned)"}\` (activation height ${ACTIVATION_HEIGHT ?? "(not pinned)"}).
+These are the proving and verification artifacts pinned by sha256 in \`${pinsFile}\` and anchored on ${network} by the genesis ATTEST transaction \`${genesisTxid ?? "(not pinned)"}\` (activation height ${activationHeight ?? "(not pinned)"}).
 
 | File | Path in a checkout | sha256 |
 |---|---|---|
@@ -42,7 +46,7 @@ ${rows}
 
 Fetch and verify them in a clone with \`npm run artifacts:fetch\` (or \`sha256sum -c SHA256SUMS\` after a manual download). Every client checks them against the pins, so this download source does not need to be trusted.
 
-- \`transaction.zkey\` comes from a DEV single-party phase-2 contribution (audit A-8). It cannot be rebuilt bit for bit, which is why it is published here; whoever made it could forge proofs until a public ceremony replaces it.
+- ${keyLine}
 - \`transaction.wasm\`, the r1cs it implies and \`verification_key.json\` can be checked against the circuit sources of this repository (README, "Reproduce the circuit").
 - The circuit includes circomlib (GPL-3.0-or-later), so these compiled artifacts are distributed under GPL-3.0-or-later terms${license ? ` (the repository is licensed ${license})` : ""}; their corresponding source is \`circuits/\` at the tagged commit plus circomlib 2.0.5 (see THIRD_PARTY_NOTICES.md).
 `;

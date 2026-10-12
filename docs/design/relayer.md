@@ -1,5 +1,7 @@
 **Historical: v1 sponsored relayer (retired). Relayer decision and implementation spec (signet, then mainnet)**
 
+> Note 2026-10-11: the owner dropped the trusted-setup ceremony in favour of a single-party mainnet key made by the Murkle operator (`docs/MAINNET.md`); where this file describes the ceremony as the plan, read it as the original plan.
+
 > **Status: historical.** Kept as the record of the v1 design. Names of that time (`zkpool`, the `zkp` CLI, `zp1…` addresses) are now `murkle`, `murkle` and `mrk1…`. The notes below say what still applies.
 
 > **Relay balances replace the free design (2026-10-03).** Payment is now the prepaid relay balance of `docs/design/relay-balance.md`; the binding interfaces are in `docs/design/relay-balance-contract.md`, which wins wherever this file differs. The sponsored ("free, capped") relayer this file chose in §1, its free-tier lines in §3, the budget and proof-of-work settings of §4.2 and §4.3, and §7.2 no longer apply: a relayer that pays carriers from the operator's BTC can be drained by anyone, because zero-value transfers need no tokens (audit R-2). Stage 0 deleted the free path. The ticket design of `paid-relay.md` that was to follow it was rejected (it forced scheduled sweeps and random holds) and is kept only as a record.

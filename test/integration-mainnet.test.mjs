@@ -47,20 +47,25 @@ test("facts per network: signet keeps web/src/facts.json and its shape; mainnet 
   assert.equal(mainnet.manifest.sha256, mpins.manifestSha256 ?? null);
   assert.equal(mainnet.artifacts.vkey.pinned, mpins.artifacts?.vkey ?? null);
 
-  // A ceremony manifest installed under build/mainnet gives /security its ceremony block.
+  // Mainnet names its single-party key (owner decision 2026-10-11) with or without a manifest; signet reads its own.
+  const SETUP = "single-party (Murkle operator) on the public Hermez powers of tau";
+  assert.equal(mainnet.circuit.setup, SETUP);
+  assert.equal(JSON.parse(read("web/src/facts.mainnet.json")).circuit.setup, SETUP);
+  assert.equal(signet.circuit.setup, "phase1: PPoT hez_final_15; phase2: dev single-party");
   const dir = mkdtempSync(join(tmpdir(), "murkle-facts-"));
   try {
     mkdirSync(join(dir, "build", "mainnet"), { recursive: true });
     mkdirSync(join(dir, "src"), { recursive: true });
     writeFileSync(join(dir, "src", "pins.mainnet.json"), JSON.stringify({ genesisTxid: null, activationHeight: null, manifestSha256: "ab".repeat(32), artifacts: {} }));
     writeFileSync(join(dir, "build", "mainnet", "manifest.json"), JSON.stringify({
-      constraints: 18411, ceremony: { id: "murkle-mainnet-1", contributions: 7, transcriptSha256: "cd".repeat(32), beacon: { network: "mainnet", height: 950000, blockHash: "00".repeat(32), iterationsExp: 10 } },
+      constraints: 18411, setup: "from the manifest",
     }));
     const f = buildFacts(dir, { network: "mainnet" });
-    assert.deepEqual(f.manifest.ceremony, { id: "murkle-mainnet-1", contributions: 7, beacon: { height: 950000 } });
+    assert.equal(f.circuit.setup, "from the manifest");
+    assert.equal("ceremony" in f.manifest, false);
     assert.equal(f.manifest.sha256, "ab".repeat(32));
     assert.equal(f.circuit.constraints, 18411);
-    assert.equal("ceremony" in buildFacts(dir, { network: "signet" }).manifest, false);
+    assert.equal(buildFacts(dir, { network: "mainnet" }).circuit.constraints, 18411);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -104,11 +109,11 @@ test("artifacts:check follows MURKLE_NETWORK and names what mainnet has not pinn
   assert.equal(signet.code, 1);
   assert.match(signet.stderr, /MISSING {2}build\/manifest\.json/);
   const mpins = JSON.parse(read("src/pins.mainnet.json"));
-  if (mpins.artifacts?.zkey) return; // after the ceremony installs the keys this case no longer exists
+  if (mpins.artifacts?.zkey) return; // once the operator pins the mainnet key this case no longer exists
   const mainnet = await run(["scripts/fetch-artifacts.mjs", "--check"], { MURKLE_NETWORK: "mainnet" });
   assert.equal(mainnet.code, 1);
   assert.match(mainnet.stderr, /UNPINNED build\/mainnet\/transaction\.zkey: src\/pins\.mainnet\.json pins no hash for it yet/);
-  assert.match(mainnet.stderr, /the public ceremony installs them/);
+  assert.match(mainnet.stderr, /the operator pins them after npm run key:mainnet/);
 });
 
 test("copy-notices writes into a temp build directory with --dist", async () => {
@@ -126,11 +131,12 @@ test("copy-notices writes into a temp build directory with --dist", async () => 
 
 test("replay-compare and the as-built notes are wired: npm scripts, the exit after the replay, the design note", () => {
   const pkg = JSON.parse(read("package.json"));
-  for (const k of ["ceremony", "ceremony:init", "ceremony:admin", "ceremony:contribute", "ceremony:finalize", "ceremony:verify", "headers:checkpoint", "replay:compare", "monitor", "backup"]) assert.ok(pkg.scripts[k], k);
+  for (const k of ["key:mainnet", "key:verify", "headers:checkpoint", "replay:compare", "monitor", "backup"]) assert.ok(pkg.scripts[k], k);
+  assert.equal(Object.keys(pkg.scripts).some((k) => /ceremony/i.test(k)), false, "the ceremony scripts are gone");
   assert.match(read("scripts/replay-compare.mjs"), /process\.exit\(process\.exitCode \?\? 0\)/);
   const design = read("docs/design/mainnet-readiness.md");
   assert.match(design, /## 12\. As built/);
-  for (const s of ["pass", "/ceremony/api/transcript.json", "facts.mainnet.json", "MURKLE_HEADERS=off"]) assert.ok(design.includes(s), s);
+  for (const s of ["pass", "facts.mainnet.json", "MURKLE_HEADERS=off"]) assert.ok(design.includes(s), s);
   for (const p of [".gitignore", ".dockerignore"]) {
     const t = read(p);
     for (const pat of ["deploy/**/*.env", "deploy/docker/compose.env", "*.mbk", "*.key.pub"]) assert.ok(t.includes(pat), `${p}: ${pat}`);

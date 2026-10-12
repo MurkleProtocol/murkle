@@ -4,8 +4,8 @@
  * Copy rules: "internally reviewed", never "audited" alone; no "trustless"; the setup and the
  * network status are always stated, per network (docs/design/mainnet-readiness.md §6.7):
  * signet keeps its single-party development setup by design (its genesis pins it); mainnet
- * uses a public ceremony, shown only once the mainnet pins name it, and is "not launched"
- * until a genesis is pinned.
+ * uses a single-party key made by the Murkle operator (owner decision 2026-10-11), shown once
+ * the mainnet pins hold it, and is "not launched" until a genesis is pinned.
  */
 import "../verify/verify.css";
 import { html } from "../ui/dom.js";
@@ -22,9 +22,8 @@ const n = (v) => (v === null || v === undefined ? DASH : int(v));
 
 /**
  * What this page states, from the build's network and pins. Exported so tests (and the /verify
- * page) can render the copy of either network. `ceremony` is null until the mainnet pins hold the
- * ceremony's verification key and manifest; its details come from the manifest when facts.json
- * carries them.
+ * page) can render the copy of either network. `keyPinned` is true once the mainnet pins hold the
+ * key's verification key and manifest.
  */
 export function pageContext(over = {}) {
   const network = NETWORK === "mainnet" ? "mainnet" : "signet";
@@ -38,19 +37,14 @@ export function pageContext(over = {}) {
     manifest,
     vkey: ARTIFACT_SHA256?.vkey ?? facts.artifacts?.vkey?.sha256 ?? null,
     zkey: ARTIFACT_SHA256?.zkey ?? facts.artifacts?.zkey?.sha256 ?? null,
-    ceremony: pinned ? (facts.manifest?.ceremony ?? {}) : null,
+    keyPinned: pinned,
     ...over,
   };
 }
 
-/** "public ceremony <id>, N contributions, beacon block H", with what the manifest gives. */
-export function ceremonyLabel(c) {
-  if (!c) return null;
-  const parts = [`public ceremony${c.id ? ` ${c.id}` : ""}`];
-  if (Number.isInteger(c.contributions)) parts.push(`${int(c.contributions)} contribution${c.contributions === 1 ? "" : "s"}`);
-  if (Number.isInteger(c.beacon?.height)) parts.push(`beacon block ${heightText(c.beacon.height)}`);
-  return parts.length > 1 ? parts.join(", ") : "public ceremony (details in the pinned manifest)";
-}
+/** The mainnet key as a bare fact (docs/CLAIMS.md). */
+export const MAINNET_KEY_LABEL = "single-party (Murkle operator) on the public Hermez powers of tau";
+export const MAINNET_KEY_TEXT = "Phase 2 is a single-party key made by the Murkle operator on the public Hermez powers of tau. \"npm run key:verify\" checks it.";
 
 /** A-9: what the chain check covers and what is still trusted, per network. */
 export function chainTrust(network) {
@@ -69,24 +63,20 @@ export function chainTrust(network) {
 }
 
 /** A-8: the phase-2 setup, per network. */
-export function setupTrust({ network, ceremony = null }) {
+export function setupTrust({ network, keyPinned = false }) {
   if (network !== "mainnet") {
     return {
       level: "red", word: "OPEN RISK", status: "single-party development setup", tone: "danger",
-      text: "Development phase 2 from a single party. Whoever ran it could forge proofs. Signet keeps it by design: its genesis attestation pins these keys. Mainnet uses keys from a public ceremony.",
+      text: "Development phase 2 from a single party. Whoever ran it could forge proofs. Signet keeps it by design: its genesis attestation pins these keys.",
     };
   }
-  if (!ceremony) {
+  if (!keyPinned) {
     return {
-      level: "red", word: "NOT RUN YET", status: "public ceremony not run yet", tone: "danger",
-      text: "The public phase-2 ceremony has not run yet, so no mainnet proving key is pinned.",
+      level: "red", word: "NOT MADE YET", status: "mainnet key not made yet", tone: "danger",
+      text: "No mainnet proving key is pinned yet.",
     };
   }
-  const label = ceremonyLabel(ceremony);
-  return {
-    level: "amber", word: "PUBLIC CEREMONY", status: label, tone: "proof",
-    text: `Phase 2 comes from a ${label}. It is secure if at least one contributor discarded their secret; anyone can re-verify the transcript, every contribution and the beacon.`,
-  };
+  return { level: "neutral", word: "SINGLE PARTY", status: "single-party key (Murkle operator)", tone: "neutral", text: MAINNET_KEY_TEXT };
 }
 
 /** The network line of the trust board and the banner, per network and genesis. */
@@ -119,7 +109,6 @@ export function receiptLevels() {
 export function verifyCopy(ctx = pageContext()) {
   const mainnet = ctx.network === "mainnet";
   const setup = setupTrust(ctx);
-  const label = ceremonyLabel(ctx.ceremony);
   return {
     caveats: [
       "It catches an indexer that reports a wrong pool: a missing or extra note, a double spend, a wrong verdict or wrong supply. Because it reads whole blocks, a hidden or omitted transaction shows up too.",
@@ -128,16 +117,16 @@ export function verifyCopy(ctx = pageContext()) {
         : "It checks every block header from a pinned checkpoint: proof of work and the difficulty rules (A-9). Signet blocks are valid by a signature that is not checked, and signet proof of work is nearly free, so on signet this mainly catches broken or inconsistent data. mempool.space can still hide or delay blocks.",
       "It trusts the verification key and genesis pinned in the page you loaded. A tampered website could ship different pins; a locally built copy closes that gap.",
       mainnet
-        ? ctx.ceremony
-          ? `A valid proof is only as sound as the trusted setup: the ${label}, secure if at least one contributor discarded their secret (A-8).`
-          : "No mainnet proving key is pinned yet: the public ceremony has not run (A-8)."
-        : "A valid proof is only as sound as the trusted setup, which on signet is a single-party development setup (A-8), kept by design; mainnet uses a public ceremony.",
+        ? ctx.keyPinned
+          ? "A valid proof is only as sound as the trusted setup, which on mainnet is a single-party key made by the Murkle operator (A-8)."
+          : "No mainnet proving key is pinned yet (A-8)."
+        : "A valid proof is only as sound as the trusted setup, which on signet is a single-party development setup (A-8), kept by design.",
     ],
     limitsTitle: mainnet ? "What is still trusted on mainnet" : "What is still trusted on signet",
     limits: [
-      ["SETUP", mainnet && ctx.ceremony ? "warn" : "danger", mainnet
+      ["SETUP", mainnet && ctx.keyPinned ? "neutral" : "danger", mainnet
         ? `${setup.text} (A-8)`
-        : "Proving keys come from a single-party development setup (A-8). Whoever ran it could forge proofs. Signet keeps it by design; mainnet uses a public ceremony."],
+        : "Proving keys come from a single-party development setup (A-8). Whoever ran it could forge proofs. Signet keeps it by design."],
       ["CHAIN DATA", "warn", mainnet
         ? "Block data comes from mempool.space. Headers are checked from a pinned checkpoint and the chain with the most work wins among those it serves; it can still hide or delay blocks, and your own node removes it (A-9)."
         : "Block data comes from mempool.space. Headers are checked for proof of work and the difficulty rules from a pinned checkpoint, but the signet block signature is not checked and signet proof of work is nearly free (A-9)."],
@@ -164,10 +153,10 @@ function statusBoard(ctx) {
   const medium = a.bySeverity?.Medium ?? null;
   const mainnet = ctx.network === "mainnet";
   const setupRows = !mainnet
-    ? [["Trusted setup: single-party development setup (signet keeps it by design: its genesis pins it)", "SIGNET"], ["Public MPC setup ceremony for the mainnet keys: tooling ready, not run yet", "MAINNET"]]
-    : ctx.ceremony
-      ? [[`Trusted setup: ${ceremonyLabel(ctx.ceremony)}`, "DONE"]]
-      : [["Trusted setup: the public MPC ceremony has not run yet; no mainnet proving key is pinned", "MAINNET"]];
+    ? [["Trusted setup: single-party development setup (signet keeps it by design: its genesis pins it)", "SIGNET"]]
+    : ctx.keyPinned
+      ? [[`Trusted setup: ${MAINNET_KEY_LABEL}`, "DESIGN"]]
+      : [["Trusted setup: no mainnet proving key is pinned yet", "MAINNET"]];
   const rows = [
     [`Circuit: ${n(c.constraints)} constraints, ${c.proofSystem ?? "Groth16"} on ${c.curve ?? "BN254"}, ${c.inputs ?? 2}-in/${c.outputs ?? 2}-out, depth-${c.treeDepth ?? 32} ${c.hash ?? "Poseidon"} tree`, "DONE"],
     ["Formal under-constraint check (Picus + cvc5): no under-constrained signals except harmless IsZero helper inverses, explained in the report", "DONE"],
@@ -269,13 +258,12 @@ function setupPanel(ctx) {
     return html`<div class="sec-setup">
       ${phase1}
       <div class="sec-setup-row"><span class="sec-step mono">2</span><div><div class="sec-setup-title">Phase 2: circuit-specific ${tag("single-party development setup", "danger")}</div><p class="small t-2">One party made this contribution. If it kept its secret, it could forge proofs that every verifier accepts (A-8). That's acceptable for signet test coins and not for anything of value. Signet keeps it by design: its genesis attestation pins these keys.</p>${keyLine}</div></div>
-      <div class="sec-setup-row"><span class="sec-step mono">3</span><div><div class="sec-setup-title">Public MPC ceremony for mainnet ${tag("NOT RUN YET", "neutral")}</div><p class="small t-2">Mainnet uses phase-2 keys from a ceremony anyone can join, finished with a random beacon from a pre-announced Bitcoin block. One honest participant is enough to prevent forged proofs. The mainnet keys get their own genesis attestation; signet keeps its development keys.</p></div></div>
     </div>`;
   }
   const setup = setupTrust(ctx);
   return html`<div class="sec-setup">
     ${phase1}
-    <div class="sec-setup-row"><span class="sec-step mono">2</span><div><div class="sec-setup-title">Phase 2: circuit-specific ${ctx.ceremony ? tag("public ceremony", "proof") : tag("not run yet", "danger")}</div><p class="small t-2">${setup.text}</p>${ctx.ceremony ? keyLine : ""}</div></div>
+    <div class="sec-setup-row"><span class="sec-step mono">2</span><div><div class="sec-setup-title">Phase 2: circuit-specific ${ctx.keyPinned ? tag("single party", "neutral") : tag("not made yet", "danger")}</div><p class="small t-2">${setup.text}</p>${ctx.keyPinned ? keyLine : ""}</div></div>
     <div class="sec-setup-row"><span class="sec-step mono">3</span><div><div class="sec-setup-title">Signet ${tag("development setup", "neutral")}</div><p class="small t-2">The signet test network keeps its single-party development setup (A-8), pinned by its own genesis. It is never used on mainnet.</p></div></div>
   </div>`;
 }
@@ -303,7 +291,7 @@ export function disclosure({ contact = SECURITY_CONTACT, repoUrl = REPO_URL, net
 function checklist(ctx) {
   const mainnet = ctx.network === "mainnet";
   const items = [
-    ["Public MPC setup ceremony for phase 2 (the mainnet keys)", mainnet ? (ctx.ceremony ? "Done" : "Not run yet") : "Tooling ready, not run"],
+    ["Mainnet proving key made and pinned (single-party, Murkle operator)", mainnet ? (ctx.keyPinned ? "Done" : "Not made yet") : "Not made yet"],
     ["Independent external audit of the circuit, codecs and indexer rules", "Not started"],
     ["Header verification from pinned checkpoints (proof of work, difficulty rules, most work) in the indexer, the CLI and the browser replay", "Done"],
     ["Indexing from the operator's own Bitcoin node (RPC source)", "Supported"],

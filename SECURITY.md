@@ -19,7 +19,7 @@ In scope:
 - the HTTP server: crashes, path traversal, header or CSP bypasses.
 
 Known and disclosed, so not new findings on their own (see `audit/REPORT.md`):
-- **A-8:** the phase-2 trusted setup is a DEV single-party contribution; whoever ran it could forge proofs until a public ceremony replaces it.
+- **A-8:** the signet phase-2 trusted setup is a DEV single-party contribution; whoever ran it could forge proofs.
 - **A-9:** chain data comes from an Esplora API (mempool.space by default) and proof-of-work is not checked yet.
 - Mints and launches are public; the address that pays a transfer's fee is tied to it on Bitcoin; the anonymity set is small; a relayer sees IP addresses and timing and can link a top-up address to the transfers it relays.
 

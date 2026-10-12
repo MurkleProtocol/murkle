@@ -14,7 +14,7 @@ Every user-facing sentence (web app, CLI, README, release notes, posts) follows 
 - "Bitcoin verifies / enforces the proofs", "secured by Bitcoin consensus". This is a metaprotocol: Bitcoin orders and timestamps the data, and replayers verify it.
 - "Trustless", "fully anonymous", "untraceable", "unbreakable", "military-grade".
 - "Audited" without the word "internally".
-- "Secure trusted setup", or that a ceremony has happened, before it has (describing the planned public ceremony and its tooling is fine).
+- "Secure trusted setup", or any suggestion that a ceremony took place: there is none.
 - "Mainnet-ready", "live on mainnet", or anything that says mainnet has launched before a mainnet genesis is pinned: until then mainnet is "not launched".
 - "Decentralized indexers" before independent operators exist.
 - Any anonymity percentage, or counts of people (count transfers).
@@ -23,7 +23,7 @@ Every user-facing sentence (web app, CLI, README, release notes, posts) follows 
 ## Required disclosures
 - The network. Signet: test network; the tokens have no value. Mainnet before genesis: "Murkle has not launched on Bitcoin mainnet. No genesis is pinned, so nothing here can move funds." Mainnet after genesis: experimental software; tokens may be worth money and can be lost to bugs.
 - Internal review only (circomspect, Picus, manual); no external audit yet.
-- The phase-2 trusted setup (A-8), per network. Signet: a DEV setup from a single party, kept by design because the signet genesis pins it; whoever ran it could forge proofs. Mainnet: until the public ceremony has run, no mainnet proving key is pinned; after it, "public ceremony <id>, N contributions, beacon block H: secure if at least one contributor discarded their secret".
+- The phase-2 trusted setup (A-8), per network. Signet: a DEV setup from a single party, kept by design because the signet genesis pins it; whoever ran it could forge proofs. Mainnet: until the key is pinned, no mainnet proving key exists; after it, a short neutral fact (single-party key made by the Murkle operator, checkable with `npm run key:verify`; accepted risk, owner decision 2026-10-11, A-8). Never suggest a ceremony or a multi-party key.
 - Chain data (A-9), per network. Both: headers are checked for proof of work and the difficulty rules from a pinned checkpoint; a single data source (mempool.space in the browser) can still hide or delay blocks, and your own node removes it for the indexer. Signet: signet blocks are valid by a signature that is not checked, and signet proof of work is nearly free. Mainnet: the chain with the most work wins among those the data source serves. Receipts say which header check applied (your replay's header chain, linked headers above the block, or its own target bounded by the checkpoint).
 - Mints are public (token, amount, payer). The address that pays a transfer's fee is tied to it on Bitcoin.
 - The anonymity set is small while the pool is early. The proof's anchor fixes how many notes were in the tree, so with few notes it can point to the sender; a batch hides nothing while it holds only your transfer. Wallets show the crowd before a relayed or batch send and warn when it is small.

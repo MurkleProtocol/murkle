@@ -3,10 +3,10 @@
 **Private tokens on Bitcoin L1.** Launch and mint tokens in public, then send them privately: zero-knowledge proofs hide the token, the amount and the recipient of each transfer, and which notes it spends. Whether anyone can tell who sent it depends on who pays its fee and how many others use the pool. Every proof is written into a Bitcoin transaction, and any browser can re-check it from raw Bitcoin data.
 
 > **Status: signet test network, test coins with no value.**
-> - The phase-2 trusted setup is a single-party **development** setup (audit A-8): whoever ran it could forge proofs until a public ceremony replaces it.
+> - The phase-2 trusted setup is a single-party **development** setup (audit A-8): whoever ran it could forge proofs.
 > - The protocol has had an internal review (circomspect, Picus, manual) but **no external audit**.
 > - Chain data is read from mempool.space by default, or from your own Bitcoin Core (`MURKLE_BTC_SOURCE=bitcoind`). Block headers are checked from a pinned checkpoint (linkage, proof of work, the difficulty rules, timestamps, most work among what the source serves); a data source can still hide or delay blocks, and the signet block signature is not checked (A-9).
-> - **Mainnet is not launched.** The code can run on Bitcoin mainnet (`MURKLE_NETWORK=mainnet`), but no mainnet genesis is pinned and its phase-2 key needs the public ceremony first. The launch checklist: [docs/MAINNET.md](docs/MAINNET.md).
+> - **Mainnet is not launched.** The code can run on Bitcoin mainnet (`MURKLE_NETWORK=mainnet`), but no mainnet genesis is pinned and its proving key is not made yet. The launch checklist: [docs/MAINNET.md](docs/MAINNET.md).
 > - Launches and mints are public (token, amount and the paying Bitcoin address); only transfers are private. The anonymity set is small while the pool is early.
 > - Mining (tokens issued by proof of work, `docs/design/mining.md`) is built but off: its activation height is not set in this release.
 
@@ -15,7 +15,7 @@
 - HTTP API of the indexer: [docs/API.md](docs/API.md)
 - Design notes: [docs/design/](docs/design/) (index and status of each file: [docs/design/README.md](docs/design/README.md))
 - Copy rules (what the project may and may not claim): [docs/CLAIMS.md](docs/CLAIMS.md)
-- Mainnet launch checklist: [docs/MAINNET.md](docs/MAINNET.md) · Trusted-setup ceremony: [docs/CEREMONY.md](docs/CEREMONY.md) · Operations: [docs/OPERATIONS.md](docs/OPERATIONS.md)
+- Mainnet launch checklist: [docs/MAINNET.md](docs/MAINNET.md) · Operations: [docs/OPERATIONS.md](docs/OPERATIONS.md)
 - Contributing: [CONTRIBUTING.md](CONTRIBUTING.md) · Security reports: [SECURITY.md](SECURITY.md) · License: [below](#license)
 
 ## What "verified on-chain" means here
@@ -81,7 +81,7 @@ Paying the fee yourself (the built-in key or Unisat) and "Copy envelope" are the
 | Shielded addresses | `mrk1…` | `murk1…` (a wallet refuses the other network's addresses) |
 | Bitcoin addresses | `tb1…` | `bc1…` |
 | Pins | `src/pins.json` | `src/pins.mainnet.json` |
-| Proving key | DEV single-party phase 2 (`build/dev`) | public ceremony output (`build/mainnet`, after the ceremony) |
+| Proving key | DEV single-party phase 2 (`build/dev`) | single-party key of the Murkle operator (`build/mainnet`, made once at launch by `npm run key:mainnet`) |
 | Data directory | `data/signet` | `data/mainnet` |
 | Tickers | historical rule | strict raw bytes (V2-02) |
 | Mining | on from block 325,138 | off: the service-fee address is `TODO_PLATFORM_ADDRESS` until the owner sets it |
@@ -105,7 +105,6 @@ The same recovery phrase gives different keys on each network (network-separated
 | `MURKLE_HEADERS_PATH` | `data/<network>/headers.json` | the server's verified header chain (the CLI keeps `cli-headers.json` in its data directory) |
 | `MURKLE_ALLOW_PRE_GENESIS` | off | mainnet only, staging: start before a genesis is pinned (an unpinned verification key still refuses) |
 | `MURKLE_HEALTH_MAX_LAG` | 3 | `GET /api/health`: blocks behind the chain tip before `ok` turns false |
-| `MURKLE_CEREMONY_PORT` | 8790 | the ceremony coordinator's port (the Vite dev proxy forwards `/ceremony/api` and `/ceremony/files` to it) |
 | `MURKLE_PUBLIC_URL` | — | absolute origin used in OG meta |
 | `MURKLE_CSP_ENFORCE` | off | enforce the CSP (it is sent Report-Only by default) |
 | `MURKLE_ALLOW_UNPINNED` | off | dev only: start even if `build/manifest.json` does not match `manifestSha256` in `src/pins.json`. It never relaxes the verification key check: a `verification_key.json` that does not match its pin always refuses to start |
@@ -242,7 +241,7 @@ The pinned wasm, r1cs and verification key can be checked against the sources in
 OUT=$(mktemp -d)
 circom circuits/transaction.circom --O2 --r1cs --wasm --sym -o "$OUT"   # circom 2.2.2, from the repository root
 sha256sum "$OUT/transaction.r1cs" "$OUT/transaction_js/transaction.wasm"
-# Phase 1, the public Powers of Tau file (URL and hashes in scripts/build-circuit.mjs, 37.8 MB):
+# Phase 1, the public Powers of Tau file (URL and hashes in scripts/key-lib.mjs, 37.8 MB):
 curl -fLo "$OUT/pot15.ptau" https://storage.googleapis.com/zkevm/ptau/powersOfTau28_hez_final_15.ptau
 sha256sum "$OUT/pot15.ptau"     # 3ef2ecc5b75d687048cf2d59195119b42fb07c5af639c5f283d84bfa69829e7f
 npx snarkjs zkey verify "$OUT/transaction.r1cs" "$OUT/pot15.ptau" build/dev/transaction.zkey   # "ZKey Ok!"
@@ -257,10 +256,12 @@ sha256sum "$OUT/vkey.json"      # equals artifacts.vkey in src/pins.json
 | `verification_key.json` | `893e125967e305cedb1b2d6748ef906a2903779849ef51989ed74969d193a557` |
 
 - `zkey verify` checks that the zkey belongs to this r1cs and to the public phase 1, and lists its one phase-2 contribution ("murkle DEV phase 2, single party, not a ceremony").
+- `npm run key:verify` does the same for either network's key, counts the phase-2 contributions (exactly one is expected) and compares the zkey and verification key hashes with the pins (`-- --network mainnet` for the mainnet pins).
 - **Phase 1** is the public Perpetual Powers of Tau transcript `powersOfTau28_hez_final_15.ptau`.
   - It is accepted only if its sha256 and the blake2b-512 published in the snarkjs README both match.
   - It is verified once with `snarkjs powersoftau verify`.
-- **Phase 2** is a DEV single-party contribution. The resulting `transaction.zkey` cannot be reproduced; it is a published artifact pinned by hash in `src/pins.json`.
+- **Phase 2** on signet is a DEV single-party contribution. The resulting `transaction.zkey` cannot be reproduced; it is a published artifact pinned by hash in `src/pins.json`.
+- **Phase 2** on mainnet is one contribution by the Murkle operator (`npm run key:mainnet`, `scripts/mainnet-key.mjs`), named "Murkle mainnet key (single party)", made once at launch. The key files and `manifest.json` are published in a release and pinned by hash in `src/pins.mainnet.json`; the genesis ATTEST pins the manifest.
 - Circom compiles source line numbers into the wasm, so even a comment line added to `circuits/` changes the wasm hash.
 
 ## Run an indexer with Docker
@@ -283,7 +284,7 @@ npm run audit:picus     # formal under-constraint check (Docker image picus:v0)
 ## Roadmap before a mainnet launch
 The full checklist with commands and the go/no-go list: [docs/MAINNET.md](docs/MAINNET.md).
 1. External audit of the circuit, indexer and wallet.
-2. Public phase-2 ceremony (tooling ready: [docs/CEREMONY.md](docs/CEREMONY.md)).
+2. Make the single-party mainnet key (`npm run key:mainnet`), publish it and pin its hashes.
 3. Header-chain checks (A-9): built (SPEC.md §16); open: a single data source can still withhold blocks.
 4. Relay balance stage 2: withdrawing what is left of a balance, and spending a balance with blind tokens so the operator cannot link transfers to the top-up address (`docs/design/relay-balance.md` §5).
 5. Gift links.

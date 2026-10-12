@@ -4,7 +4,6 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const INDEXER = `http://localhost:${process.env.MURKLE_INDEXER_PORT ?? 8787}`;
-const CEREMONY = `http://localhost:${process.env.MURKLE_CEREMONY_PORT ?? 8790}`;
 const here = (p) => fileURLToPath(new URL(p, import.meta.url));
 
 // The network is fixed at build time (mainnet-readiness.md D1): src/params.mjs reads the
@@ -18,9 +17,6 @@ const NETWORK = (() => {
 })();
 const PINS = JSON.parse(readFileSync(here(NETWORK === "mainnet" ? "../src/pins.mainnet.json" : "../src/pins.json"), "utf8"));
 const DEFINE = { __MURKLE_NETWORK__: JSON.stringify(NETWORK) };
-
-// The ceremony page is a separate entry, built only once its file exists (ceremony track).
-const INPUTS = { index: here("index.html"), ...(existsSync(here("ceremony.html")) ? { ceremony: here("ceremony.html") } : {}) };
 
 /**
  * Writes murkle-build.json ({ network, manifestSha256, genesisTxid }) into the output dir. The
@@ -124,8 +120,7 @@ export default defineConfig({
     // No hot reload by default: the modules take no hot updates, so every saved file would
     // reload (and lock) every open tab. Reload by hand to pick up edits; MURKLE_HMR=1 restores it.
     hmr: process.env.MURKLE_HMR === "1",
-    // The ceremony coordinator is its own process (server/ceremony-server.mjs, port 8790).
-    proxy: { "/api": INDEXER, "/artifacts": INDEXER, "/ceremony/api": CEREMONY, "/ceremony/files": CEREMONY },
+    proxy: { "/api": INDEXER, "/artifacts": INDEXER },
     // The wallet imports the protocol modules from ../src and fonts from node_modules.
     // Never the repo root: /@fs/ would then serve data/ (relayer key, CLI wallets).
     fs: { allow: [".", "../src", "../node_modules"].map((p) => fileURLToPath(new URL(p, import.meta.url))) },
@@ -136,7 +131,7 @@ export default defineConfig({
     target: "es2022",
     // The CSP allows fonts from 'self' only, so font files are never inlined as data: URIs.
     assetsInlineLimit: (file) => (/\.(woff2?|ttf|otf)$/i.test(file) ? false : undefined),
-    rollupOptions: { input: INPUTS },
+    rollupOptions: { input: { index: here("index.html") } },
   },
   // The define reaches pre-bundled dependencies too (none read it today).
   optimizeDeps: { esbuildOptions: { target: "es2022", define: DEFINE } },

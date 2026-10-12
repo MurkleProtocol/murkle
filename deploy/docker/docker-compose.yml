@@ -1,11 +1,10 @@
 # Murkle with its own Bitcoin Core, behind Caddy. The default path is Bitcoin Core plus the RPC
-# source (MURKLE_BTC_SOURCE=bitcoind, cookie from a shared volume). Optional profiles:
-#   ceremony  the trusted-setup coordinator (docs/CEREMONY.md)
+# source (MURKLE_BTC_SOURCE=bitcoind, cookie from a shared volume). Optional profile:
 #   electrs   an Esplora-compatible API on the same node, for operators who want one
 #
 #   cp deploy/docker/compose.env.example deploy/docker/compose.env   # then edit it
 #   docker compose -f deploy/docker/docker-compose.yml --env-file deploy/docker/compose.env up -d
-#   docker compose -f deploy/docker/docker-compose.yml --env-file deploy/docker/compose.env --profile ceremony up -d
+#   docker compose -f deploy/docker/docker-compose.yml --env-file deploy/docker/compose.env --profile electrs up -d
 #
 # The paid relayer is off (MURKLE_RELAYER=0). Its keys and books hold users' prepaid deposits;
 # set up the encrypted backups before switching it on (docs/OPERATIONS.md).
@@ -92,39 +91,6 @@ services:
       start_period: 2m
     logging: *logging
 
-  murkle-ceremony:
-    profiles: ["ceremony"]
-    build:
-      context: ../..
-      dockerfile: Dockerfile
-      args:
-        MURKLE_NETWORK: ${MURKLE_NETWORK:-signet}
-    command: ["node", "server/ceremony-server.mjs"]
-    environment:
-      MURKLE_NETWORK: ${MURKLE_NETWORK:-signet}
-      MURKLE_CEREMONY_HOST: 0.0.0.0
-      MURKLE_CEREMONY_PORT: "8790"
-      MURKLE_CEREMONY_DIR: /app/data/ceremony/${CEREMONY_ID:-murkle-mainnet-1}
-      MURKLE_CEREMONY_TRUST_PROXY: "1"
-      # The circuit's r1cs and the phase-1 ptau are not in the artifacts release: copy them into
-      # the ceremony volume (docs/CEREMONY.md, docs/OPERATIONS.md); init checks both pins.
-      MURKLE_CEREMONY_R1CS: /app/data/ceremony/inputs/transaction.r1cs
-      MURKLE_CEREMONY_PTAU: /app/data/ceremony/inputs/powersOfTau28_hez_final_15.ptau
-      MURKLE_BTC_SOURCE: bitcoind
-      MURKLE_BITCOIND_URL: http://bitcoind:${BITCOIN_RPC_PORT:-38332}
-      MURKLE_BITCOIND_COOKIE: ${BITCOIN_COOKIE:-/bitcoin/signet/.cookie}
-    volumes:
-      - ceremony-data:/app/data/ceremony
-      - bitcoin-data:/bitcoin:ro
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8790/ceremony/api/health').then(r=>process.exit(r.status===200?0:1),()=>process.exit(1))"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 1m
-    logging: *logging
-
   electrs:
     profiles: ["electrs"]
     image: ${ELECTRS_IMAGE:-mempool/electrs:latest}
@@ -156,7 +122,6 @@ services:
       SITE_DOMAIN: ${SITE_DOMAIN:?set SITE_DOMAIN in compose.env}
       ACME_EMAIL: ${ACME_EMAIL:?set ACME_EMAIL in compose.env}
       INDEXER_UPSTREAM: murkle-indexer:8787
-      CEREMONY_UPSTREAM: murkle-ceremony:8790
     ports:
       - "80:80"
       - "443:443"
@@ -180,7 +145,6 @@ volumes:
   bitcoin-data:
   murkle-data:
   murkle-build:
-  ceremony-data:
   electrs-data:
   caddy-data:
   caddy-config:

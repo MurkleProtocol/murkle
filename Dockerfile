@@ -9,7 +9,7 @@
 # MURKLE_NETWORK (signet or mainnet) is fixed at build time: the web app bakes it in, and the
 # image sets it for the server and the artifact check. Mainnet has not launched: a mainnet image
 # refuses to start until the mainnet pins are complete (docs/MAINNET.md). A full deployment with
-# Bitcoin Core, a reverse proxy and the optional ceremony coordinator is in deploy/docker.
+# Bitcoin Core and a reverse proxy is in deploy/docker.
 #
 # MURKLE_PUBLIC_URL is the public origin of the site. Link previews need it for absolute
 # og:image and twitter:image URLs; without it pages get a plain card and the server warns at start.

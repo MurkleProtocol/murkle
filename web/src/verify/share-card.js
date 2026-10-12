@@ -48,7 +48,7 @@ export function cardNetwork({ network = NETWORK, notLaunched = NOT_LAUNCHED } = 
     tag: network.toUpperCase(),
     receiptFooter: (hasProof) =>
       hasProof
-        ? `${name}, experimental software. Proving keys from the public trusted-setup ceremony. Bitcoin stores the proof; browsers check it.`
+        ? `${name}, experimental software. Single-party proving key (Murkle operator). Bitcoin stores the proof; browsers check it.`
         : `${name}, experimental software. Bitcoin stores the envelope; browsers check it.`,
     poolChain: (blocks) => `${name} ${blocks === 1 ? "block" : "blocks"}`,
     poolFooter: `${name}, experimental software. Block data from mempool.space; headers checked from a pinned checkpoint (proof of work and difficulty rules).`,

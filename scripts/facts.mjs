@@ -10,7 +10,7 @@
 // signet facts.
 //
 // Inputs (all optional; paths per network from src/params.mjs NETWORKS):
-//   build/manifest.json | build/mainnet/manifest.json     circuit manifest (mainnet: from the ceremony)
+//   build/manifest.json | build/mainnet/manifest.json     circuit manifest (mainnet: from npm run key:mainnet)
 //   src/pins.json | src/pins.mainnet.json                 pinned artifact hashes and the genesis anchor
 //   build/transaction.r1cs                  constraint count (header section), if no manifest
 //   verification key, zkey and build/transaction_js/transaction.wasm   sha256 and size of the served artifacts
@@ -24,6 +24,7 @@ import { existsSync, readFileSync, readdirSync, writeFileSync, openSync, readSyn
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { NETWORK, NETWORKS, resolveNetwork } from "../src/params.mjs";
+import { MAINNET_SETUP } from "./key-lib.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -155,16 +156,6 @@ export function factsFile(root, network = NETWORK) {
   return join(root, "web", "src", network === "signet" ? "facts.json" : `facts.${network}.json`);
 }
 
-/** The manifest's ceremony block, reduced to what /security shows (mainnet; null without one). */
-function ceremonyFacts(c) {
-  if (!c || typeof c !== "object") return null;
-  return {
-    id: typeof c.id === "string" ? c.id : null,
-    contributions: Number.isInteger(c.contributions) ? c.contributions : null,
-    beacon: c.beacon && Number.isInteger(c.beacon.height) ? { height: c.beacon.height } : null,
-  };
-}
-
 export function buildFacts(root, { network = NETWORK } = {}) {
   const net = NETWORKS[resolveNetwork(network)];
   const p = (...xs) => join(root, ...xs);
@@ -193,14 +184,13 @@ export function buildFacts(root, { network = NETWORK } = {}) {
       inputs: 2,
       outputs: 2,
       circom: manifest?.circom ?? null,
-      setup: manifest?.setup ?? null,
+      // Mainnet names its single-party key even before the key exists (owner decision 2026-10-11); signet reads its manifest.
+      setup: manifest?.setup ?? (net.name === "mainnet" ? MAINNET_SETUP : null),
       gitCommit: manifest?.gitCommit ?? null,
     },
     manifest: {
       sha256: pins?.manifestSha256 ?? null,
       present: !!manifest,
-      // Mainnet only: the public ceremony behind the pinned keys (signet's DEV manifest has none).
-      ...(manifest?.ceremony ? { ceremony: ceremonyFacts(manifest.ceremony) } : {}),
     },
     artifacts: art,
     genesis: {

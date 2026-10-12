@@ -53,7 +53,7 @@ export const UNISAT_CHAIN = NET.unisatChain;
 export const FAUCET = NET.faucet;
 /** SPEC.md §7: DEPLOY / DEPLOY_POW ticker checked on its raw bytes (V2-02). Mainnet from genesis; never on signet. */
 export const STRICT_TICKER = NET.strictTicker;
-/** Repo-relative artifact paths of this network (signet: the DEV setup; mainnet: the ceremony output). */
+/** Repo-relative artifact paths of this network (signet: the DEV setup; mainnet: the single-party key from npm run key:mainnet). */
 export const ARTIFACT_PATHS = NET.artifacts;
 /** Repo-relative path of this network's pins file. */
 export const PINS_FILE = NET.pinsFile;
@@ -107,8 +107,8 @@ export const SECURITY_CONTACT = "https://github.com/MurkleProtocol/murkle/securi
 // /verify, a Source link on /protocol and the private-advisory link on /security.
 export const REPO_URL = "https://github.com/MurkleProtocol/murkle";
 
-// Pins written by scripts/build-circuit.mjs (signet artifacts, manifest), by the ceremony's
-// finalize --install (mainnet artifacts, manifest) and by the operator after the genesis
+// Pins written by scripts/build-circuit.mjs (signet artifacts, manifest), by the operator
+// from npm run key:mainnet (mainnet artifacts, manifest) and after the genesis
 // ATTEST confirms (genesisTxid, activationHeight). One file per network (PINS_FILE).
 const pins = NETWORK === "mainnet" ? mainnetPins : signetPins;
 export const PINS = Object.freeze({ ...pins, artifacts: Object.freeze({ ...pins.artifacts }) });

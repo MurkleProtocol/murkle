@@ -10,10 +10,11 @@ tokens are created inside the protocol.
 
 Status: **signet only**, test coins with no value. Phase 1 of the Groth16 setup is the public
 Perpetual Powers of Tau transcript; phase 2 is a **DEV single-party contribution** (audit A-8):
-whoever made it could forge proofs until a public ceremony replaces it.
+whoever made it could forge proofs.
 
 Mainnet is **not launched**: no mainnet genesis is pinned (`src/pins.mainnet.json`), and the mainnet
-phase-2 key comes from a public ceremony that has not run yet (docs/CEREMONY.md, docs/MAINNET.md).
+phase-2 key is not made yet. It is made once by the Murkle operator with `npm run key:mainnet`
+(docs/MAINNET.md).
 
 All names and pinned constants live in `src/params.mjs` and the network's pins file (`src/pins.json` for
 signet, `src/pins.mainnet.json` for mainnet). The table below is signet; section 1.1 lists what differs on mainnet.
@@ -58,7 +59,7 @@ are the same on both networks.
 | Shielded addresses (HRP) | `mrk1…` | `murk1…` |
 | Wallet key labels (spend, view, btc-fee, btc-mine-fee) | `murkle/<name>` | `murkle/mainnet/<name>` |
 | Pins | `src/pins.json` | `src/pins.mainnet.json` (genesis `null` until the mainnet ATTEST) |
-| Artifacts | `build/dev/*`, `build/manifest.json` (DEV phase 2) | `build/mainnet/*` (public ceremony); the wasm is shared |
+| Artifacts | `build/dev/*`, `build/manifest.json` (DEV phase 2) | `build/mainnet/*` (single-party key of the operator); the wasm is shared |
 | Ticker rule (section 7) | historical decoder | strict raw bytes (V2-02), from genesis |
 | Service fee of mining (section 15) | 500 sats to the signet platform script | placeholder `TODO_PLATFORM_ADDRESS`: mining refuses to start |
 | Explorer / Esplora default | mempool.space/signet | mempool.space |
@@ -287,8 +288,8 @@ There is no per-wallet limit in the MVP: it can be bypassed with multiple wallet
 - Each network has its own pins file: `src/pins.json` (signet, unchanged) and `src/pins.mainnet.json`
   (mainnet). The mainnet file starts with `manifestSha256`, `artifacts.zkey`, `artifacts.vkey`,
   `genesisTxid` and `activationHeight` all `null` and the mining activation `null`; its wasm pin equals
-  signet's (same circuit). The ceremony's `finalize --install` writes the artifact pins (only while
-  `genesisTxid` is null); the operator writes the genesis fields after the mainnet ATTEST confirms
+  signet's (same circuit). The operator writes the artifact pins from the output of `npm run key:mainnet` and
+  the genesis fields after the mainnet ATTEST confirms
   (docs/MAINNET.md). On mainnet the server refuses to start with an unpinned verification key, and before
   genesis unless `MURKLE_ALLOW_PRE_GENESIS=1` (staging only).
 - `src/pins.json` holds `{ manifestSha256, artifacts: { wasm, zkey, vkey }, genesisTxid, activationHeight, activations }`.
@@ -401,9 +402,11 @@ journal does not reach back that far the file is archived and resynced.
 - Other arities.
 - What header verification (section 16) cannot do: a data source can still withhold blocks or a
   better chain, or delay them; the signet block signature (BIP325) is not checked (audit A-9).
-- Mainnet proving key: a public phase-2 MPC ceremony on top of the public phase-1 transcript
-  (tooling ready, docs/CEREMONY.md; open until it runs). Signet keeps its DEV single-party phase 2 in
-  `build/dev` by design: its genesis ATTEST pins that manifest.
+- Mainnet proving key (audit A-8, accepted risk, owner decision 2026-10-11): one contribution by the
+  Murkle operator on top of the public phase-1 transcript (Hermez powers of tau), made once with
+  `npm run key:mainnet`; `npm run key:verify` checks it. Its manifest is pinned by the genesis ATTEST.
+  Signet keeps its DEV single-party phase 2 in `build/dev` by design: its genesis ATTEST pins that
+  manifest.
 
 ## 14. Relayer and relay timing (non-consensus)
 The relayer (`docs/design/relayer.md`, `docs/design/batch-contract.md`, `docs/design/relay-balance.md`,

@@ -10,7 +10,7 @@ import { challengeOf, NONCE_LEN } from "./mine.mjs";
 import { ARTIFACT_PATHS, MINE_WINDOW } from "./params.mjs";
 import { hex, unhex } from "./bytes.mjs";
 
-// This network's proving artifacts (signet: the DEV setup; mainnet: the ceremony output).
+// This network's proving artifacts (signet: the DEV setup; mainnet: the single-party key from npm run key:mainnet).
 export const DEFAULT_ARTIFACTS = {
   wasm: ARTIFACT_PATHS.wasm,
   zkey: ARTIFACT_PATHS.zkey,

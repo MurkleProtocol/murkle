@@ -1,6 +1,6 @@
 // Mainnet-launch review regressions (2026-10-06): the money paths and the copy that changed after
-// the second review of the mainnet preparation. Header-chain, receipt-bound and ceremony regressions
-// live next to their code's tests (test/headers.test.mjs, test/ceremony.test.mjs).
+// the second review of the mainnet preparation. Header-chain and receipt-bound regressions
+// live next to their code's tests (test/headers.test.mjs).
 //
 // Offline: fakes and temporary directories only. Nothing touches data/, nothing is broadcast.
 import { test, after } from "node:test";
@@ -246,9 +246,7 @@ test("backup --require-relayer (or MURKLE_RELAYER=1) fails without the relayer's
   const fresh = monitor.evaluateBackups({ dir: "/b", files: [{ name: "murkle-backup-mainnet-x.mbk", mtimeMs: now - 600_000 }, { name: "notes.txt", mtimeMs: now }], now, relayerOn: true });
   assert.deepEqual([fresh.alerts, fresh.summary.count], [[], 1]);
   assert.equal(monitor.parseOptions([], { MURKLE_BACKUP_DIR: "/var/backups/murkle" }).backupDir, "/var/backups/murkle");
-  // The ceremony coordinator's stale chain is critical while its queue is open.
-  const c = monitor.evaluateCeremony({ health: { ok: false, phase: "open", chain: { stale: true, lastOkAt: "2026-10-06T11:00:00.000Z" } } });
-  assert.deepEqual(c.alerts.map((a) => [a.level, a.code]), [["critical", "ceremony_chain_stale"]]);
+  assert.equal(monitor.evaluateCeremony, undefined, "the ceremony coordinator check is gone");
 });
 
 /* ------------------------------------------------- share cards per network */
@@ -273,7 +271,7 @@ test("share cards: signet keeps its words; mainnet never says signet, test coins
   }
   assert.equal(cardNetwork({ network: "mainnet", notLaunched: true }).tag, "MAINNET · NOT LAUNCHED");
   assert.equal(cardNetwork({ network: "mainnet", notLaunched: false }).tag, "MAINNET");
-  assert.match(receiptCardText({ ...receipt, network: "mainnet", notLaunched: false }).footer, /^Bitcoin mainnet, experimental software\. Proving keys from the public trusted-setup ceremony\./);
+  assert.match(receiptCardText({ ...receipt, network: "mainnet", notLaunched: false }).footer, /^Bitcoin mainnet, experimental software\. Single-party proving key \(Murkle operator\)\./);
   // A mainnet build (pre-genesis) uses its own words by default.
   const m = await child(`
     const S = await import("./web/src/verify/share-card.js");
@@ -345,9 +343,9 @@ test("CLI: a new mainnet wallet file names its network; a file of another networ
 test("files changed by this review: line endings kept, English only, honest copy", () => {
   const crlf = ["src/verify-tx.mjs", "src/btc/esplora.mjs", "bin/murkle.mjs", "web/src/views/verify.js"];
   const lf = [
-    "src/btc/headers.mjs", "server/relayer.mjs", "server/indexer-server.mjs", "server/ceremony-server.mjs", "web/src/api.js", "web/src/ui/indexer.js",
-    "web/src/verify/share-card.js", "web/src/views/app-settings.js", "web/src/views/security.js", "web/src/ceremony/main.js", "web/src/ceremony/receipt.js",
-    "scripts/ceremony/lib.mjs", "scripts/ceremony/verify.mjs", "scripts/ceremony/finalize.mjs", "scripts/ceremony/admin.mjs", "scripts/ceremony/contribute.mjs",
+    "src/btc/headers.mjs", "server/relayer.mjs", "server/indexer-server.mjs", "web/src/api.js", "web/src/ui/indexer.js",
+    "web/src/verify/share-card.js", "web/src/views/app-settings.js", "web/src/views/security.js",
+    "scripts/key-lib.mjs", "scripts/mainnet-key.mjs", "scripts/verify-key.mjs",
     "deploy/bin/backup.mjs", "deploy/bin/monitor.mjs", "deploy/systemd/murkle-backup@.path", "deploy/systemd/murkle-backup.service.d/relayer.conf.example",
     "test/launch-review.test.mjs",
   ];

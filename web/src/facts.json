@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "testCount": 1009,
+  "testCount": 1015,
   "circuit": {
     "constraints": 18411,
     "proofSystem": "Groth16",
@@ -135,7 +135,7 @@
         "location": "setup",
         "title": "build/dev is a single-participant dev setup; zkey verify — OK",
         "description": "build/dev is a single-participant dev setup; zkey verify — OK",
-        "status": "mainnet: public ceremony tooling ready (docs/CEREMONY.md), open until the ceremony runs; signet: DEV setup by design (its genesis pins it)",
+        "status": "accepted risk, owner decision 2026-10-11 (mainnet: single-party key of the Murkle operator; signet: DEV setup by design, its genesis pins it)",
         "state": "documented"
       },
       {

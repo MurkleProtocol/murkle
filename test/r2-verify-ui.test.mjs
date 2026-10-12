@@ -211,6 +211,12 @@ test("#44 lookup and token pages send indexer switching to /verify#indexer", () 
   assert.ok(!read("web/src/views/token.js").includes("settingsHref"), "the seal's default is the public switch");
 });
 
+test("the token page's counterfeiting caveat is signet-only and nothing takes its place on mainnet", () => {
+  const src = read("web/src/views/token.js");
+  assert.match(src, /\$\{IS_SIGNET \? html`<div class="tk-caveat">[^`]*Counterfeiting inside the pool would need a broken circuit or a forged proof from the development trusted setup \(single-party phase 2, A-8\)\. Supply numbers can't detect that today\.<\/span><\/div>` : ""\}/);
+  assert.doesNotMatch(src, /would need a broken circuit\. Supply numbers/, "the mainnet sentence is gone");
+});
+
 /* ---------- security.js and params.mjs: finding 37 ---------- */
 
 test("#37 the disclosure text never dangles: a contact when set, a plain statement when not", async () => {
