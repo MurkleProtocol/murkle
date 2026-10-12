@@ -223,10 +223,18 @@ test("every run is refused once the mainnet pins file has a genesis txid", async
 test("the tool refuses to run under a debugger or heap snapshot option", () => {
   assert.doesNotThrow(() => assertNoDebugger([], "", undefined));
   assert.doesNotThrow(() => assertNoDebugger(["--max-old-space-size=4096"], "--no-warnings --max-old-space-size=4096", undefined));
-  for (const flag of ["--inspect", "--inspect=127.0.0.1:9229", "--inspect-brk", "--inspect_brk=0", "--heapsnapshot-signal=SIGUSR2", "--heapsnapshot-near-heap-limit=3", "--heap-prof", "--heap-prof-dir=x"]) {
+  for (const flag of ["--inspect", "--inspect=127.0.0.1:9229", "--inspect-brk", "--inspect_brk=0", "--inspect-wait", "--heapsnapshot-signal=SIGUSR2", "--heapsnapshot-near-heap-limit=3", "--heap-prof"]) {
     assert.throws(() => assertNoDebugger([flag], "", undefined), /refusing to run with .*heap snapshot could read the secret/, `execArgv ${flag}`);
     assert.throws(() => assertNoDebugger([], `--no-warnings ${flag}`, undefined), /refusing to run/, `NODE_OPTIONS ${flag}`);
   }
+  // A value in its own word counts the same; a bare value-taking option fails closed.
+  assert.throws(() => assertNoDebugger(["--heapsnapshot-near-heap-limit", "3"], "", undefined), /--heapsnapshot-near-heap-limit/);
+  assert.throws(() => assertNoDebugger([], "--heapsnapshot-signal SIGUSR2", undefined), /--heapsnapshot-signal/);
+  assert.throws(() => assertNoDebugger(["--heapsnapshot-near-heap-limit"], "", undefined), /--heapsnapshot-near-heap-limit/);
+  // The companions that switch nothing on, as Node 24's test runner passes them to every test file.
+  const companions = ["--inspect-port=127.0.0.1:9229", "--inspect-publish-uid=stderr,http", "--heap-prof-interval=524288", "--heap-prof-dir=x", "--heapsnapshot-near-heap-limit=0"];
+  assert.doesNotThrow(() => assertNoDebugger(companions, companions.join(" "), undefined));
+  assert.doesNotThrow(() => assertNoDebugger(["--heapsnapshot-near-heap-limit", "0", "--inspect-port", "9229"], "", undefined));
   // Node strips double quotes inside NODE_OPTIONS words, so a quoted spelling is the same option.
   for (const quoted of ['--heap"-prof"', '"--heapsnapshot-near-heap-limit=3"', '--insp"ect"']) {
     assert.throws(() => assertNoDebugger([], quoted, undefined), /refusing to run with --/, `NODE_OPTIONS ${quoted}`);

@@ -163,7 +163,34 @@ export async function buildMainnetKey({
   };
 }
 
-const DEBUG_FLAGS = /^--(inspect|heapsnapshot-signal|heapsnapshot-near-heap-limit|heap-prof)/;
+/**
+ * The options that switch on a debugger or a heap snapshot, by name, given their value (undefined when none
+ * was given: fail closed). Their companions (--inspect-port, --inspect-publish-uid, --heap-prof-dir,
+ * --heap-prof-interval) do nothing alone, and Node 24's test runner hands them, with
+ * --heapsnapshot-near-heap-limit=0, to every test file.
+ */
+const ENABLES = {
+  "--inspect": () => true,
+  "--inspect-brk": () => true,
+  "--inspect-wait": () => true,
+  "--heap-prof": () => true,
+  "--heapsnapshot-signal": (v) => v !== "",
+  "--heapsnapshot-near-heap-limit": (v) => v === undefined || Number(v) !== 0,
+};
+
+/** [name, value] per option in an argument list; a value may be its own word ("--opt 3"). */
+function optionsOf(args) {
+  const out = [];
+  for (let i = 0; i < args.length; i++) {
+    if (!args[i].startsWith("--")) continue;
+    const eq = args[i].indexOf("=");
+    const name = (eq < 0 ? args[i] : args[i].slice(0, eq)).replace(/_/g, "-");
+    if (eq >= 0) out.push([name, args[i].slice(eq + 1)]);
+    else if (args[i + 1] !== undefined && !args[i + 1].startsWith("-")) out.push([name, args[++i]]);
+    else out.push([name, undefined]);
+  }
+  return out;
+}
 
 /**
  * Throws when node was started with a debugger or heap-snapshot option, in execArgv or NODE_OPTIONS: either
@@ -171,9 +198,10 @@ const DEBUG_FLAGS = /^--(inspect|heapsnapshot-signal|heapsnapshot-near-heap-limi
  */
 export function assertNoDebugger(execArgv = process.execArgv, nodeOptions = process.env.NODE_OPTIONS ?? "", inspectorOpen = inspectorUrl()) {
   // Node drops double quotes anywhere in a NODE_OPTIONS word (--heap"-prof" is --heap-prof), so they go first.
-  const flags = [...execArgv, ...nodeOptions.replace(/"/g, "").split(/\s+/)].map((a) => a.replace(/_/g, "-")).filter((a) => DEBUG_FLAGS.test(a));
+  const words = nodeOptions.replace(/"/g, "").split(/\s+/).filter(Boolean);
+  const flags = [...optionsOf(execArgv), ...optionsOf(words)].filter(([name, value]) => ENABLES[name]?.(value)).map(([name]) => name);
   if (flags.length || inspectorOpen) {
-    throw new Error(`refusing to run with ${flags.length ? flags.map((f) => f.split("=")[0]).join(", ") : "an open inspector"}: a debugger or heap snapshot could read the secret from memory. Start node without it.`);
+    throw new Error(`refusing to run with ${flags.length ? flags.join(", ") : "an open inspector"}: a debugger or heap snapshot could read the secret from memory. Start node without it.`);
   }
 }
 

@@ -832,7 +832,9 @@ test("relaySend: the submit is a signed request verifyRequest accepts, without p
   assert.equal(ok.idHex, account.idHex);
   // The signature binds the mode, the envelope, the endpoint, the network and the pool key.
   assert.equal(verify({ ...body, mode: "fast" }).code, "bad_signature");
-  assert.equal(verify({ ...body, envelope: `${body.envelope.slice(0, -2)}00` }).code, "bad_signature");
+  // The last byte flipped (never "00" for "00": a random envelope ends in it 1 time in 256).
+  const flipped = (parseInt(body.envelope.slice(-2), 16) ^ 0xff).toString(16).padStart(2, "0");
+  assert.equal(verify({ ...body, envelope: `${body.envelope.slice(0, -2)}${flipped}` }).code, "bad_signature");
   assert.equal(lib.verifyRequest({ endpoint: "/api/relay/account", network: "signet", poolKey: Q, body, now }).ok, false, "not valid at another endpoint");
   assert.equal(lib.verifyRequest({ endpoint: "/api/relay/submit", network: "mainnet", poolKey: Q, body, now }).code, "bad_signature");
   assert.equal(verify(body, { now: () => NOW + 601_000 }).code, "stale_request");
