@@ -6,8 +6,9 @@ Description=Murkle indexer and API
 Documentation=file:///opt/murkle/current/docs/OPERATIONS.md
 Wants=network-online.target
 After=network-online.target
-# With a local Bitcoin Core (MURKLE_BTC_SOURCE=bitcoind) add a drop-in with
-# "Wants=bitcoind.service" and "After=bitcoind.service".
+# The default chain source is mempool.space (MURKLE_BTC_SOURCE=esplora): this unit needs no
+# bitcoind.service. Only with an own Bitcoin Core (MURKLE_BTC_SOURCE=bitcoind, the optional
+# upgrade) add a drop-in with "Wants=bitcoind.service" and "After=bitcoind.service".
 
 [Service]
 Type=simple
@@ -47,7 +48,9 @@ SystemCallArchitectures=native
 CapabilityBoundingSet=
 AmbientCapabilities=
 UMask=0077
-MemoryMax=6G
+# For the 4 GB launch VPS: below the host's RAM, so a leak ends in a clean systemd restart of the
+# indexer, not in the kernel OOM killer. With an own Bitcoin Core on a 16 GB host, raise it in a drop-in.
+MemoryMax=3G
 LimitNOFILE=65536
 
 [Install]

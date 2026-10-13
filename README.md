@@ -84,7 +84,7 @@ Paying the fee yourself (the built-in key or Unisat) and "Copy envelope" are the
 | Proving key | DEV single-party phase 2 (`build/dev`) | single-party key of the Murkle operator (`build/mainnet`, made once at launch by `npm run key:mainnet`) |
 | Data directory | `data/signet` | `data/mainnet` |
 | Tickers | historical rule | strict raw bytes (V2-02) |
-| Mining | on from block 325,138 | off: the service-fee address is `TODO_PLATFORM_ADDRESS` until the owner sets it |
+| Mining | on from block 325,138 | service-fee rule set (500 sats to the owner's platform address, 2026-10-13); starts at the mining height once one is pinned |
 | Relayer defaults | fee cap 5 sat/vB, min deposit 2,000 sats | fee cap 50 sat/vB, min deposit 20,000 sats (`server/relayer.mjs` `NETWORK_DEFAULTS`) |
 
 The same recovery phrase gives different keys on each network (network-separated key labels, SPEC.md §2), so signet and mainnet activity are never linked by a shared key. On mainnet the server refuses to start before genesis (`MURKLE_ALLOW_PRE_GENESIS=1` for a staging run), with an unpinned verification key, or without header verification; the CLI runs only `new`, `address`, `address-script`, `attest genesis` and read-only commands before genesis. Everything else: [docs/MAINNET.md](docs/MAINNET.md).
@@ -274,7 +274,7 @@ docker run -d --name murkle -p 8787:8787 -v murkle-data:/app/data \
 - Chain state lives in the `/app/data` volume; it is rebuilt from the chain if lost.
 - The relayer is off (`MURKLE_RELAYER=0`). No keys or wallets are in the image: `.dockerignore` keeps `data/`, `build/`, `*.key` and `.env*` out of the build context.
 - Use your own chain source with `-e MURKLE_ESPLORA=<Esplora API URL>`, and compare with any other indexer: `node bin/murkle.mjs audit --compare <indexer url>`.
-- For a production host (systemd units, Docker Compose with Bitcoin Core, a reverse proxy with HTTPS, encrypted relayer backups, the monitor), use the deployment kit in [deploy/](deploy/README.md) and [docs/OPERATIONS.md](docs/OPERATIONS.md).
+- For a production host (systemd units, Docker Compose, a reverse proxy with HTTPS, encrypted relayer backups, the monitor), use the deployment kit in [deploy/](deploy/README.md) and [docs/OPERATIONS.md](docs/OPERATIONS.md).
 
 ## Audit tooling
 ```bash

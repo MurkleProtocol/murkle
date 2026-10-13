@@ -94,6 +94,9 @@ test("src/pins.json is byte-identical (signet pins never move)", () => {
   assert.equal(P.PINS_FILE, "src/pins.json");
 });
 
+/** A mainnet fee rule that still has the placeholder shape: the refusals stay covered now that MINE_FEES.mainnet is real. */
+const PLACEHOLDER_FEE = Object.freeze({ placeholder: true, platformAddress: P.TODO_PLATFORM_ADDRESS, platformScript: null, platformSats: 500n, deployerMinSats: 0n, deployerMaxSats: 0n });
+
 test("signet: every params export keeps its value (frozen literals)", () => {
   for (const [k, v] of Object.entries(SIGNET_FROZEN)) assert.deepEqual(js(P[k]), v, k);
   assert.equal(P.digestTag(1), P.LABELS.digest);
@@ -140,7 +143,7 @@ test("signet: every export of the pre-mainnet params.mjs has the same value now 
   if (!old) return t.skip("MURKLE_PRE_MAINNET_SRC is not set");
   for (const [k, v] of Object.entries(old)) {
     if (typeof v === "function") continue;
-    // MINE_FEES gains the mainnet placeholder; every entry it had is unchanged.
+    // MINE_FEES gains the mainnet rule; every entry it had is unchanged.
     if (k === "MINE_FEES") {
       for (const net of Object.keys(v)) assert.deepEqual(js(P.MINE_FEES[net]), js(v[net]), `MINE_FEES.${net}`);
       continue;
@@ -355,7 +358,8 @@ test("server startRefusal: signet never refuses; mainnet refuses pre-genesis, an
   assert.match(startRefusal(main), /mainnet artifacts are not pinned yet .*run npm run key:mainnet/);
   assert.match(startRefusal({ ...main, vkeyPinned: true }), /has not launched on mainnet: no genesis is pinned/);
   assert.equal(startRefusal({ ...main, vkeyPinned: true, allowPreGenesis: true }), null, "staging");
-  assert.match(startRefusal({ ...main, vkeyPinned: true, allowPreGenesis: true, miningHeight: 900000, mineFeeReason: P.mineFeeReady(P.MINE_FEES.mainnet) }), /TODO_PLATFORM_ADDRESS.*pins a mining height/);
+  assert.match(startRefusal({ ...main, vkeyPinned: true, allowPreGenesis: true, miningHeight: 900000, mineFeeReason: P.mineFeeReady(PLACEHOLDER_FEE) }), /TODO_PLATFORM_ADDRESS.*pins a mining height/);
+  assert.equal(startRefusal({ ...main, vkeyPinned: true, allowPreGenesis: true, miningHeight: 900000, mineFeeReason: P.mineFeeReady(P.MINE_FEES.mainnet) }), null, "the real mainnet rule lets a pinned mining height start");
   assert.equal(startRefusal({ ...main, vkeyPinned: true, preGenesis: false, miningHeight: null }), null, "launched mainnet");
 });
 
@@ -458,6 +462,9 @@ test("GET /api/health without headers or relayer; /api/state.chain says esplora 
   try {
     const h = await (await fetch(`${base}/api/health`)).json();
     assert.equal(h.source, "esplora");
+    assert.equal(h.chainTip, null);
+    assert.equal(h.ok, false, "no sync has learned the chain tip yet");
+    assert.equal((await fetch(`${base}/api/health?strict=1`)).status, 503, "a node that has not synced is not healthy");
     assert.equal(h.headers, null);
     assert.deepEqual(h.relayer, { enabled: false, halted: false, code: null });
     assert.equal(h.lagBlocks, null);
@@ -505,7 +512,7 @@ test("signet link previews keep their words", async () => {
 
 // ================================================================ mainnet (child processes)
 
-test("mainnet params: network, HRP, labels, pins, explorer, strict tickers, placeholder fee", async () => {
+test("mainnet params: network, HRP, labels, pins, explorer, strict tickers, real fee rule", async () => {
   const r = await child(`
     const P = await import("./src/params.mjs");
     console.log(JSON.stringify({
@@ -513,7 +520,7 @@ test("mainnet params: network, HRP, labels, pins, explorer, strict tickers, plac
       explorer: P.EXPLORER, esplora: P.ESPLORA_API, strict: P.STRICT_TICKER, unisat: P.UNISAT_CHAIN, faucet: P.FAUCET,
       pins: P.PINS, preGenesis: P.PRE_GENESIS, genesis: P.GENESIS, mining: P.MINING_HEIGHT, pinsFile: P.PINS_FILE, paths: P.ARTIFACT_PATHS,
       fee: { ...P.MINE_FEE, platformSats: String(P.MINE_FEE.platformSats), deployerMinSats: String(P.MINE_FEE.deployerMinSats), deployerMaxSats: String(P.MINE_FEE.deployerMaxSats) },
-      ready: P.mineFeeReady(), signetReady: P.mineFeeReady(P.MINE_FEES.signet), digest1: P.digestTag(1), magic: P.MAGIC_TEXT,
+      ready: P.mineFeeReady(), placeholderReady: P.mineFeeReady({ placeholder: true, platformAddress: P.TODO_PLATFORM_ADDRESS, platformScript: null, platformSats: 500n }), signetReady: P.mineFeeReady(P.MINE_FEES.signet), digest1: P.digestTag(1), magic: P.MAGIC_TEXT,
     }));`);
   assert.equal(r.network, "mainnet");
   assert.equal(r.test, false);
@@ -538,8 +545,12 @@ test("mainnet params: network, HRP, labels, pins, explorer, strict tickers, plac
   assert.equal(r.mining, null);
   assert.equal(r.pinsFile, "src/pins.mainnet.json");
   assert.deepEqual(r.paths, { manifest: "build/mainnet/manifest.json", vkey: "build/mainnet/verification_key.json", zkey: "build/mainnet/transaction.zkey", wasm: "build/transaction_js/transaction.wasm" });
-  assert.deepEqual(r.fee, { placeholder: true, platformAddress: "TODO_PLATFORM_ADDRESS", platformScript: null, platformSats: "1000", deployerMinSats: "0", deployerMaxSats: "0" });
-  assert.equal(r.ready, "mining is not configured on mainnet: the platform address is TODO_PLATFORM_ADDRESS");
+  assert.deepEqual(r.fee, {
+    platformAddress: "bc1pa4dr4q6h8nq6ky8rgy52y8engygf8n0exag4vnk4l7stwm20q8vq5fxumn",
+    platformScript: "5120ed5a3a83573cc1ab10e34128a21f33411093cdf93751564ed5ffa0b76d4f01d8", platformSats: "500", deployerMinSats: "0", deployerMaxSats: "0",
+  });
+  assert.equal(r.ready, null, "the owner's platform address is set (2026-10-13): mainnet mining is configured");
+  assert.equal(r.placeholderReady, "mining is not configured on mainnet: the platform address is TODO_PLATFORM_ADDRESS", "a placeholder rule is still refused");
   assert.equal(r.signetReady, null);
 });
 
@@ -573,7 +584,7 @@ test("mainnet keys: murk1 addresses, mrk1 refused, network-separated fee keys (n
   assert.notEqual(r.mineFee, hex(feeKeysOf(new Uint8Array(32).fill(9)).mineFeeKey));
 });
 
-test("mainnet Indexer: strict tickers by default, the v1 chain replays to the same digests, a mining activation with the placeholder fee refuses", async () => {
+test("mainnet Indexer: strict tickers by default, the v1 chain replays to the same digests, a mining activation with the placeholder fee refuses and with the real fee is accepted", async () => {
   const bomDeploy = hex(withTicker("deploy", CORPUS.bom));
   const r = await child(`
     const { readFileSync } = await import("node:fs");
@@ -590,8 +601,12 @@ test("mainnet Indexer: strict tickers by default, the v1 chain replays to the sa
     const tx = { txid: "bb".repeat(32), inputs: [{ outpoint: new Uint8Array(36).fill(1) }], outputs: [{ script: opReturnScript(unhex("${bomDeploy}")), value: 0n }] };
     await one.applyBlock({ height: 900000, hash: "cc".repeat(32), txs: [cb, tx] });
     let mining = null;
-    try { new Indexer({ vkey: VKEY, startHeight: 900000, activations: [{ name: "mining", height: 900100, digestV: 2 }] }); } catch (e) { mining = e.message; }
-    console.log(JSON.stringify({ strict: idx.strictTicker, digests: [...idx.digests], log: idx.log, bom: one.log.find((l) => l.txid === tx.txid), mining }));
+    const acts = [{ name: "mining", height: 900100, digestV: 2 }];
+    const placeholder = { placeholder: true, platformAddress: "TODO_PLATFORM_ADDRESS", platformScript: null, platformSats: 500n, deployerMinSats: 0n, deployerMaxSats: 0n };
+    try { new Indexer({ vkey: VKEY, startHeight: 900000, activations: acts, mineFee: placeholder }); } catch (e) { mining = e.message; }
+    let real = null;
+    try { new Indexer({ vkey: VKEY, startHeight: 900000, activations: acts }); } catch (e) { real = e.message; }
+    console.log(JSON.stringify({ strict: idx.strictTicker, digests: [...idx.digests], log: idx.log, bom: one.log.find((l) => l.txid === tx.txid), mining, real }));
     await globalThis.curve_bn128?.terminate?.(); // snarkjs keeps worker threads alive otherwise`);
   assert.equal(r.strict, true);
   assert.deepEqual(r.digests, FIX.digests, "consensus is the same on mainnet for canonical tickers");
@@ -599,6 +614,7 @@ test("mainnet Indexer: strict tickers by default, the v1 chain replays to the sa
   assert.equal(r.bom.ok, false);
   assert.equal(r.bom.reason, `malformed: ${TICKER_BYTES_ERROR}`);
   assert.equal(r.mining, "mining activation needs a complete MINE_FEE: mining is not configured on mainnet: the platform address is TODO_PLATFORM_ADDRESS");
+  assert.equal(r.real, null, "the real mainnet fee rule is complete: the same activation is accepted");
 });
 
 test("mainnet relayer defaults, funding network and the pool script", async () => {
@@ -635,7 +651,7 @@ test("mainnet server: refuses to start before its key is pinned, and before gene
   assert.match(r.artifacts["transaction.wasm"].replaceAll("\\", "/"), /build\/transaction_js\/transaction\.wasm$/);
 });
 
-test("mainnet CLI: help and usage name the network; value-moving commands and mining refuse before genesis", async () => {
+test("mainnet CLI: help and usage name the network; value-moving commands and mining refuse before genesis (mining by the genesis rule, not the fee rule)", async () => {
   const env = { MURKLE_NETWORK: "mainnet", MURKLE_DATA_DIR: join(DIR, "cli-main"), MURKLE_ESPLORA: "http://127.0.0.1:9/api" };
   const help = await run(["bin/murkle.mjs"], env);
   assert.match(help.stdout, /Murkle CLI \(mainnet\)\. Commands:/);
@@ -645,7 +661,9 @@ test("mainnet CLI: help and usage name the network; value-moving commands and mi
   assert.equal(send.code, 1);
   assert.match(send.stderr, /has not launched on mainnet: no genesis is pinned in src\/pins\.mainnet\.json, so send is refused/);
   const mine = await run(["bin/murkle.mjs", "mine", "w", "ABC"], env);
-  assert.match(mine.stderr, /mining is not configured on mainnet: the platform address is TODO_PLATFORM_ADDRESS/);
+  assert.equal(mine.code, 1);
+  assert.match(mine.stderr, /has not launched on mainnet: no genesis is pinned in src\/pins\.mainnet\.json, so mine is refused/);
+  assert.doesNotMatch(mine.stderr, /TODO_PLATFORM_ADDRESS/, "the fee rule is set; only the missing genesis refuses");
   const script = await run(["bin/murkle.mjs", "address-script", "bc1p33wm0auhr9kkahzd6l0kqj85af4cswn276hsxg6zpz85xe2r0y8syx4e5t"], env);
   assert.equal(script.code, 0);
   assert.equal(script.stdout.trim(), "51208c5db7f797196d6edc4dd7df6048f4ea6b883a6af6af032342088f436543790f");
@@ -758,6 +776,25 @@ test("Vite config: the network define, the single entry, the dev proxy and the b
   await assert.rejects(child(code, { MURKLE_NETWORK: "regtest" }), /MURKLE_NETWORK must be "signet" or "mainnet"/);
 });
 
+test("Vite build marker: a relative build.outDir lands in the Vite root, not in the process directory", async () => {
+  // npm run web:build runs from the repo root with outDir "dist" relative to web/. Only the marker
+  // plugin runs here (a temp root stands in for web/), so no real bundle is written anywhere.
+  const root = join(DIR, "marker-root");
+  mkdirSync(root, { recursive: true });
+  const stray = join(ROOT, "dist", "murkle-build.json");
+  const before = existsSync(stray) ? readFileSync(stray, "utf8") : null;
+  const r = await child(`
+    import { resolveConfig } from "vite";
+    const cfg = await resolveConfig({ configFile: "web/vite.config.mjs", root: ${JSON.stringify(root)} }, "build");
+    const marker = cfg.plugins.find((p) => p.name === "murkle-build-marker");
+    marker.configResolved(cfg);
+    marker.closeBundle();
+    console.log(JSON.stringify({ outDir: cfg.build.outDir }));`);
+  assert.equal(r.outDir, "dist", "web/vite.config.mjs keeps the relative outDir");
+  assert.equal(JSON.parse(readFileSync(join(root, "dist", "murkle-build.json"), "utf8")).network, "mainnet");
+  assert.equal(existsSync(stray) ? readFileSync(stray, "utf8") : null, before, "the repo-root dist/ is untouched");
+});
+
 test("params.mjs reads the build-time define when no env is set (the browser path)", async () => {
   const src = readFileSync("src/params.mjs", "utf8");
   assert.match(src, /typeof __MURKLE_NETWORK__ !== "undefined" \? __MURKLE_NETWORK__ : undefined/);
@@ -778,10 +815,25 @@ test("docs/MAINNET.md: the launch sequence, the owner's list and the go/no-go li
   for (const g of ["G0", "G1", "G2", "G3", "G4", "G5", "G6", "G7", "G8"]) assert.match(md, new RegExp(`\\b${g}\\b`), g);
   assert.match(md, /What the owner must provide/i);
   assert.match(md, /Go\/no-go/i);
-  assert.match(md, /TODO_PLATFORM_ADDRESS/);
+  assert.match(md, /bc1pa4dr4q6h8nq6ky8rgy52y8engygf8n0exag4vnk4l7stwm20q8vq5fxumn/);
+  assert.match(md, /5120ed5a3a83573cc1ab10e34128a21f33411093cdf93751564ed5ffa0b76d4f01d8/);
+  assert.doesNotMatch(md, /TODO\(owner\)|refuses to mine until the address is replaced/);
+  assert.doesNotMatch(md, /MURKLE_PRE_MINING_SRC=|cp -r <the pre-mining/, "the pre-mining copy is optional and is not re-created");
+  assert.match(md, /identical through 325958/);
   assert.match(md, /murkle address-script/);
   assert.match(md, /MURKLE_NETWORK=mainnet/);
   assert.match(md, /not launched/i);
+  // Owner decisions of 2026-10-13: 500 sats per claim, a small VPS on Esplora, no external audit.
+  assert.match(md, /500 sats per mining claim/);
+  assert.match(md, /platformSats: 500n/);
+  assert.doesNotMatch(md, /1,?000 sats|platformSats: <owner/);
+  assert.match(md, /2 vCPU, 4 GB RAM, 40 GB SSD/);
+  assert.match(md, /MURKLE_ESPLORA=https:\/\/blockstream\.info\/api/);
+  assert.match(md, /MURKLE_ESPLORA=https:\/\/mempool\.space\/api/);
+  assert.doesNotMatch(md, /--source bitcoind\n.*--source esplora/s, "G3 no longer needs an own node");
+  assert.doesNotMatch(md, /against the owner's own Bitcoin Core/);
+  assert.match(md, /launch without an external audit/i);
+  assert.match(md, /no external audit yet/);
   assert.doesNotMatch(md, BANNED);
   assert.doesNotMatch(md, CYRILLIC);
   assert.ok(!md.includes("\r"), "LF");

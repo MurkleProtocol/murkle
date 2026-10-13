@@ -223,7 +223,13 @@ test("env examples: only known MURKLE_* names, no secrets, the per-network switc
   assert.equal(val(files[1], "MURKLE_NETWORK"), "mainnet");
   assert.equal(val(files[0], "MURKLE_CSP_ENFORCE"), "0", "signet keeps the CSP Report-Only, as today");
   assert.equal(val(files[1], "MURKLE_CSP_ENFORCE"), "1", "mainnet enforces it");
-  assert.equal(val(files[1], "MURKLE_BTC_SOURCE"), "bitcoind", "mainnet indexes from the operator's own node");
+  assert.equal(val(files[1], "MURKLE_BTC_SOURCE"), "esplora", "mainnet indexes from mempool.space by default (owner decision 2026-10-13)");
+  assert.equal(val(files[0], "MURKLE_BTC_SOURCE"), "esplora");
+  // The own-node settings are the optional upgrade: present, but commented out.
+  const own = envLines(read(files[1])).filter((l) => l.name.startsWith("MURKLE_BITCOIND_") || (l.name === "MURKLE_BTC_SOURCE" && l.value === "bitcoind"));
+  assert.ok(own.length >= 3 && own.every((l) => l.commented), "the bitcoind lines are commented out in the mainnet example");
+  assert.match(read(files[1]), /small VPS/);
+  assert.equal(val(files[1], "MURKLE_MONITOR_MIN_FREE_GB"), "8", "a 40 GB disk: the 20 GB default would alert at once");
   assert.notEqual(val(files[1], "MURKLE_HEADERS"), "off");
   for (const f of files.slice(0, 2)) {
     const net = val(f, "MURKLE_NETWORK");
@@ -261,7 +267,7 @@ test("docker-compose: services, profiles, volumes, healthchecks, log limits, the
   const svc = composeServices(text);
   assert.deepEqual(Object.keys(svc).sort(), ["bitcoind", "caddy", "electrs", "murkle-indexer"]);
   const profile = (s) => svc[s].match(/^ {4}profiles: \[(.*)\]$/m)?.[1] ?? null;
-  assert.equal(profile("bitcoind"), null, "Bitcoin Core is on the default path");
+  assert.equal(profile("bitcoind"), '"bitcoind", "electrs"', "Bitcoin Core is the optional own-node upgrade; electrs needs it too");
   assert.equal(profile("murkle-indexer"), null);
   assert.equal(profile("caddy"), null);
   assert.equal(profile("electrs"), '"electrs"');
@@ -277,9 +283,11 @@ test("docker-compose: services, profiles, volumes, healthchecks, log limits, the
     for (const m of body.matchAll(/^ {6}- ([a-z][a-z0-9-]*):\//gm)) assert.ok(vols.includes(m[1]), `${name}: volume ${m[1]} is declared`);
   }
   const idx = svc["murkle-indexer"];
-  assert.match(idx, /MURKLE_BTC_SOURCE: bitcoind/);
+  assert.match(idx, /MURKLE_BTC_SOURCE: \$\{MURKLE_BTC_SOURCE:-esplora\}/, "the default source is Esplora");
   assert.match(idx, /MURKLE_BITCOIND_URL: http:\/\/bitcoind:/);
   assert.match(idx, /MURKLE_BITCOIND_COOKIE: /);
+  assert.match(idx, /depends_on:\n {6}bitcoind:\n {8}condition: service_healthy\n {8}required: false\n/, "the indexer does not require Bitcoin Core");
+  assert.match(read("deploy/docker/compose.env.example"), /^MURKLE_BTC_SOURCE=esplora$/m);
   assert.match(idx, /- bitcoin-data:\/bitcoin:ro/, "the cookie is read from a shared read-only volume");
   assert.match(idx, /MURKLE_RELAYER: "0"/);
   assert.match(idx, /MURKLE_NETWORK: \$\{MURKLE_NETWORK:-signet\}/);
@@ -287,7 +295,7 @@ test("docker-compose: services, profiles, volumes, healthchecks, log limits, the
   const btc = svc.bitcoind;
   for (const flag of ["-txindex=1", "-prune=0", "-disablewallet=1", "-server=1", "-rpccookieperms=group"]) assert.ok(btc.includes(`- ${flag}`), flag);
   assert.doesNotMatch(btc, /"8332:|"38332:|rpcpassword|rpcuser/, "the RPC port is never published and there is no RPC password");
-  assert.match(btc, /BITCOIN_SHA256: \$\{BITCOIN_SHA256:\?/, "a Bitcoin Core build needs its tarball hash");
+  assert.match(btc, /BITCOIN_SHA256: \$\{BITCOIN_SHA256:-\}/, "the default Esplora setup needs no Bitcoin Core placeholders (the Dockerfile refuses an empty hash)");
   assert.match(svc.caddy, /\.\.\/caddy\/Caddyfile:\/etc\/caddy\/Caddyfile:ro/);
 });
 
@@ -296,6 +304,27 @@ test("docker compose accepts the file (when the docker CLI is installed)", (t) =
   if (v.status !== 0) return t.skip("no docker compose CLI here");
   const r = spawnSync("docker", ["compose", "-f", "deploy/docker/docker-compose.yml", "--env-file", "deploy/docker/compose.env.example", "--profile", "electrs", "config", "--quiet"], { cwd: ROOT, encoding: "utf8", timeout: 60_000 });
   assert.equal(r.status, 0, r.stderr);
+  // Without a profile: the indexer and Caddy only, no Bitcoin Core.
+  const services = (profiles) => spawnSync("docker", ["compose", "-f", "deploy/docker/docker-compose.yml", "--env-file", "deploy/docker/compose.env.example", ...profiles, "config", "--services"], { cwd: ROOT, encoding: "utf8", timeout: 60_000 });
+  const def = services([]);
+  assert.equal(def.status, 0, def.stderr);
+  assert.deepEqual(def.stdout.split(/\s+/).filter(Boolean).sort(), ["caddy", "murkle-indexer"]);
+  const own = services(["--profile", "bitcoind"]);
+  assert.equal(own.status, 0, own.stderr);
+  assert.deepEqual(own.stdout.split(/\s+/).filter(Boolean).sort(), ["bitcoind", "caddy", "murkle-indexer"]);
+});
+
+test("the indexer unit and the monitor do not assume a local Bitcoin Core (Esplora is the mainnet default)", () => {
+  const u = unit("murkle-indexer.service");
+  for (const sec of [u.Unit, u.Service]) {
+    for (const k of ["Requires", "Wants", "After", "BindsTo", "PartOf"]) {
+      for (const v of sec[k] ?? []) assert.doesNotMatch(v, /bitcoind/, `murkle-indexer.service: ${k}=${v}`);
+    }
+  }
+  const mon = read("deploy/bin/monitor.mjs");
+  assert.doesNotMatch(mon, /bitcoin-cli|bitcoind|:8332|:38332/, "the monitor talks to the indexer's API only");
+  assert.doesNotMatch(mon, /switch to your own node/);
+  for (const f of ["deploy/systemd/murkle-monitor.service", "deploy/systemd/murkle-backup.service"]) assert.doesNotMatch(read(f), /bitcoind/, f);
 });
 
 test("bitcoind.Dockerfile builds only a pinned, hash-checked release", () => {
@@ -577,6 +606,7 @@ test("monitor: each alert from /api/health and its exit code", async () => {
     [health({ lagBlocks: 5, ok: false }), "warning", ["lag"]],
     [health({ syncAgeSecs: 900, ok: false }), "critical", ["stale"]],
     [health({ syncAgeSecs: null, lastSync: null }), "warning", ["never_synced"]],
+    [health({ ok: false, chainTip: null, lagBlocks: null, lastSync: null, syncAgeSecs: 3 }), "warning", ["never_synced"]],
     [health({ ok: false, lastError: "fetch failed" }), "warning", ["sync_error"]],
     [health({ ok: false, lastError: "less-work: the source's branch has less work", headers: { verified: true, tipHeight: 1, baseHeight: 0, lastError: { code: "less-work", message: "the source's branch has less work", height: 970200 } } }), "critical", ["less_work"]],
     [health({ ok: false, lastError: "x", headers: { verified: true, lastError: { code: "pow", message: "hash above target", height: 5 } } }), "critical", ["header_error", "sync_error"]],
@@ -962,9 +992,10 @@ test("docs/OPERATIONS.md covers install, upgrade, restart, backups, the drill an
   for (const h of ["## 3. Install (host, systemd)", "## 4. Install (Docker Compose)", "## 5. Upgrade and rollback", "## 6. Restarts", "## 7. Backups and the restore drill", "## 8. Monitoring and alerts", "### 10.1 Relayer halt", "### 10.2 Reorg", "### 10.3 Header errors and `less-work`", "### 10.4 Key compromise"]) {
     assert.ok(ops.includes(h), h);
   }
-  for (const s of ["state-rollback.mjs", "check-books.mjs", "backup.mjs verify", "Never start a relayer from a drill copy", "Never move pool coins by hand", "MURKLE_RELAYER", "npm ci", "fetch-artifacts.mjs --check", "txindex=1", "MURKLE_CSP_ENFORCE=1", "never pays a user's fee"]) {
+  for (const s of ["state-rollback.mjs", "check-books.mjs", "backup.mjs verify", "Never start a relayer from a drill copy", "Never move pool coins by hand", "MURKLE_RELAYER", "npm ci", "fetch-artifacts.mjs --check", "txindex=1", "MURKLE_CSP_ENFORCE=1", "never pays a user's fee", "2 vCPU, 4 GB RAM, 40 GB SSD", "MURKLE_BTC_SOURCE=esplora"]) {
     assert.ok(ops.includes(s), `OPERATIONS.md: ${s}`);
   }
+  assert.doesNotMatch(ops, /required on mainnet|your own Bitcoin Core 30 or later \(`MURKLE_BTC_SOURCE=bitcoind`\) \|/, "an own node is optional on mainnet");
   // Every monitor alert code is documented.
   const codes = new Set();
   for (const f of ["deploy/bin/monitor.mjs"]) for (const m of read(f).matchAll(/alert\("(?:warning|critical)", "([a-z_]+)"/g)) codes.add(m[1]);

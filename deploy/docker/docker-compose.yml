@@ -1,9 +1,12 @@
-# Murkle with its own Bitcoin Core, behind Caddy. The default path is Bitcoin Core plus the RPC
-# source (MURKLE_BTC_SOURCE=bitcoind, cookie from a shared volume). Optional profile:
-#   electrs   an Esplora-compatible API on the same node, for operators who want one
+# Murkle behind Caddy. The default path needs no Bitcoin Core: the indexer reads chain data from
+# mempool.space (MURKLE_BTC_SOURCE=esplora). Optional profiles (the optional own-node upgrade):
+#   bitcoind  Bitcoin Core for the RPC source (set MURKLE_BTC_SOURCE=bitcoind in compose.env;
+#             the cookie comes from a shared volume)
+#   electrs   an Esplora-compatible API on the same node, for operators who want one (starts bitcoind too)
 #
 #   cp deploy/docker/compose.env.example deploy/docker/compose.env   # then edit it
 #   docker compose -f deploy/docker/docker-compose.yml --env-file deploy/docker/compose.env up -d
+#   docker compose -f deploy/docker/docker-compose.yml --env-file deploy/docker/compose.env --profile bitcoind up -d
 #   docker compose -f deploy/docker/docker-compose.yml --env-file deploy/docker/compose.env --profile electrs up -d
 #
 # The paid relayer is off (MURKLE_RELAYER=0). Its keys and books hold users' prepaid deposits;
@@ -20,12 +23,13 @@ x-logging: &logging
 
 services:
   bitcoind:
+    profiles: ["bitcoind", "electrs"]
     build:
       context: .
       dockerfile: bitcoind.Dockerfile
       args:
-        BITCOIN_VERSION: ${BITCOIN_VERSION:?set BITCOIN_VERSION in compose.env}
-        BITCOIN_SHA256: ${BITCOIN_SHA256:?set BITCOIN_SHA256 in compose.env}
+        BITCOIN_VERSION: ${BITCOIN_VERSION:-}
+        BITCOIN_SHA256: ${BITCOIN_SHA256:-}
     command:
       - -chain=${BITCOIN_CHAIN:-signet}
       - -server=1
@@ -63,7 +67,8 @@ services:
         MURKLE_ARTIFACTS_URL: ${MURKLE_ARTIFACTS_URL:-}
     environment:
       MURKLE_NETWORK: ${MURKLE_NETWORK:-signet}
-      MURKLE_BTC_SOURCE: bitcoind
+      # esplora (mempool.space) by default; bitcoind with --profile bitcoind (the URL and the cookie below are then used).
+      MURKLE_BTC_SOURCE: ${MURKLE_BTC_SOURCE:-esplora}
       MURKLE_BITCOIND_URL: http://bitcoind:${BITCOIN_RPC_PORT:-38332}
       MURKLE_BITCOIND_COOKIE: ${BITCOIN_COOKIE:-/bitcoin/signet/.cookie}
       MURKLE_PUBLIC_URL: ${MURKLE_PUBLIC_URL:-}
@@ -76,9 +81,11 @@ services:
       - murkle-data:/app/data
       - murkle-build:/app/build
       - bitcoin-data:/bitcoin:ro
+    # Waits for Bitcoin Core only when its profile is on; without the profile there is nothing to wait for.
     depends_on:
       bitcoind:
         condition: service_healthy
+        required: false
     restart: unless-stopped
     stop_grace_period: 30s
     # Liveness only (/api/health answers 200 while the process serves): a halted relayer or a

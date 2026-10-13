@@ -51,13 +51,19 @@ switched on.
 
 | | signet | mainnet |
 |---|---|---|
-| Indexer host | 2 vCPU, 4 GB RAM, 20 GB disk (with the Esplora source) | 4+ vCPU, 16 GB RAM, 1.5 TB+ SSD (Bitcoin Core unpruned with `txindex=1`) |
-| Chain data | mempool.space (default) or your own Bitcoin Core | your own Bitcoin Core 30 or later (`MURKLE_BTC_SOURCE=bitcoind`) |
+| Indexer host | 2 vCPU, 4 GB RAM, 20 GB disk (with the Esplora source) | 2 vCPU, 4 GB RAM, 40 GB SSD (with the Esplora source; owner decision 2026-10-13) |
+| Chain data | mempool.space (default) or your own Bitcoin Core | mempool.space (`MURKLE_BTC_SOURCE=esplora`, the default). An own Bitcoin Core is the optional upgrade (below) |
 | Node.js | 22 LTS | 22 LTS |
 
-Bitcoin Core must keep `txindex=1` (the indexer looks up prevouts of arbitrary transactions), so it
-cannot be pruned. Bitcoin Core 30's default `datacarriersize` relays the 471-515 byte OP_RETURN
-carriers Murkle uses; older or filtering nodes do not.
+The default mainnet setup is the small VPS above with the Esplora source: no Bitcoin Core, no `bitcoind`
+service, nothing to size for the chain. Header verification is on from the pinned checkpoint, as on every
+mainnet node. The cost is that one third party, mempool.space, is the only data source (audit item A-9: it
+can hide or delay blocks, and an outage stops the sync until it is back; `docs/MAINNET.md` section 6).
+
+The optional upgrade is your own Bitcoin Core 30 or later with `MURKLE_BTC_SOURCE=bitcoind` (section 3.4),
+on a bigger host: 4+ vCPU, 16 GB RAM, 1.5 TB+ SSD for an unpruned node. It must keep `txindex=1` (the
+indexer looks up prevouts of arbitrary transactions), so it cannot be pruned. Bitcoin Core 30's default
+`datacarriersize` relays the 471-515 byte OP_RETURN carriers Murkle uses; older or filtering nodes do not.
 
 ## 3. Install (host, systemd)
 
@@ -113,7 +119,10 @@ ln -sfn /opt/murkle/releases/<tag> /opt/murkle/current
 cd /opt/murkle/current && MURKLE_NETWORK=signet node scripts/fetch-artifacts.mjs --check
 ```
 
-### 3.4 Bitcoin Core (optional on signet, required on mainnet)
+### 3.4 Bitcoin Core (optional on both networks; not needed for the default mainnet setup)
+
+Skip this section for the default setup: the indexer reads from mempool.space (`MURKLE_BTC_SOURCE=esplora`)
+and the units need no `bitcoind.service`. It is the upgrade path for an operator who wants an own node.
 
 Install Bitcoin Core 30 or later from bitcoincore.org (verify `SHA256SUMS` and its signatures),
 use `deploy/bitcoin/bitcoin.conf.example` (`txindex=1`, no prune, no wallet, RPC on localhost,
@@ -140,9 +149,11 @@ chown root:murkle /etc/murkle/murkle.env && chmod 0640 /etc/murkle/murkle.env
 editor /etc/murkle/murkle.env
 ```
 
-The file holds no secrets: a password, when the node is not on cookie authentication, goes in a file
-under `/etc/murkle/secrets/` and only its path in `MURKLE_BITCOIND_PASSWORD_FILE`. Mainnet sets
-`MURKLE_CSP_ENFORCE=1` (go/no-go) and cannot turn header verification off.
+For mainnet copy `murkle.mainnet.env.example` instead: it uses the Esplora source (the bitcoind lines are
+commented out as the optional upgrade). The file holds no secrets: a password, when an own node is not on
+cookie authentication, goes in a file under `/etc/murkle/secrets/` and only its path in
+`MURKLE_BITCOIND_PASSWORD_FILE`. Mainnet sets `MURKLE_CSP_ENFORCE=1` (go/no-go) and cannot turn header
+verification off.
 
 ### 3.6 Backup key (before the relayer)
 
@@ -219,22 +230,29 @@ systemctl start murkle-backup.service && ls -l /var/backups/murkle
 
 ## 4. Install (Docker Compose)
 
-`deploy/docker/docker-compose.yml` runs Bitcoin Core (built from the official tarball by
-`deploy/docker/bitcoind.Dockerfile`; `BITCOIN_VERSION` and `BITCOIN_SHA256` are required), the
-indexer from the repository's `Dockerfile` (built for `MURKLE_NETWORK`, reading the node's cookie
-from the shared volume) and Caddy. Profile: `electrs` (an
-Esplora-compatible API on the same node, optional).
+`deploy/docker/docker-compose.yml` needs Docker Compose 2.20 or later (the indexer's optional `depends_on`)
+and runs the indexer from the repository's `Dockerfile` (built for
+`MURKLE_NETWORK`, reading chain data from mempool.space by default) and Caddy. Profiles: `bitcoind`
+(Bitcoin Core, built from the official tarball by `deploy/docker/bitcoind.Dockerfile`; `BITCOIN_VERSION`
+and `BITCOIN_SHA256` are required for that profile only and may stay unset otherwise; with
+`MURKLE_BTC_SOURCE=bitcoind` the indexer reads the node's cookie from the shared volume) and `electrs` (an Esplora-compatible API on that node, optional; it starts the node too).
 
 ```sh
-cp deploy/docker/compose.env.example deploy/docker/compose.env   # edit: network, chain, Bitcoin Core release and hash, domain
+cp deploy/docker/compose.env.example deploy/docker/compose.env   # edit: network, domain (and, for an own node, the Bitcoin Core release and hash)
 docker compose -f deploy/docker/docker-compose.yml --env-file deploy/docker/compose.env up -d --build
 docker compose -f deploy/docker/docker-compose.yml --env-file deploy/docker/compose.env ps
+# Optional upgrade, an own node: set MURKLE_BTC_SOURCE=bitcoind in compose.env, then add --profile bitcoind
+docker compose -f deploy/docker/docker-compose.yml --env-file deploy/docker/compose.env --profile bitcoind up -d --build
 ```
 
 The containers log through the json-file driver with size limits. The image's `HEALTHCHECK` is
 liveness only: a halted relayer or a lagging indexer never restarts the container. Run
 `deploy/bin/monitor.mjs` from the host (cron or a systemd timer) against the published port or the
 proxy, and back up the `murkle-data` volume with `deploy/bin/backup.mjs --data <volume path>/<network>`.
+
+The default chain source is now Esplora. An existing signet `compose.env` without `MURKLE_BTC_SOURCE` used to
+read from Bitcoin Core and now reads from mempool.space; to keep the own node, add `MURKLE_BTC_SOURCE=bitcoind`
+and start the stack with `--profile bitcoind`.
 
 ## 5. Upgrade and rollback
 
@@ -421,8 +439,9 @@ the same bytes).
 ### 10.3 Header errors and `less-work`
 
 A `less-work` error means the data source served a branch with less cumulative work than the one
-the indexer holds. The indexer did not roll back and keeps serving its chain. Switch the source to
-your own Bitcoin Core (`MURKLE_BTC_SOURCE=bitcoind`) and keep the indexer where it is; do not delete
+the indexer holds. The indexer did not roll back and keeps serving its chain. Point the indexer at a
+second source (another Esplora API in `MURKLE_ESPLORA`, for example `https://blockstream.info/api`, or your
+own Bitcoin Core with `MURKLE_BTC_SOURCE=bitcoind`) and keep the indexer where it is; do not delete
 `headers.json` to make the error go away. Other header errors (broken linkage, proof of work,
 difficulty, a checkpoint mismatch) mean the source served data that is not a valid Bitcoin chain:
 the same response. `time-too-new` is retryable and clears on its own.
@@ -443,7 +462,7 @@ the block signature (BIP325) is not checked, so signet proof of work is nearly f
   users that the artifacts and the verification key are pinned in the code, so a site that serves
   other artifacts is refused by the wallet; users who doubt the site can verify with their own
   indexer (`/verify`).
-- **Bitcoin Core RPC credentials**: restart the node to rotate the cookie (or change `rpcauth`).
+- **Bitcoin Core RPC credentials** (only with an own node): restart the node to rotate the cookie (or change `rpcauth`).
 
 #### 10.4.1 Relayer keys: evacuate, rotate, refill, resume
 
@@ -582,10 +601,12 @@ before anything is written) or switch back to the previous release, then find ou
 
 The indexer cannot save its state when the disk is full and stops making progress. Free space (old
 `archive/` files, journal vacuum `journalctl --vacuum-size=500M`, old backups already copied
-off-site), then restart. On mainnet the node's block files grow by about 100 GB a year; plan for it.
+off-site), then restart. With an own Bitcoin Core on mainnet, its block files grow by about 100 GB a year; plan for it.
+On the small VPS (40 GB, Esplora source) the data is the indexer's state, headers and archives only.
 
 ### 10.8 Data source outage
 
-With the Esplora source, a mempool.space outage stops the sync (`stale`); the API keeps serving the
-last state. With your own node, check `bitcoin-cli getblockchaininfo` and its disk. Nothing needs to
+With the Esplora source (the default on mainnet), a mempool.space outage stops the sync (`stale`); the API keeps
+serving the last state, and the indexer resumes when the source is back (or point `MURKLE_ESPLORA` at another
+Esplora API and restart). With your own node, check `bitcoin-cli getblockchaininfo` and its disk. Nothing needs to
 be repaired after an outage: the indexer resumes at its height.

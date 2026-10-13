@@ -1,6 +1,6 @@
 import { defineConfig } from "vite";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const INDEXER = `http://localhost:${process.env.MURKLE_INDEXER_PORT ?? 8787}`;
@@ -28,7 +28,8 @@ function buildMarker() {
     name: "murkle-build-marker",
     apply: "build",
     configResolved(config) {
-      outDir = config.build.outDir;
+      // build.outDir is relative to the Vite root (web/), not to the process directory.
+      outDir = resolve(config.root, config.build.outDir);
     },
     closeBundle() {
       const file = join(outDir, "murkle-build.json");

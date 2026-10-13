@@ -16,7 +16,7 @@
     {
       "height": 969696,
       "hash": "000000000000000000001e39df127cbab82a824ac43cfcdbf62e59f6a08b9f0b",
-      "label": "Bitcoin mainnet retarget boundary 969696 (pre-launch base; cross-check from your own node before launch, docs/MAINNET.md G3)",
+      "label": "Bitcoin mainnet retarget boundary 969696 (pre-launch base; cross-checked on mempool.space and blockstream.info, docs/MAINNET.md G3)",
       "base": {
         "bits": 386014960,
         "time": 1791011796,

@@ -61,7 +61,7 @@ are the same on both networks.
 | Pins | `src/pins.json` | `src/pins.mainnet.json` (genesis `null` until the mainnet ATTEST) |
 | Artifacts | `build/dev/*`, `build/manifest.json` (DEV phase 2) | `build/mainnet/*` (single-party key of the operator); the wasm is shared |
 | Ticker rule (section 7) | historical decoder | strict raw bytes (V2-02), from genesis |
-| Service fee of mining (section 15) | 500 sats to the signet platform script | placeholder `TODO_PLATFORM_ADDRESS`: mining refuses to start |
+| Service fee of mining (section 15) | 500 sats to the signet platform script | 500 sats to the mainnet platform script (`bc1pa4dr4q6h8nq6ky8rgy52y8engygf8n0exag4vnk4l7stwm20q8vq5fxumn`); mining starts at the pinned mining height |
 | Explorer / Esplora default | mempool.space/signet | mempool.space |
 | Browser storage prefix | `murkle.signet` | `murkle.mainnet` |
 

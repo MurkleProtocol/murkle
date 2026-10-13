@@ -3,7 +3,8 @@
 Files for running a Murkle node. The procedures (install, upgrade, backups, the restore drill,
 alerts, incidents) are in [docs/OPERATIONS.md](../docs/OPERATIONS.md); the launch sequence is in
 `docs/MAINNET.md`. Mainnet has not launched; signet is the
-default network.
+default network. The default setup, on mainnet too, needs no Bitcoin Core: the indexer reads chain data
+from mempool.space (`MURKLE_BTC_SOURCE=esplora`) on a small VPS; an own node is the optional upgrade.
 
 | File | What it is for |
 |---|---|
@@ -17,10 +18,10 @@ default network.
 | `logrotate/murkle` | rotation for proxy error logs and other file logs |
 | `caddy/Caddyfile` | HTTPS with automatic certificates, HSTS, everything to the indexer |
 | `nginx/murkle.conf` | the same for nginx with certbot |
-| `bitcoin/bitcoin.conf.example` | Bitcoin Core for the RPC source: `txindex=1`, no prune, no wallet, RPC on localhost, cookie authentication |
-| `docker/docker-compose.yml` | Bitcoin Core, the indexer and Caddy; profile `electrs` |
-| `docker/bitcoind.Dockerfile` | Bitcoin Core from the official release tarball (version and sha256 required) |
-| `docker/compose.env.example` | the compose settings (network, chain, Bitcoin Core release, domain) |
+| `bitcoin/bitcoin.conf.example` | optional, only with an own node: Bitcoin Core for the RPC source: `txindex=1`, no prune, no wallet, RPC on localhost, cookie authentication |
+| `docker/docker-compose.yml` | the indexer and Caddy; profiles `bitcoind` (an own Bitcoin Core) and `electrs` |
+| `docker/bitcoind.Dockerfile` | Bitcoin Core from the official release tarball (version and sha256 required); used by the `bitcoind` profile only |
+| `docker/compose.env.example` | the compose settings (network, chain source, domain; the Bitcoin Core release for the optional profile) |
 | `bin/backup.mjs` | `keygen`, `backup`, `restore`, `verify`: encrypted backups of the relayer's keys and books, the state and the headers |
 | `bin/monitor.mjs` | health checks: lag, sync age, header errors, relayer halt (I2), artifacts, disk, backups |
 | `bin/state-rollback.mjs` | rolls a state file back to a height through its undo journal (upgrade rollback) |

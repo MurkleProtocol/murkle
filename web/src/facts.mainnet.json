@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "network": "mainnet",
-  "testCount": 915,
+  "testCount": 1017,
   "circuit": {
     "constraints": 18411,
     "proofSystem": "Groth16",
@@ -46,17 +46,17 @@
     "height": null
   },
   "audit": {
-    "total": 61,
+    "total": 66,
     "bySeverity": {
       "Info": 17,
-      "Low": 37,
-      "Medium": 6,
-      "High": 1
+      "Low": 39,
+      "Medium": 8,
+      "High": 2
     },
-    "fixed": 50,
+    "fixed": 55,
     "partial": 3,
     "open": 0,
-    "mediumFixed": 6,
+    "mediumFixed": 8,
     "circomspectFindings": 25,
     "findings": [
       {
@@ -146,7 +146,7 @@
         "location": "sync",
         "title": "The indexer takes the header chain from the API on trust (does not verify PoW)",
         "description": "The indexer takes the header chain from the API on trust (does not verify PoW)",
-        "status": "partially fixed: headers verified (linkage, proof of work, retarget, MTP, version, checkpoints, most work among what the source serves) in the indexer, CLI and browser replay; receipts check linked or bounded headers; a Bitcoin Core RPC source lets an operator index from their own node; open: a single source can withhold blocks; the signet signature (BIP325) is not checked",
+        "status": "partially fixed: headers verified (linkage, proof of work, retarget, MTP, version, checkpoints, most work among what the source serves) in the indexer, CLI and browser replay; receipts check linked or bounded headers, refuse heights above what the chain can have reached and headers that contradict a pinned checkpoint, and say when the bounds are too weak to rule out a cheap forgery (far from a checkpoint); the relayer credits deposits only from header-verified blocks with a merkle proof; a Bitcoin Core RPC source lets an operator index from their own node; open: a single source can withhold blocks; the signet signature (BIP325) is not checked; a receipt far from a checkpoint without the user's replay trusts the source for proof of work (it says so)",
         "state": "partial"
       },
       {
@@ -667,6 +667,56 @@
         "title": "docs/API.md left fields out of /api/stats (same issue as V2-14)",
         "description": "docs/API.md left fields out of /api/stats (same issue as V2-14)",
         "status": "fixed with V2-14 + test audit2-docs",
+        "state": "fixed"
+      },
+      {
+        "id": "P-1",
+        "severity": "High",
+        "severityNote": null,
+        "location": "relayer / wallet",
+        "title": "Relay pool lineage tied carriers to the depositor (L1)",
+        "description": "Relay pool lineage tied carriers to the depositor (L1). While one account funded the pool, every carrier and its change descended publicly from that account's deposit.",
+        "status": "fixed in code: the relayer tracks lineage, merges deposits with other accounts' coins, and spends only coins that descend from at least MURKLE_RELAY_MIN_MIX + 1 accounts, the same rule for every sender, else answers 409 pool_thin. Review found that the first rule (\"k accounts other than the sender\") named a sender by exclusion, and that the published cover counted deposits no merge would take; both are fixed. The web wallet and the CLI (--linkable) send only on the user's explicit \"linkable\" consent, signed into the request, never list the sender as hidden for such a send, and treat a relayer whose k is below 3 as no cover. Tests: test/privfix-relayer.test.mjs, test/privfix-web.test.mjs, test/relay-balance-cli.test.mjs",
+        "state": "fixed"
+      },
+      {
+        "id": "P-2",
+        "severity": "Medium",
+        "severityNote": null,
+        "location": "relayer",
+        "title": "Relayer files re-attributed carriers to accounts (L2)",
+        "description": "Relayer files re-attributed carriers to accounts (L2). Per-item costs, heights and modes stayed after settlement, so credits minus costs gave each balance.",
+        "status": "fixed in code, with a disclosed remainder. Settled items keep no per-item cost, height, mode or anchor, and the retired v1 file is pruned when loaded. Review showed that was not enough: each charge follows from the carrier's public fee. Now the books keep accounts under an opaque key, never the account id, and a credit forgets its account once its deposit has left the pool and it is no longer recent. Remainder (in docs/CLAIMS.md): balances stay per account, so recent top-ups, or a handful of accounts, can still be matched to carriers. data/ was not changed by hand; an old state is converted when it loads. Tests: test/privfix-relayer.test.mjs",
+        "state": "fixed"
+      },
+      {
+        "id": "P-3",
+        "severity": "Medium",
+        "severityNote": null,
+        "location": "wallet",
+        "title": "The anchor plus a batch of one named the sender (L3)",
+        "description": "The anchor plus a batch of one named the sender (L3). The proof's anchor fixes the tree size, and no warning said how few notes were in it.",
+        "status": "fixed in the web wallet and the CLI (one count, src/crowd.mjs): before a relayed or batch send, or a copied envelope, it shows other people's candidate notes at the anchor (padding and own notes excluded) and the expected batch crowd, and warns below 8 candidates or with a batch crowd of 1. It is advice only and never blocks. Tests: test/privfix-web.test.mjs, test/relay-balance-cli.test.mjs, test/batch-cli.test.mjs",
+        "state": "fixed"
+      },
+      {
+        "id": "P-4",
+        "severity": "Low",
+        "severityNote": null,
+        "location": "wallet core",
+        "title": "Output order told payment from change and a note from its padding (L4)",
+        "description": "Output order told payment from change and a note from its padding (L4).",
+        "status": "fixed in code: src/wallet.mjs shuffles the two outputs with their ciphertexts, and the circuit is unchanged. The web wallet never read positions, and a test guards that. Tests: test/privfix-wallet.test.mjs, test/privfix-web.test.mjs",
+        "state": "fixed"
+      },
+      {
+        "id": "P-5",
+        "severity": "Low",
+        "severityNote": null,
+        "location": "CLI / web / relayer",
+        "title": "nSequence, fee rounding and input and output order identified the route (L5)",
+        "description": "nSequence, fee rounding and input and output order identified the route (L5).",
+        "status": "fixed in code for everything this software builds: one planner (src/btc/funding.mjs) sets RBF on every input, uses one fee rule and one headroom, shuffles inputs (a bound first input stays first), and puts the change in a random slot after the OP_RETURN at output 0. The web top-up now records the deposit's real output. Unisat-built transactions keep Unisat's own shape. Tests: test/privfix-wallet.test.mjs, test/privfix-relayer.test.mjs, test/privfix-web.test.mjs",
         "state": "fixed"
       }
     ]

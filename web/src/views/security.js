@@ -169,7 +169,7 @@ function statusBoard(ctx) {
     [chainTrust(ctx.network).limit, mainnet ? "LIMIT" : "SIGNET"],
     ["Note encryption isn't proven in the circuit; a bad sender can only hurt their own payment's recipient", "DESIGN"],
     ["Mints are public: token, amount and the paying Bitcoin address", "DESIGN"],
-    ["External audit", mainnet && !ctx.preGenesis ? "OPEN" : "MAINNET"],
+    ["External audit", "OPEN"],
   ];
   return html`<ul class="sec-board">${rows.map(([text, k]) => html`<li class="sec-board-row"><span class="sec-board-chip">${CHIP[k]()}</span><span>${text}</span></li>`)}</ul>`;
 }
@@ -303,7 +303,7 @@ function checklist(ctx) {
 }
 
 function checklistNote(ctx) {
-  if (ctx.network !== "mainnet") return "Until every item is done, this runs on signet with test coins only.";
+  if (ctx.network !== "mainnet") return "This site runs on signet with test coins only. Items not done are open risks on mainnet.";
   if (ctx.preGenesis) return "Mainnet has not launched. No genesis is pinned, so nothing here can move funds.";
   return "Items not done are open risks on mainnet; the trust board above says what each one means for you.";
 }

@@ -179,9 +179,10 @@ export function segwitAddress(hrp, scriptHex) {
 // Per-claim service fee, per network. Consensus: fixed before activation; a change is a
 // new rule with its own activation height. Owner decision: the platform only, 500 sats to
 // the platform script (the signet MURK treasury, an operator key), no deployer fee (so a
-// DEPLOY_POW must carry claimFeeSats = 0). Mainnet is a placeholder until the owner names the
-// platform address (docs/MAINNET.md G5): mineFeeReady() says why mining cannot run, the Indexer
-// refuses a mining activation with it, and the server and CLI refuse to mine.
+// DEPLOY_POW must carry claimFeeSats = 0). The mainnet platform address was given by the owner on
+// 2026-10-13 (docs/MAINNET.md G5). A rule with the placeholder shape ({ placeholder: true, platformAddress:
+// TODO_PLATFORM_ADDRESS, platformScript: null }) is still refused: mineFeeReady() says why mining cannot
+// run, the Indexer refuses a mining activation with it, and the server and CLI refuse to mine.
 const feeRule = ({ hrp, platformScript, ...rest }) => Object.freeze({ platformAddress: segwitAddress(hrp, platformScript), platformScript, ...rest });
 export const TODO_PLATFORM_ADDRESS = "TODO_PLATFORM_ADDRESS";
 export const MINE_FEES = Object.freeze({
@@ -192,14 +193,12 @@ export const MINE_FEES = Object.freeze({
     deployerMinSats: 0n,
     deployerMaxSats: 0n, // 0 forbids a deployer fee
   }),
-  // TODO(owner): replace with feeRule({ hrp: "bc", platformScript: "<hex from murkle address-script>", ... }).
-  mainnet: Object.freeze({
-    placeholder: true,
-    platformAddress: TODO_PLATFORM_ADDRESS,
-    platformScript: null,
-    platformSats: 1000n, // proposed; the owner confirms
+  mainnet: feeRule({
+    hrp: "bc",
+    platformScript: "5120ed5a3a83573cc1ab10e34128a21f33411093cdf93751564ed5ffa0b76d4f01d8", // hex scriptPubKey (P2TR); owner decision 2026-10-13, address given by the owner
+    platformSats: 500n,
     deployerMinSats: 0n,
-    deployerMaxSats: 0n,
+    deployerMaxSats: 0n, // 0 forbids a deployer fee
   }),
 });
 export const MINE_FEE = MINE_FEES[NETWORK] ?? null;

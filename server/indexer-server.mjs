@@ -814,7 +814,8 @@ export function createApp({
     const rel = relayerHealth();
     const art = liveArtifactCheck();
     const artifactsOk = art ? Boolean(art.ok) : true;
-    const ok = !status.lastError && !(lagBlocks !== null && lagBlocks > healthMaxLag) && syncAgeSecs <= HEALTH_MAX_SYNC_AGE_SECS
+    // Not ok until a sync has learned the chain tip: right after a start (or with the source down) lag and age cannot say yet.
+    const ok = status.chainTip != null && !status.lastError && !(lagBlocks !== null && lagBlocks > healthMaxLag) && syncAgeSecs <= HEALTH_MAX_SYNC_AGE_SECS
       && artifactsOk && !rel.halted && !hs?.lastError;
     return {
       ok,

@@ -741,15 +741,15 @@ A two-column certified panel (stacks on phones).
   - "Which notes are yours, by local trial decryption. The server never learns."
 - **Still trusted on signet** (warn header, hatched):
   - "Proving keys from a single-party development setup."
-  - "Block data from a public API, not yet our own Bitcoin node."
+  - "Block data from a public API (mempool.space); running your own node is optional."
   - "Our transaction list: your browser catches a wrong state, not a hidden transaction. Run your own indexer to close that gap."
-- Row underneath: "Before mainnet: multi-party setup ceremony, external audit, our own Bitcoin node."
+- Row underneath: "Not yet: external audit. Mainnet is planned without one." (NOT YET tag; owner decision 2026-10-13: no audit gate, no own-node gate)
 - Tool tiles:
   - "Your wallet rebuilds the note tree and checks the root" (live Root Match);
   - "Re-verify any proof from raw Bitcoin data" (a txid field → /tx/);
   - "Run your own indexer" (snippet `npm install && npm run indexer` after downloading the pinned keys, full steps on /verify#run; the clone line only once a public repo exists), then "switch this site to it" (/verify#indexer, no wallet needed).
 
-**9. "Security status."** (board; chips DONE / SIGNET ONLY / BEFORE MAINNET / BY DESIGN)
+**9. "Security status."** (board; chips DONE / SIGNET ONLY / BEFORE MAINNET / NOT YET / BY DESIGN)
 - "Circuit: {constraints} constraints, Groth16 on BN254, 2-in/2-out, depth-32 Poseidon tree" DONE.
 - "Formal under-constraint check (Picus + cvc5): no under-constrained signals except harmless IsZero helper inverses, explained in the report" DONE.
 - "Static analysis (circomspect): 25 notes, 0 real issues" DONE.
@@ -758,7 +758,7 @@ A two-column certified panel (stacks on phones).
 - "Trusted setup: single-party development setup" SIGNET ONLY → "MPC ceremony" BEFORE MAINNET.
 - "Block headers from a public API" SIGNET ONLY.
 - "Note encryption isn't proven in the circuit; a bad sender can only hurt their own payment's recipient" BY DESIGN.
-- "External audit" BEFORE MAINNET.
+- "External audit" NOT YET.
 - Caption: "Internal review, not an independent audit yet." [Read the full report →]
 
 **10. "Built for launches. Designed for privacy."** (six tiles)
@@ -774,9 +774,9 @@ A two-column certified panel (stacks on phones).
 - **Does Bitcoin itself verify the proofs?** "No. Bitcoin stores and orders them. Verification is deterministic: any indexer or browser that applies the same rules to the same blocks gets the same result. This site lets you run those checks yourself."
 - **What is still visible?** "That a protocol transaction happened, when, its size, its fee and the address that paid the fee. For mints and launches, the token and amount are public too. For private transfers, the token, amount, sender and recipient are hidden."
 - **What can your server see?** "That you downloaded the public pool data, which every wallet downloads in full. Not your balance, and not which notes are yours. If you use the relayer, it also sees your IP address and the envelope it broadcasts."
-- **What is still trusted on signet?** "A single-party development setup for the proving keys, and block data from a public API instead of our own Bitcoin node. Both are replaced before mainnet."
+- **What is still trusted on signet?** "A single-party development setup for the proving keys, and block data from a public API (mempool.space) instead of a Bitcoin node run by us."
 - **What if I lose my phrase or password?** "Your 24 words are the only backup. The password only unlocks this browser; with the words you can restore anywhere. Nobody, including us, can recover your notes."
-- **When mainnet?** "After a multi-party setup ceremony, an external audit and our own Bitcoin node. Until then, test coins only."
+- **When mainnet?** "Mainnet is planned without an external audit, so read the security page first. Until it launches, test coins only."
 
 **12. Final band**
 - Serif: "Your bag. Your business."

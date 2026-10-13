@@ -2,12 +2,16 @@
 
 Status: **Murkle has not launched on Bitcoin mainnet.** No mainnet genesis is pinned
 (`src/pins.mainnet.json` has `genesisTxid: null`), the mainnet proving key does not exist until the operator
-makes it (`npm run key:mainnet`), and mining on mainnet is off until the owner names the platform address. Signet stays the
+makes it (`npm run key:mainnet`), and mining on mainnet starts only once a mining height is pinned (G5). Signet stays the
 default network and keeps running unchanged.
 
 This file is the exact order of the launch, with the command and the evidence for each step, what only the
 owner can provide, and the go/no-go list. Design and interfaces: `docs/design/mainnet-readiness.md`. Running
 the servers: `docs/OPERATIONS.md`.
+
+Owner decisions of 2026-10-13: the mainnet node runs on a small VPS with chain data from mempool.space (no own
+Bitcoin Core at launch), the platform fee is 500 sats per mining claim, and the launch goes ahead without an
+external audit.
 
 Contents: 1. How the network is selected · 2. What the owner must provide · 3. Launch sequence (G0 to G8) ·
 4. Go/no-go list · 5. After launch · 6. What stays open
@@ -33,15 +37,15 @@ Contents: 1. How the network is selected · 2. What the owner must provide · 3.
 
 | Item | Why | Where it goes |
 |---|---|---|
-| Platform address (P2TR recommended) and the platform fee amount per mining claim | The consensus service-fee rule of mining. The code holds the placeholder `TODO_PLATFORM_ADDRESS` and refuses to mine until it is replaced | `MINE_FEES.mainnet` in `src/params.mjs` (step G5) |
-| Servers | Indexer host: 4+ vCPU, 16 GB RAM, 1.5 TB+ SSD for an unpruned Bitcoin Core with `txindex=1`. | `docs/OPERATIONS.md` |
-| Domain and TLS | HTTPS for the site and the API | `deploy/caddy/Caddyfile` or `deploy/nginx/murkle.conf` |
-| Bitcoin Core 30 or later | Your own node removes the third-party data source (A-9); Core 30's default `datacarriersize` relays the 471-515 byte OP_RETURN carriers, older or filtering nodes do not | `deploy/bitcoin/bitcoin.conf.example`, `MURKLE_BTC_SOURCE=bitcoind` |
+| Platform address (P2TR recommended). Given by the owner on 2026-10-13: `bc1pa4dr4q6h8nq6ky8rgy52y8engygf8n0exag4vnk4l7stwm20q8vq5fxumn`. The fee is decided: 500 sats per mining claim (owner decision 2026-10-13) | The consensus service-fee rule of mining. Done: `MINE_FEES.mainnet` holds this address (script `5120ed5a3a83573cc1ab10e34128a21f33411093cdf93751564ed5ffa0b76d4f01d8`, `platformSats: 500n`). Mining still starts only when a mining height is pinned (step G5) | `MINE_FEES.mainnet` in `src/params.mjs` (check in step G5) |
+| Servers | Decided (owner, 2026-10-13): one small VPS, 2 vCPU, 4 GB RAM, 40 GB SSD, chain data from mempool.space (`MURKLE_BTC_SOURCE=esplora`, the default). No own Bitcoin Core at launch | `docs/OPERATIONS.md` |
+| Domain and TLS | HTTPS for the site and the API. The owner has rented a domain (the name is not known yet); it goes into `SITE_DOMAIN` (and `MURKLE_PUBLIC_URL`) at deploy time | `deploy/caddy/Caddyfile` or `deploy/nginx/murkle.conf` |
+| Bitcoin Core 30 or later (optional, not used at launch) | An own node would remove the third-party data source (A-9: mempool.space can hide or delay blocks) and the dependence on its availability and rate limits, and would put the OP_RETURN relay policy under your control (Core 30's default `datacarriersize` relays the 471-515 byte OP_RETURN carriers; older or filtering nodes do not). It needs a bigger host (4+ vCPU, 16 GB RAM, 1.5 TB+ SSD for an unpruned node with `txindex=1`). Switching later is one setting | `deploy/bitcoin/bitcoin.conf.example`, `MURKLE_BTC_SOURCE=bitcoind` |
 | Security contact and the public repository URL | Users must be able to report bugs privately and read the source | `SECURITY_CONTACT`, `REPO_URL` in `src/params.mjs` |
 | The offline backup key | The relayer holds users' prepaid deposits; its keys and books are backed up encrypted to this key | `deploy/bin/backup.mjs keygen` on an offline machine |
 | A clean machine for the mainnet key | The operator makes the key once with `npm run key:mainnet` | step G1 |
 | The mainnet genesis ATTEST, paid from the owner's own funds | It is the platform's transaction (a few thousand sats), never a user's | step G4 |
-| An external audit, or an explicit decision to launch without one | A go/no-go item; without an audit every surface keeps saying "no external audit yet" | `audit/`, the site copy |
+| An external audit, or an explicit decision to launch without one | Decided (owner, 2026-10-13): launch without an external audit. Every surface keeps saying "no external audit yet" | `audit/`, the site copy |
 
 ## 3. Launch sequence
 
@@ -50,15 +54,29 @@ Each step names its evidence. Do them in order; a step that fails stops the laun
 ### G0. Code freeze
 
 ```bash
-git tag -s vX.Y.Z            # the release that will run mainnet
-MURKLE_PRE_MINING_SRC=node_modules/.cache/murkle-pre-mining/src npm test
+git tag -s vX.Y.Z            # the release that will run mainnet; needs a GPG or SSH signing key and writes the tag to this repository
+npm test
 # Signet replay identity (mainnet-readiness.md §7): a copy of the live state, never the original
 cp data/signet/state.json /tmp/signet-state.json
 node scripts/replay-compare.mjs --network signet --snapshot /tmp/signet-state.json --out /tmp/replay-on --cache /tmp/replay-cache --headers on
 node scripts/replay-compare.mjs --network signet --snapshot /tmp/signet-state.json --out /tmp/replay-off --cache /tmp/replay-cache --headers off
 ```
 
-Evidence: `npm test` green; both replays print `identical through H`; the V2-02 count is zero.
+Preconditions:
+
+- Optional: `node_modules/.cache/murkle-pre-mining/src`, a hand-made copy of the `src/` that predates mining
+  (`docs/design/mining-contract.md` section 7.2). The copy that was kept there was lost on 2026-10-13 and
+  cannot be re-created (this repository's history starts after mining landed). Without it the pre-mining
+  comparison tests in `test/mine-e2e.test.mjs` and `test/mine-indexer.test.mjs` skip, and `npm test` can
+  still print green. The identity evidence for G0 is the signet replay below (headers on and off, "identical
+  through H"); the 2026-10-13 rehearsal passed it: identical through 325958, 1367 blocks, strictFailures 0.
+- The replays need the signet artifacts in `build/dev/` (`npm run artifacts:fetch`; without them they stop at
+  once with "build/dev/verification_key.json is missing"), a copy of the live `data/signet/state.json`, network
+  access to the signet source, and `MURKLE_NETWORK` unset or `signet`. A replay takes a few minutes (about
+  4 minutes with headers on and a cold cache).
+
+Evidence: `npm test` green (the pre-mining comparison tests may skip, see above); both replays print
+`identical through H`; the V2-02 count is zero.
 
 ### G1. Mainnet key
 
@@ -96,29 +114,46 @@ MURKLE_NETWORK=mainnet npm run release:assets -- --out /tmp/murkle-mainnet-asset
 ```
 
 Publish the key files (`transaction.zkey`, `verification_key.json`, `manifest.json`) in a release under the
-release tag of the mainnet manifest. The genesis ATTEST (G4) pins that manifest. Evidence: the artifact check
+release tag of the mainnet manifest. The genesis ATTEST (G4) pins that manifest. The release notes that
+`release:assets` writes now say "(not pinned)" for the genesis txid and the activation height: re-run it after G4 and
+update the release body. Evidence: the artifact check
 and `key:verify` pass against the pins; `src/pins.json` is byte-identical to the previous release.
 
 ### G3. Header checkpoint
 
+With no own node at launch, cross-check two independent Esplora APIs. `scripts/checkpoint.mjs` has no
+URL flag: it opens the chain source from the environment, so `--source esplora` selects the Esplora source
+and `MURKLE_ESPLORA` sets the API root (default: `https://mempool.space/api` on mainnet). It prints the
+checkpoint on stdout and `source: <API root>` on stderr.
+
 ```bash
-MURKLE_NETWORK=mainnet node scripts/checkpoint.mjs --network mainnet --height <recent multiple of 2016> --source bitcoind
-MURKLE_NETWORK=mainnet node scripts/checkpoint.mjs --network mainnet --height <same height> --source esplora
+export MURKLE_NETWORK=mainnet
+MURKLE_ESPLORA=https://mempool.space/api    node scripts/checkpoint.mjs --network mainnet --height <recent multiple of 2016> --source esplora > /tmp/cp-mempool.json
+MURKLE_ESPLORA=https://blockstream.info/api node scripts/checkpoint.mjs --network mainnet --height <same height> --source esplora > /tmp/cp-blockstream.json
+diff /tmp/cp-mempool.json /tmp/cp-blockstream.json && echo identical
 ```
 
-Both outputs must be identical; commit the entry to `src/btc/checkpoints.json`. Evidence: the two outputs,
-and the block hash compared by hand with a second explorer.
+Both outputs must be identical; commit the entry to `src/btc/checkpoints.json`. Each run checks linkage,
+proof of work, the difficulty bits and the median time past over the headers it reads, so a wrong hash would
+have to be served consistently by both operators. Evidence: the two outputs, the two `source:` lines, and the
+block hash compared by hand with a third explorer. If an own node exists later, run it a third time with
+`--source bitcoind` (and `MURKLE_BITCOIND_URL` / `MURKLE_BITCOIND_COOKIE`).
 
 ### G4. Genesis
 
 From the owner's own wallet, on a machine you trust (the CLI wallet file holds plaintext keys):
 
 ```bash
-export MURKLE_NETWORK=mainnet MURKLE_DATA_DIR=/secure/murkle-owner MURKLE_BTC_SOURCE=bitcoind
-node bin/murkle.mjs new owner                  # prints murk1… and the bc1p… fee address; fund the fee address
+export MURKLE_NETWORK=mainnet MURKLE_DATA_DIR=/secure/murkle-owner MURKLE_BTC_SOURCE=esplora   # the default; bitcoind only with an own node
+node bin/murkle.mjs new owner                  # prints murk1… and the bc1p… fee address
+# fund the bc1p… fee address now: about 1,500 sats or more (a measured dry run was 160 vB and 644 sats; the fee rate varies)
 node bin/murkle.mjs attest genesis owner --dry-run
 node bin/murkle.mjs attest genesis owner       # ATTEST kind 1 over manifestSha256
 ```
+
+Without the funding the dry run stops with "not enough BTC … have 0 sats". Once the address is funded, the
+dry run prints the full signed transaction in hex, and that hex can be broadcast by anyone who has it: do not
+share or paste it anywhere.
 
 After **6 confirmations**, pin it by hand in `src/pins.mainnet.json`:
 
@@ -129,42 +164,51 @@ After **6 confirmations**, pin it by hand in `src/pins.mainnet.json`:
 
 and add the genesis block as a second base checkpoint (`scripts/checkpoint.mjs --network mainnet --height
 <activationHeight> --label "Murkle mainnet genesis (ATTEST <txid prefix>…)"`) to `src/btc/checkpoints.json`.
-Evidence: the transaction at its height on two explorers; the server starts without
+Evidence: the transaction at its height on two explorers (the Esplora source reads the chain from mempool.space, so
+use a second, independent explorer such as blockstream.info); the server starts without
 `MURKLE_ALLOW_PRE_GENESIS`; `GET /api/state` shows `genesis` and no `warning`.
 
 ### G5. Mining (optional at launch)
 
 ```bash
-MURKLE_NETWORK=mainnet node bin/murkle.mjs address-script <platform bc1p… address>   # murkle address-script: prints the scriptPubKey hex
+MURKLE_NETWORK=mainnet node bin/murkle.mjs address-script bc1pa4dr4q6h8nq6ky8rgy52y8engygf8n0exag4vnk4l7stwm20q8vq5fxumn   # murkle address-script: prints the scriptPubKey hex
 ```
 
-Replace the placeholder in `src/params.mjs`:
+The platform address was given by the owner on 2026-10-13 and is already set in `src/params.mjs`
+(`bc1pa4dr4q6h8nq6ky8rgy52y8engygf8n0exag4vnk4l7stwm20q8vq5fxumn`). Check that the output above is
+`5120ed5a3a83573cc1ab10e34128a21f33411093cdf93751564ed5ffa0b76d4f01d8` for that address and that
+`MINE_FEES.mainnet` holds the same script, with nothing to edit:
 
 ```js
-mainnet: feeRule({ hrp: "bc", platformScript: "<hex from address-script>", platformSats: <owner's amount>n,
+mainnet: feeRule({ hrp: "bc", platformScript: "5120ed5a3a83573cc1ab10e34128a21f33411093cdf93751564ed5ffa0b76d4f01d8", platformSats: 500n,
   deployerMinSats: 0n, deployerMaxSats: 0n }),
 ```
 
-then pin a mining height above the genesis height in `src/pins.mainnet.json` (`activations[0].height`), in a
-release, at a future height. Without this step mining stays off: the server and the CLI say "mining is not
-configured on mainnet", the web app's mining pages say "Mining is not configured on mainnet yet.", and an
-indexer with a mining height and the placeholder refuses to start. Evidence: `npm test` with the new rule;
-`mineFeeReady()` returns null on mainnet.
+The platform fee is 500 sats per claim (owner decision 2026-10-13). Then pin a mining height above the genesis height in `src/pins.mainnet.json` (`activations[0].height`), in a
+release, at a future height. Without a pinned mining height mining stays off. A rule that is a placeholder (no script) is still refused: the
+server and the CLI say "mining is not configured on mainnet", and an indexer with a mining height and such a
+rule refuses to start. Evidence: `npm test`; `mineFeeReady()` returns null with `MURKLE_NETWORK=mainnet` exported (without it the function checks signet and
+returns null whatever the mainnet rule says).
 
 ### G6. Build and deploy
 
 ```bash
-MURKLE_NETWORK=mainnet node scripts/facts.mjs --out /tmp/facts.json      # review, then regenerate in place
-MURKLE_NETWORK=mainnet npm run web:build
+MURKLE_NETWORK=mainnet node scripts/facts.mjs --out /tmp/facts.json      # review the numbers first
+MURKLE_NETWORK=mainnet node scripts/facts.mjs                            # regenerate in place: writes the tracked web/src/facts.mainnet.json
+MURKLE_NETWORK=mainnet npm run web:build                                 # runs facts.mjs again, then vite build and the notices copy
 cat web/dist/murkle-build.json        # { "network": "mainnet", "manifestSha256": "...", "genesisTxid": "..." }
 ```
 
-Install with `deploy/` (systemd units, `deploy/env/murkle.mainnet.env.example`, the reverse proxy with HTTPS,
-`MURKLE_CSP_ENFORCE=1`), start the monitor and the backups, and run the restore drill
+Commit `web/src/facts.mainnet.json` in the release. A mainnet build without `web/dist/murkle-build.json` is
+served as a signet build and the indexer answers 503 for it.
+
+Install with `deploy/` on the small VPS (systemd units, `deploy/env/murkle.mainnet.env.example` with the Esplora
+source, the reverse proxy with HTTPS for the rented domain, `MURKLE_CSP_ENFORCE=1`; no `bitcoind` service), start the monitor and the backups, and run the restore drill
 (`docs/OPERATIONS.md`). The relayer is optional; if it runs, review its settings against current fee levels
 (mainnet defaults: fee cap 50 sat/vB, 45,000 sats per transaction, minimum deposit 70,000 sats (its sweep plus two sends at the cap), margin floor
-300 sats). Evidence: `GET /api/health?strict=1` answers 200; the monitor prints `ok`; a restored backup passes
-`deploy/bin/check-books.mjs`.
+300 sats). Evidence: `GET /api/health?strict=1` answers 200 with `chainTip` not null and `preGenesis` false (a node
+before genesis answers 200 too); the monitor prints `ok`;
+a restored backup passes `deploy/bin/check-books.mjs`.
 
 ### G7. Smoke
 
@@ -173,7 +217,8 @@ Install with `deploy/` (systemd units, `deploy/env/murkle.mainnet.env.example`, 
 - One owner-paid private transfer lands and verifies in another browser.
 - If the relayer runs: a small relay deposit is credited and one relayed send lands.
 - One real mainnet carrier of each envelope size (471, 503/507, and 511/515 when mining is on) confirms, so
-  the OP_RETURN relay policy of today's nodes is known.
+  the OP_RETURN relay policy of today's nodes is known (with the Esplora source the transactions are
+  broadcast through mempool.space's nodes, so this is also the check of their policy).
 - Stopping the indexer makes the monitor alert.
 
 ### G8. Announce
@@ -189,7 +234,8 @@ Every line must be "go" before G8:
 - [ ] Mainnet key made once on a clean machine (G1) and checked with `npm run key:verify` by at least one
       person outside the project.
 - [ ] `src/pins.mainnet.json` complete (artifacts, manifest, genesis) and the served artifacts match it (G2, G4).
-- [ ] Header verification on, against the owner's own Bitcoin Core (G3, G6).
+- [ ] Header verification on, from the pinned checkpoint with the Esplora source; the checkpoint cross-checked
+      against two independent Esplora APIs (G3, G6). An own Bitcoin Core is optional and not part of the launch.
 - [ ] One real mainnet carrier of each size confirmed before the announcement (G7).
 - [ ] I-PAY review of the relayer settings at current fee levels: the operator never pays a user's fee, and
       there is no free mode.
@@ -198,7 +244,8 @@ Every line must be "go" before G8:
 - [ ] CSP enforced (`MURKLE_CSP_ENFORCE=1`).
 - [ ] Security contact and repository published (`SECURITY_CONTACT`, `REPO_URL`).
 - [ ] Copy review: nothing says mainnet runs before G4, no banned words (docs/CLAIMS.md).
-- [ ] External audit done, or the explicit "no external audit yet" disclosure on every surface.
+- [ ] Launch without an external audit (owner decision 2026-10-13): the "no external audit yet" disclosure is on
+      every surface.
 - [ ] Signet stays up and unchanged.
 
 ## 5. After launch
@@ -217,5 +264,9 @@ Every line must be "go" before G8:
 - A-8: accepted risk, owner decision 2026-10-11 (single-party mainnet key). Signet keeps its DEV setup by
   design (its genesis pins it).
 - A-9: a single data source can still withhold blocks or a better chain; the signet block signature (BIP325)
-  is not checked.
-- No external audit yet.
+  is not checked. At launch the mainnet indexer reads from one third party, mempool.space (owner decision
+  2026-10-13); headers are verified from the pinned checkpoint, so a forged chain is expensive, but hidden or
+  delayed blocks are not detected, and an outage of mempool.space stops the sync (the API keeps serving the last state). The
+  upgrade is an own Bitcoin Core node and `MURKLE_BTC_SOURCE=bitcoind` (docs/OPERATIONS.md 3.4); a browser
+  still reads from mempool.space either way.
+- No external audit yet (owner decision 2026-10-13: the launch goes ahead without one).

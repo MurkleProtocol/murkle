@@ -4,6 +4,8 @@ Status: **contract for four parallel build tracks** (headers, network, ceremony,
 
 > Note 2026-10-11: the owner dropped the trusted-setup ceremony described here in favour of a single-party mainnet key made by the Murkle operator (`npm run key:mainnet`, `docs/MAINNET.md`). The ceremony code and docs were removed; git history keeps them. Read the ceremony parts as the original plan.
 
+> Note 2026-10-13: the owner gave the mainnet platform address for the mining service fee (`bc1pa4dr4q6h8nq6ky8rgy52y8engygf8n0exag4vnk4l7stwm20q8vq5fxumn`, script `5120ed5a3a83573cc1ab10e34128a21f33411093cdf93751564ed5ffa0b76d4f01d8`, 500 sats per claim). `MINE_FEES.mainnet` is now a complete `feeRule`, so `mineFeeReady()` returns `null` on mainnet; the placeholder shape and its refusals (D12, section 4) remain in the code for a rule without a script and are covered by tests that inject one. Mining still needs a pinned mining height (G5). The pre-mining `src/` copy named in section 7 was lost on 2026-10-13; its comparison tests skip without it and the signet replay is the identity evidence (`docs/MAINNET.md` G0).
+
 Precedence: `SPEC.md` (consensus) first, then this contract for the interfaces it defines, then the other design notes. Where this file and the code disagree after the build, the code and its tests win and this file gets an "as built" note.
 
 Contents
@@ -364,8 +366,10 @@ Changed values (mainnet only): `ADDRESS_HRP = NET.addressHrp`, `EXPLORER = NET.e
 
 ```js
 mainnet: Object.freeze({ placeholder: true, platformAddress: "TODO_PLATFORM_ADDRESS", platformScript: null,
-  platformSats: 1000n /* proposed; owner confirms */, deployerMinSats: 0n, deployerMaxSats: 0n }),
+  platformSats: 500n /* owner decision 2026-10-13 */, deployerMinSats: 0n, deployerMaxSats: 0n }),
 ```
+
+Note 2026-10-13: this section proposed `platformSats: 1000n`; the owner decided on 500 sats per mining claim on mainnet (the same as signet). The address stays the placeholder until the owner names it.
 
 `feeRule` is not applied to a placeholder. `mineFeeReady()` returns `"mining is not configured on mainnet: the platform address is TODO_PLATFORM_ADDRESS"` for it, `null` for a complete rule. The Indexer constructor already calls `assertMineFee` when a mining activation is pinned, so a mainnet build with a mining height and the placeholder cannot start; the server and CLI check `mineFeeReady()` first to print the clear reason.
 
@@ -496,6 +500,8 @@ Defaults become per network; every `MURKLE_*` override still applies; I-PAY, boo
 **What the owner must provide**: platform address (P2TR recommended) and the platform fee amount; servers (indexer host: 4+ vCPU, 16 GB RAM, 1.5 TB+ SSD for an unpruned Bitcoin Core with `txindex=1`; ceremony coordinator: small host, 50 GB disk); domain and TLS; Bitcoin Core 30 or later (its default `datacarriersize` relays 471-515 byte OP_RETURN carriers; older or filtering nodes do not); a security contact and the public repository URL (`SECURITY_CONTACT`, `REPO_URL`); the offline backup key; ceremony participants and the announcement; an external audit (go/no-go item, or the copy keeps saying there is none).
 
 **Go/no-go list**: ceremony done with at least one contributor outside the project and an independently verified transcript; `src/pins.mainnet.json` complete and the served artifacts match it; header verification on with the owner's own node; one real mainnet carrier of each size confirmed (OP_RETURN relay policy) before announcement; I-PAY review of relayer settings at current fee levels; backups encrypted, off-site, restore drill passed; monitor alerts tested; CSP enforced; security contact and repository published; copy review (no live claims before G4, no banned words); external audit or an explicit "no external audit" disclosure; signet stays up and unchanged.
+
+Note 2026-10-13 (owner decisions): the servers line above is superseded. The mainnet indexer runs on a small VPS (2 vCPU, 4 GB RAM, 40 GB SSD) with chain data from mempool.space (`MURKLE_BTC_SOURCE=esplora`); an own Bitcoin Core (`MURKLE_BTC_SOURCE=bitcoind`) is an optional later upgrade, and the header checkpoint is cross-checked against two independent Esplora APIs. The launch goes ahead without an external audit (the copy keeps saying there is none). The ceremony is gone (single-party key, decision 2026-10-11). Current text: `docs/MAINNET.md`.
 
 ---
 

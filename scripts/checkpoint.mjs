@@ -8,7 +8,8 @@
 // It reads headers from H - (H % 2016) (the period start, whose time the next retarget needs)
 // and the 10 headers below H (the median time past of H + 1). Prefer a retarget boundary
 // (H % 2016 === 0): then only 11 headers are read. Cross-check the printed hash against a
-// second source (your own node and mempool.space) before committing it (docs/MAINNET.md G3).
+// second source before committing it (docs/MAINNET.md G3): with no own node, run it twice with
+// --source esplora and MURKLE_ESPLORA set to two independent Esplora APIs (mempool.space, blockstream.info).
 import { RULES, checkPow, decodeHeader, fetchHeaders, medianTimePast } from "../src/btc/headers.mjs";
 import { openChainSource } from "../src/btc/source.mjs";
 import * as P from "../src/params.mjs";

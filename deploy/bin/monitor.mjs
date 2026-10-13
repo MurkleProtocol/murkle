@@ -57,12 +57,12 @@ export function evaluateIndexer({ health = null, state = null, relayInfo = null,
       syncAgeSecs: age, source: health.source ?? null, headersTip: num(health.headers?.tipHeight), preGenesis: health.preGenesis ?? null,
     };
     if (lag !== null && lag > maxLag) alerts.push(alert("warning", "lag", `the indexer is ${lag} blocks behind the chain tip (limit ${maxLag})`));
-    if (age === null) alerts.push(alert("warning", "never_synced", "the indexer has not finished a sync since it started"));
+    if (age === null || summary.chainTip === null) alerts.push(alert("warning", "never_synced", "the indexer has not finished a sync since it started"));
     else if (age > MAX_SYNC_AGE_SECS) alerts.push(alert("critical", "stale", `no sync for ${Math.floor(age / 60)} minutes`));
     const hErr = health.headers?.lastError ?? null;
     if (hErr) {
       const code = String(hErr.code ?? "");
-      if (code === "less-work") alerts.push(alert("critical", "less_work", `the data source served a chain with less work${hErr.height != null ? ` at ${hErr.height}` : ""}; the indexer kept its chain (switch to your own node)`));
+      if (code === "less-work") alerts.push(alert("critical", "less_work", `the data source served a chain with less work${hErr.height != null ? ` at ${hErr.height}` : ""}; the indexer kept its chain (use a second data source or your own node)`));
       else alerts.push(alert(RETRYABLE_HEADER.has(code) ? "warning" : "critical", "header_error", `header check failed (${code || "error"}${hErr.height != null ? ` at ${hErr.height}` : ""}): ${hErr.message ?? ""}`.trim()));
     }
     // The sync error usually repeats the header error when there is one: report it once.

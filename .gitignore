@@ -3,6 +3,8 @@ build/
 data/
 *.tmp
 web/dist/
+# A stray repo-root dist/ (an old marker landed there before the Vite marker used the Vite root)
+/dist/
 
 # Private notes that stay out of the public repository
 docs/internal/
