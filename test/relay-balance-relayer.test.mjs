@@ -499,7 +499,7 @@ test("account read: signed, zeros for a new account (not 404), the deposit addre
   const signed = JSON.parse(signedAccount(a, w.r.info()));
   assert.equal(code(await w.r.account(JSON.stringify({ ...signed, sig: "00".repeat(64) }), anyIp())), "bad_signature");
   assert.equal(code(await w.r.account(JSON.stringify({ ...signed, extra: 1 }), anyIp())), "malformed");
-  assert.equal(code(await w.r.account(signedAccount(a, w.r.info(), { now: () => Date.now() - 601_000 }), anyIp())), "stale_request");
+  assert.equal(code(await w.r.account(signedAccount(a, w.r.info(), { now: () => Date.now() - 610_000 }), anyIp())), "stale_request");
   const asSubmit = signRequest({ account: a, endpoint: "/api/relay/submit", network: "signet", poolKey: info.balance.poolKey });
   assert.equal(code(await w.r.account(JSON.stringify(asSubmit), anyIp())), "bad_signature", "a signature for another endpoint");
   const otherNet = signRequest({ account: a, endpoint: "/api/relay/account", network: "testnet", poolKey: info.balance.poolKey });
@@ -660,9 +660,11 @@ test("6 balance_low (402) comes before any proof check; bad_signature, stale_req
   await expect({ ...good, envelope: hex(synth(w.idx)) }, 401, "bad_signature"); // signed for another envelope
   await expect({ ...good, accountPub: broke.pubHex }, 401, "bad_signature");
   await expect({ ...good, t: good.t + 1 }, 401, "bad_signature");
-  const stale = await expect(signedSubmit(some, info, env, "block", { now: () => Date.now() - 601_000 }), 401, "stale_request");
+  // 10 s past the 600 s skew, not 1 s: signing and checking read the real clock at different moments, and
+  // whole seconds can round 601 down to 600.
+  const stale = await expect(signedSubmit(some, info, env, "block", { now: () => Date.now() - 610_000 }), 401, "stale_request");
   assert.ok(Math.abs(stale.body.error.serverTime - Date.now() / 1000) < 5);
-  await expect(signedSubmit(some, info, env, "block", { now: () => Date.now() + 601_000 }), 401, "stale_request");
+  await expect(signedSubmit(some, info, env, "block", { now: () => Date.now() + 610_000 }), 401, "stale_request");
   const otherNet = signRequest({ account: some, endpoint: "/api/relay/submit", network: "testnet", poolKey: info.balance.poolKey, fields: { envelope: hex(env), mode: "block" } });
   await expect(otherNet, 401, "bad_signature");
   // Shapes: no mode, a retired mode, an extra key, a PoW field, uppercase hex.
