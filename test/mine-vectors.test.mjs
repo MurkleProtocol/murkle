@@ -4,6 +4,7 @@
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { argon2id as nobleArgon2id } from "@noble/hashes/argon2";
 import { sha256 } from "@noble/hashes/sha256";
@@ -423,6 +424,54 @@ test("difficultyAt: initial up to mineStart; 0, 1 and n quiet blocks lazy = eage
   assert.equal(M.effectiveDifficulty(c, 1160, 1161), 8000n);
   assert.equal(M.effectiveDifficulty(c, 1150, 1155), M.difficultyAt(c, 1150), "no jump: D(ref) decides");
   assert.equal(P.STALE_FACTOR, 4);
+});
+
+test("the stale factor is a per-network consensus parameter: signet 4, mainnet off (D_eff = D(ref))", () => {
+  assert.equal(P.NETWORKS.signet.staleFactor, 4);
+  assert.equal(P.NETWORKS.mainnet.staleFactor, null);
+  assert.equal(P.STALE_FACTOR, P.NETWORKS[P.NETWORK].staleFactor);
+  const c = assetOf({ dPts: [[1144, 1000n], [1160, 8000n]] }); // D rose 8x after the reference block 1150
+  assert.equal(M.effectiveDifficulty(c, 1150, 1161, 4), 2000n, "signet: max(D(ref), D(H - 1) / 4)");
+  assert.equal(M.effectiveDifficulty(c, 1150, 1161), M.effectiveDifficulty(c, 1150, 1161, P.STALE_FACTOR), "the default is this network's");
+  for (const off of [null, 0]) assert.equal(M.effectiveDifficulty(c, 1150, 1161, off), M.difficultyAt(c, 1150), "mainnet: D(ref) however far D rose");
+  assert.equal(M.effectiveDifficulty(c, 1160, 1161, null), 8000n);
+  assert.deepEqual([M.staleFloorOf(8000n, 4), M.staleFloorOf(8000n, null), M.staleFloorOf(8000n, 0), M.staleFloorOf(10n, 4)], [2000n, null, null, 2n]);
+  // A real mainnet process (MURKLE_NETWORK is read at import).
+  const probe = `
+    const P = await import("./src/params.mjs"); const M = await import("./src/mine.mjs");
+    const a = { dPts: [[1144, 1000n], [1160, 8000n]], span: 24, targetPerSpan: 24, minDifficulty: 256n, initialDifficulty: 1000n, startHeight: 0, deployHeight: 1144, mineStart: 1144 };
+    console.log(JSON.stringify({ net: P.NETWORK, factor: P.STALE_FACTOR, eff: String(M.effectiveDifficulty(a, 1150, 1161)), floor: M.staleFloorOf(8000n)?.toString() ?? null }));`;
+  const probeIn = (network) => JSON.parse(execFileSync(process.execPath, ["--input-type=module", "-e", probe], { cwd: new URL("..", import.meta.url), env: { ...process.env, MURKLE_NETWORK: network }, encoding: "utf8" }));
+  const main = probeIn("mainnet");
+  assert.deepEqual([main.net, main.factor, main.floor], ["mainnet", null, null]);
+  assert.equal(main.eff, String(M.difficultyAt(c, 1150)));
+  assert.deepEqual(probeIn("signet"), { net: "signet", factor: 4, eff: "2000", floor: "2000" });
+});
+
+test("capRisk: warn when at most 10 claims are left, or at most 3 times the average claims per block over the last 144 blocks", () => {
+  const base = { reward: 1000n, tip: 5000, mineStart: 100 };
+  const left = (n, extra = {}) => M.capRisk({ ...base, remaining: BigInt(n) * 1000n, ...extra });
+  assert.deepEqual([M.CAP_WARN_SPAN, M.CAP_WARN_FACTOR, M.CAP_WARN_ALWAYS], [144, 3, 10]);
+  assert.deepEqual(left(10), { left: 10, perBlock: 0 }, "always at 10 or fewer");
+  assert.deepEqual(left(0), { left: 0, perBlock: 0 });
+  assert.equal(left(11), null, "11 left and no traffic");
+  assert.equal(M.capRisk({ ...base, remaining: 10_999n }).left, 10, "a part of a reward does not count");
+  assert.equal(M.capRisk({ ...base, remaining: -5n }).left, 0);
+  assert.equal(M.capRisk({ ...base, remaining: 5n, reward: 0n }), null);
+  // The average is claims / 144 over (tip - 144, tip]: 14,400 claims = 100 per block.
+  const claims = [[4900, 7200], [4999, 7200], [4856, 99_999], [5001, 50]]; // 4856 and 5001 are outside (4856, 5000]
+  assert.deepEqual(left(300, { claims }), { left: 300, perBlock: 100 }, "300 <= 3 x 100");
+  assert.equal(left(301, { claims }), null);
+  // Mining began 4 blocks ago: the average is over those blocks.
+  assert.deepEqual(left(15, { mineStart: 4997, claims: [[4999, 20]] }), { left: 15, perBlock: 5 }, "20 claims in 4 blocks = 5 per block; 15 <= 3 x 5");
+  assert.equal(left(16, { mineStart: 4997, claims: [[4999, 20]] }), null);
+});
+
+test("capWarningText: the claims left, the traffic when there is some, and what is lost", () => {
+  const tail = "Claims beyond the cap in the same block are not credited, and their Bitcoin fee and service fee are lost.";
+  assert.equal(M.capWarningText({ left: 1, perBlock: 0 }, "MURK"), `Only 1 MURK claim is left under the supply cap. ${tail}`);
+  assert.equal(M.capWarningText({ left: 7, perBlock: 0.01 }, "MURK"), `Only 7 MURK claims are left under the supply cap. ${tail}`);
+  assert.equal(M.capWarningText({ left: 250, perBlock: 99.96 }, "MURK"), `Only 250 MURK claims are left under the supply cap, and recent blocks carried about 100 claims each. ${tail}`);
 });
 
 test("rewardAt halves every interval from mineStart and reaches 0 at a shift of 63; nextHalving; mineStatus", () => {

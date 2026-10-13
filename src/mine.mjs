@@ -383,9 +383,23 @@ function decayFrom(point, h, asset) {
   return d;
 }
 
-/** D_eff = max(D(refHeight), floor(D(height - 1) / STALE_FACTOR)), height = the inclusion height. */
-export function effectiveDifficulty(asset, refHeight, height) {
-  return maxB(difficultyAt(asset, refHeight), difficultyAt(asset, height - 1) / BigInt(STALE_FACTOR));
+/** The stale factor is on when it is a positive number; null or 0 means off (mainnet). */
+export const staleFactorOn = (staleFactor) => staleFactor != null && Number(staleFactor) > 0;
+
+/** floor(d / staleFactor), the lowest difficulty older work must still meet; null when the factor is off. */
+export function staleFloorOf(d, staleFactor = STALE_FACTOR) {
+  return staleFactorOn(staleFactor) ? big(d) / BigInt(staleFactor) : null;
+}
+
+/**
+ * D_eff, height = the inclusion height. With a stale factor (signet 4): max(D(refHeight),
+ * floor(D(height - 1) / staleFactor)). Without one (mainnet, null): D(refHeight). The factor is a
+ * per-network consensus parameter (params.mjs); the argument exists for tests and for an Indexer
+ * built for another network.
+ */
+export function effectiveDifficulty(asset, refHeight, height, staleFactor = STALE_FACTOR) {
+  const dRef = difficultyAt(asset, refHeight);
+  return staleFactorOn(staleFactor) ? maxB(dRef, difficultyAt(asset, height - 1) / BigInt(staleFactor)) : dRef;
 }
 
 /** "mining-soon" | "mining-ended" | "mined-out" | "mining" at tip (not consensus; the API and pages). */
@@ -394,6 +408,44 @@ export function mineStatus(asset, tip) {
   if ((asset.endHeight !== 0 && tip > asset.endHeight) || rewardAt(asset, tip) === 0n) return "mining-ended";
   if (big(asset.issued ?? 0n) + rewardAt(asset, tip) > big(asset.maxSupply)) return "mined-out";
   return "mining";
+}
+
+// ---------------------------------------------------------------- supply-cap warning (not consensus)
+
+// The supply cap is exact: claims beyond maxSupply in the final block are rejected ("supply cap
+// reached") and their fees are spent. The wallet and the CLI warn before paying when that can happen.
+export const CAP_WARN_SPAN = 144; // blocks of recent claims averaged
+export const CAP_WARN_FACTOR = 3; // warn when the claims left are at most this many times the average per block
+export const CAP_WARN_ALWAYS = 10; // and always when this few claims (or fewer) are left
+
+/**
+ * Whether a claim should carry a supply-cap warning, or null. remaining = maxSupply - issued less the
+ * rewards of claims already on their way (base units), reward = a claim's reward, claims = [[height, n]]
+ * (the asset's claimsByHeight or the API's series), tip = the tip height, mineStart = first mining block.
+ * left = claims that still fit; perBlock = their average per block over the last CAP_WARN_SPAN blocks
+ * (or since mineStart). Warns when left <= CAP_WARN_ALWAYS or left <= CAP_WARN_FACTOR x perBlock.
+ * -> { left, perBlock } | null
+ */
+export function capRisk({ remaining, reward, claims = [], tip, mineStart = 0 }) {
+  const r = big(reward);
+  if (r <= 0n) return null;
+  const rest = big(remaining);
+  const left = Number((rest < 0n ? 0n : rest) / r);
+  const from = Math.max(mineStart, tip - CAP_WARN_SPAN + 1);
+  const blocks = Math.max(1, tip - from + 1);
+  const total = claims.filter(([h]) => Number(h) >= from && Number(h) <= tip).reduce((s, [, n]) => s + Number(n), 0);
+  const perBlock = total / blocks;
+  return left <= CAP_WARN_ALWAYS || left <= CAP_WARN_FACTOR * perBlock ? { left, perBlock } : null;
+}
+
+/** The warning shown before the miner pays (the CLI and the wallet share this wording). */
+export function capWarningText({ left, perBlock }, ticker) {
+  const avg = Number(perBlock.toFixed(1));
+  const seen = avg > 0 ? `, and recent blocks carried about ${avg} claims each` : "";
+  return (
+    `Only ${left} ${ticker} claim${left === 1 ? " is" : "s are"} left under the supply cap${seen}. ` +
+    "Claims beyond the cap in the same block are not credited, and their Bitcoin fee and service fee are lost."
+  );
 }
 
 // ---------------------------------------------------------------- service fee (mining.md §7)

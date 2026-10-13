@@ -13,7 +13,9 @@ import { ATTEST_KIND, OP, OP_NAME, decodeEnvelope, findEnvelope, headerOp, isMin
 import { decodeProof, PROOF_LEN } from "./proof-codec.mjs";
 import { toField } from "./core.mjs";
 import { bigToBytes, concat, equal, hex, readU32le, unhex } from "./bytes.mjs";
-import { ACTIVATIONS, ARTIFACT_SHA256, D_MAX, GENESIS_TXID, MANIFEST_SHA256, MINE_FEE, MINE_WINDOW, NETWORK, activationHeight } from "./params.mjs";
+import {
+  ACTIVATIONS, ARTIFACT_SHA256, D_MAX, GENESIS_TXID, MANIFEST_SHA256, MINE_FEE, MINE_WINDOW, NETWORK, RESERVED_TICKERS, activationHeight, reservedTickerReason,
+} from "./params.mjs";
 import * as mining from "./mine.mjs";
 import { CHECKPOINTS, RULES, checkPow, decodeHeader, maxPlausibleHeight, maxTargetAt, minRetargetTarget, nearestCheckpoint, targetFromBits, workOfTarget } from "./btc/headers.mjs";
 
@@ -411,6 +413,8 @@ const CHECKED_REASONS = [
   /^mining not started/,
   /^mining closed/,
   /^mining ended/,
+  // Reserved tickers (SPEC.md §7): a pinned rule of this network, checked here from the pins.
+  /^ticker reserved/,
 ];
 
 // Per operation, the rules that depend on pool history (an accepted verdict on them is the
@@ -525,6 +529,8 @@ const notFound = (e) => /: 404\b/.test(String(e?.message ?? ""));
  *   mineDifficulty(assetId, ref, height, { txid }) -> { dEff, source: "YOU"|"IDX", detail? } | null
  *                         the D_eff a claim had to meet: the user's own replay first, else the
  *                         indexer's log entry (IDX). Default: the indexer's log entry
+ *   reservedTickers       default RESERVED_TICKERS (this network's pins file): a DEPLOY / DEPLOY_POW of a reserved
+ *                         ticker passes only as its pinned carrier transaction
  *   activations           default ACTIVATIONS (src/pins.json): below the "mining" height, ops 7 - 9
  *                         are unknown ops, as every replayer treats them
  *   mineFee               default MINE_FEE (src/params.mjs), the service-fee constants
@@ -672,9 +678,15 @@ export async function verifyTx(txid, ctx = {}) {
     }
   }
   if (env && env.op === OP.DEPLOY) {
-    await run.step("deploy", "Terms valid", "YOU", () => ({ detail: deploySummary(env) }));
+    await run.step("deploy", "Terms valid", "YOU", () => {
+      checkReserved(env);
+      return { detail: deploySummary(env) };
+    });
   } else if (env && env.op === OP_DEPLOY_POW) {
-    await run.step("deploy", "Terms valid", "YOU", () => checkDeployPow(env));
+    await run.step("deploy", "Terms valid", "YOU", () => {
+      checkReserved(env);
+      return checkDeployPow(env);
+    });
   } else if (env && env.op === OP.ATTEST) {
     out.attest = (await run.step("attest", "Attested hash matches the pinned manifest", "YOU", () => checkAttest(env, want, ctx))) ?? null;
   } else if (env && (env.op === OP.TRANSACT || isMint(env.op) || isMineOp(env.op))) {
@@ -902,6 +914,12 @@ export async function verifyTx(txid, ctx = {}) {
     const h = typeof script === "string" ? script : hex(script);
     if (fee && h === String(fee.platformScript).toLowerCase()) return `the platform address${fee.platformAddress ? " " + short(fee.platformAddress, 8, 6) : ""}`;
     return `the deployer's treasury (script ${short(h, 8, 6)})`;
+  }
+
+  /** A reserved ticker (SPEC.md §7, per network) is valid only in its pinned carrier transaction. */
+  function checkReserved(d) {
+    const why = reservedTickerReason(d.ticker, want, ctx.reservedTickers !== undefined ? ctx.reservedTickers : RESERVED_TICKERS);
+    if (why) violation(`${why.replace(/^ticker reserved: /, "The ticker is reserved: ")}. Every replayer rejects this deploy.`);
   }
 
   /** DEPLOY_POW: the structural rules were applied by the strict decoder; the fee policy and the end height here. */

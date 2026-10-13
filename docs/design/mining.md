@@ -17,7 +17,7 @@ Internal name: "anonymous mining". The product never says "anonymous" (`docs/CLA
 - the same solution is carried twice (your own mistake, such as two tabs; §8.1). The first copy to land pays you; the second is rejected. The wallet prevents this (W-M);
 - the claim lands after the token's supply cap is reached (§6.4). Near the cap this is a real race; the wallet and the relayer count claims already in flight and refuse early;
 - the claim lands too late, after its 12-block window (§5.2);
-- the difficulty rose more than 4× inside the claim's window, which only happens during a hashrate surge (§6.1, stale bound). The wallet and the relayer re-check right before paying;
+- the difficulty rose more than 4× inside the claim's window, which only happens during a hashrate surge (§6.1, stale bound; signet only, mainnet has no stale bound since 2026-10-13). The wallet and the relayer re-check right before paying;
 - a reorg replaces the block the claim references (§8.4).
 
 A third party cannot copy your claim into their own transaction (§8.1). The relayer drops a relayed claim that is certain to fail before signing it, and refunds the balance (§9).
@@ -66,7 +66,7 @@ Strict, little-endian, no trailing bytes. 66 + ticker + treasury bytes, at most 
 | Field | Type | Rule |
 |---|---|---|
 | magic `mrk` ‖ version `0x00` ‖ op `0x09` | 5 | |
-| ticker | u8 length + ASCII | `[A-Z0-9]{1,16}`. The namespace is shared with DEPLOY: the first valid DEPLOY or DEPLOY_POW claims the ticker |
+| ticker | u8 length + ASCII | `[A-Z0-9]{1,16}`. The namespace is shared with DEPLOY: the first valid DEPLOY or DEPLOY_POW claims the ticker, unless the ticker is reserved on this network (SPEC.md section 7: mainnet reserves MURK for its pinned launch transaction) |
 | divisibility | u8 | ≤ 8 |
 | reward | u64 | 1 … 2^63 − 1 (MINE carries it as i64, audit A-2/A-5) |
 | maxSupply | u64 | reward ≤ maxSupply ≤ 2^64 − 1 |
@@ -255,6 +255,10 @@ The block's undo entry records, for each mined asset the block touches (a claim 
   - Only when the difficulty rose more than 4× between the reference and the freshest block, which takes a hashrate surge, does the bound bite. Without it a surge miner would keep grinding the pre-surge reference at the old low difficulty for 12 more blocks.
   - The wallet and the relayer check `D_eff` right before paying (§9, §12.1), so an honest claim is caught there, not on chain, unless the surge starts after it was broadcast.
 - Work is counted as `D_eff`, the difficulty the solution actually met.
+
+> **Update 2026-10-13 (owner decision, mainnet only): no stale bound.** `STALE_FACTOR` is now a per-network consensus parameter in `src/params.mjs` (`NETWORKS.<net>.staleFactor`): **4 on signet, none (null) on mainnet**. On mainnet `D_eff = D(refHeight)`: an honest solution is never refused with "insufficient work" because the difficulty rose more than 4× between its reference block and its inclusion block. The 12-block window still caps how long a reference stays usable, and the retarget (§6.2) reacts to the counted work of every block as before. Signet keeps the factor: with the factor on, `effectiveDifficulty` is the old formula by construction, and the tests compare it to that formula (and replay one block sequence under both rules, where the two differ only in the block where the bound bites). Everything that evaluates the rule uses `effectiveDifficulty(asset, ref, height)` in `src/mine.mjs`: the indexer, the browser replay and verification, the wallet's and the CLI's checks before paying, the relayer's claim checks. With the factor off, the relayer never answers `stale_work` on mainnet and `/api/mine/:asset` reports `staleFactor: null` and `staleFloor: null`. Cost on mainnet, stated plainly: after a rise, a miner can still use any reference of the last 12 blocks at that block's older, lower difficulty, so a surge emits more than the §8.7 figures (they assume factor 4; factor 16 already roughly doubled the F = 1,000 row, and no factor removes the limit). That is the price of never failing an honest claim, and the owner accepted it.
+>
+> **Supply-cap warning (same date, not consensus).** The cap stays exact: in the block that reaches `maxSupply`, claims beyond it are rejected (`supply cap reached`) and their fees are lost. The wallet and `murkle mine` now warn before paying, and wait for an explicit continue, when the claims that still fit (after claims already in flight) are at most 10, or at most 3 times the average claims per block over the last 144 blocks (`capRisk` in `src/mine.mjs`). The web page keeps the solution "found" (also with automatic claiming) and shows the warning; a second click on "Claim anyway" pays. The CLI prints the warning, then asks on a terminal (default no); without a terminal it stops unless `--accept-cap-risk` is given.
 
 ### 6.2 Retarget: a per-block moving average (deterministic, BigInt)
 

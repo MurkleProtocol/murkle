@@ -15,7 +15,7 @@ export const NETWORKS = Object.freeze({
   signet: Object.freeze({
     name: "signet", test: true, explorer: "https://mempool.space/signet",
     esplora: "https://mempool.space/signet/api", btcHrp: "tb", addressHrp: "mrk", faucet: "https://signetfaucet.com",
-    rpcPort: 38332, unisatChain: "BITCOIN_SIGNET", strictTicker: false, pinsFile: "src/pins.json",
+    rpcPort: 38332, unisatChain: "BITCOIN_SIGNET", strictTicker: false, staleFactor: 4, pinsFile: "src/pins.json",
     artifacts: Object.freeze({
       manifest: "build/manifest.json", vkey: "build/dev/verification_key.json",
       zkey: "build/dev/transaction.zkey", wasm: "build/transaction_js/transaction.wasm",
@@ -24,7 +24,7 @@ export const NETWORKS = Object.freeze({
   mainnet: Object.freeze({
     name: "mainnet", test: false, explorer: "https://mempool.space",
     esplora: "https://mempool.space/api", btcHrp: "bc", addressHrp: "murk", faucet: null,
-    rpcPort: 8332, unisatChain: "BITCOIN_MAINNET", strictTicker: true, pinsFile: "src/pins.mainnet.json",
+    rpcPort: 8332, unisatChain: "BITCOIN_MAINNET", strictTicker: true, staleFactor: null, pinsFile: "src/pins.mainnet.json",
     artifacts: Object.freeze({
       manifest: "build/mainnet/manifest.json", vkey: "build/mainnet/verification_key.json",
       zkey: "build/mainnet/transaction.zkey", wasm: "build/transaction_js/transaction.wasm",
@@ -109,13 +109,58 @@ export const REPO_URL = "https://github.com/MurkleProtocol/murkle";
 
 // Pins written by scripts/build-circuit.mjs (signet artifacts, manifest), by the operator
 // from npm run key:mainnet (mainnet artifacts, manifest) and after the genesis
-// ATTEST confirms (genesisTxid, activationHeight). One file per network (PINS_FILE).
+// ATTEST confirms (genesisTxid, activationHeight, reservedTickers). One file per network (PINS_FILE).
 const pins = NETWORK === "mainnet" ? mainnetPins : signetPins;
+
+// ---------------------------------------------------------------- reserved tickers (SPEC.md §7)
+// Mainnet only. A DEPLOY or DEPLOY_POW of a reserved ticker is valid only in the one carrier
+// transaction pinned for it; while the pin is null every deploy of that ticker is rejected. This
+// stops anyone who sees the operator's genesis ATTEST from taking the flagship ticker first. The
+// map is consensus, pinned like genesisTxid: a node with other pins disagrees. Signet has none.
+const RESERVABLE_TICKER = /^[A-Z0-9]{1,16}$/; // the strict mainnet ticker rule (envelope.mjs tickerBytesValid) on a string
+const PIN_TXID = /^[0-9a-f]{64}$/;
+
+/**
+ * The reserved-ticker map of `value` (the "reservedTickers" pin) on `network`: a frozen
+ * { TICKER: txid | null }. Signet always gives {} and never reads the pin. Mainnet refuses
+ * (throws) a missing or malformed map: not a plain object, a key that is not a strict ticker, or a
+ * value that is neither null nor 64 lowercase hex, so a damaged pin never silently drops a reservation.
+ */
+export function reservedTickersOf(value, network = NETWORK) {
+  if (network !== "mainnet") return Object.freeze({});
+  if (value === null || typeof value !== "object" || Array.isArray(value) || Object.getPrototypeOf(value) !== Object.prototype) {
+    throw new Error(`${NETWORKS.mainnet.pinsFile}: "reservedTickers" must be an object of { TICKER: txid | null }`);
+  }
+  const out = {};
+  for (const [ticker, txid] of Object.entries(value)) {
+    if (!RESERVABLE_TICKER.test(ticker)) throw new Error(`${NETWORKS.mainnet.pinsFile}: reserved ticker ${JSON.stringify(ticker)} must be 1-16 of A-Z0-9`);
+    if (txid !== null && !(typeof txid === "string" && PIN_TXID.test(txid))) {
+      throw new Error(`${NETWORKS.mainnet.pinsFile}: reservedTickers.${ticker} must be null or 64 lowercase hex characters`);
+    }
+    out[ticker] = txid;
+  }
+  return Object.freeze(out);
+}
+
+/**
+ * Why the carrier `txid` may not deploy `ticker` under `reserved`, or null when it may (the ticker is
+ * not reserved, or `txid` is the transaction pinned for it). `txid` undefined or null is a deploy not
+ * yet built: a reserved ticker is then refused whatever its pin.
+ */
+export function reservedTickerReason(ticker, txid, reserved = RESERVED_TICKERS) {
+  if (!reserved || !Object.hasOwn(reserved, ticker)) return null;
+  const pin = reserved[ticker];
+  if (pin === null) return `ticker reserved: ${ticker} has no launch transaction pinned yet, so every deploy of it is rejected`;
+  if (typeof txid === "string" && txid.toLowerCase() === pin) return null;
+  return `ticker reserved: ${ticker} may be deployed only by its pinned launch transaction`;
+}
 export const PINS = Object.freeze({ ...pins, artifacts: Object.freeze({ ...pins.artifacts }) });
 export const MANIFEST_SHA256 = pins.manifestSha256 ?? null;
 export const ARTIFACT_SHA256 = PINS.artifacts;
 export const GENESIS_TXID = pins.genesisTxid ?? null;
 export const ACTIVATION_HEIGHT = pins.activationHeight ?? null;
+/** { TICKER: txid | null } of this network (consensus pin, see reservedTickersOf); {} on signet. */
+export const RESERVED_TICKERS = reservedTickersOf(pins.reservedTickers);
 
 /**
  * Pre-genesis: no genesis ATTEST is pinned yet. Indexers start from saved
@@ -130,7 +175,9 @@ export const GENESIS = PRE_GENESIS ? null : Object.freeze({ txid: GENESIS_TXID, 
 // Consensus constants of DEPLOY_POW / MINE / MINE_SCRIPT. They apply only at and above
 // the "mining" activation height (ACTIVATIONS below), which stays null until release.
 export const MINE_WINDOW = 12; // H - 12 <= ref <= H - 1
-export const STALE_FACTOR = 4; // D_eff = max(D(ref), D(H - 1) / 4)
+// Per network (NETWORKS.staleFactor): signet 4, D_eff = max(D(ref), D(H - 1) / 4); mainnet null (off),
+// D_eff = D(ref), so an honest solution never fails because the difficulty rose after its reference block.
+export const STALE_FACTOR = NET.staleFactor;
 export const MIN_DIFFICULTY = 256n;
 export const SPAN_MIN = 12;
 export const SPAN_MAX = 432;

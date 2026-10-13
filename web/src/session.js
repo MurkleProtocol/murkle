@@ -57,12 +57,12 @@ import { OP, decodeEnvelope, encodeDeploy, encodeDeployPow, scriptHashOf } from 
 import { decodeProof } from "../../src/proof-codec.mjs";
 import { FEE_HEADROOM, carrierAmountOf, dustLimit, headroomRate, pickBindUtxo, planCarrierTx, planSplitTx, scriptOf, signLocal } from "../../src/btc/funding.mjs";
 import { feeKeysOf } from "../../src/keys.mjs";
-import { LABELS, MINE_FEE, MINE_SLACK, MINE_WINDOW, STALE_FACTOR } from "../../src/params.mjs";
-import { challengeOf, checkFeePolicy, meetsTarget, passwordOf, requiredFeeOutputs, rewardAt, solutionIdOf, targetOf } from "../../src/mine.mjs";
+import { LABELS, MINE_FEE, MINE_SLACK, MINE_WINDOW } from "../../src/params.mjs";
+import { challengeOf, checkFeePolicy, meetsTarget, passwordOf, requiredFeeOutputs, rewardAt, solutionIdOf, staleFloorOf, targetOf } from "../../src/mine.mjs";
 import { hex, unhex, outpointOf, randomBytes } from "../../src/bytes.mjs";
 import { DEPOSIT_CONFIRMATIONS, btcNetwork, depositAddress as depositAddressOf, relayAccount } from "../../src/relay-account.mjs";
 import * as api from "./api.js";
-import { ARTIFACT_SHA256, BRAND, NETWORK, PRE_GENESIS, STORAGE_PREFIX, label } from "./config.js";
+import { ARTIFACT_SHA256, BRAND, NETWORK, PRE_GENESIS, RESERVED_TICKERS, STORAGE_PREFIX, label } from "./config.js";
 import { LocalPayer, UnisatPayer, RelayPayer, RBF_SEQUENCE } from "./payers.js";
 import { accountBalance, creditDeposit, missedText, relayFailure, relayOpen, relayRotation, setRelayRoute, submitEnvelope } from "./relay.js";
 import { candidateNotes, crowdCheck } from "./privacy.js";
@@ -2163,11 +2163,11 @@ export class Session {
         if (!Number.isSafeInteger(tip)) throw mineError("indexer", "The indexer did not report its tip. Nothing was paid.");
         if (view.status !== "mining") throw mineError("closed", `${ticker} is not open for mining now (${String(view.status).replace("-", " ")}). Nothing was paid.`);
         if (mineWindowLeft(ref, tip, route) < 0) throw mineError("expired", "This solution's 12-block window is too close to its end to pay for a claim now. Nothing was paid; the workers already search a new block.");
-        // D_eff at the next block: max(D(ref), D(tip) / 4), D(tip) being the indexer's current difficulty.
+        // D_eff at the next block: max(D(ref), D(tip) / 4) on signet, D(ref) alone on mainnet (no stale bound); D(tip) is the indexer's current difficulty.
         const dRef = draft.meta.difficulty;
         const dTip = BigInt(view.difficulty);
-        const stale = dTip / BigInt(STALE_FACTOR);
-        const dEff = dRef > stale ? dRef : stale;
+        const stale = staleFloorOf(dTip);
+        const dEff = stale != null && stale > dRef ? stale : dRef;
         if (!meetsTarget(unhex(reference), targetOf(dEff))) {
           if (meetsTarget(unhex(reference), targetOf(dRef))) throw mineError("stale_work", "Difficulty jumped. Solutions found before the jump may no longer count; the wallet checks before paying. Nothing was paid.");
           throw mineError("insufficient", "This solution does not meet the difficulty. Nothing was paid.");
@@ -2457,6 +2457,7 @@ export class Session {
         await this.sync();
         return { detail: `#${this.view.height.toLocaleString("en-US")}` };
       });
+      if (Object.hasOwn(RESERVED_TICKERS, terms.ticker)) throw new Error(`Ticker ${terms.ticker} is reserved on ${NETWORK}: only its pinned launch transaction may deploy it.`);
       if (this.assetList.some((a) => a.ticker === terms.ticker)) throw new Error(`Ticker ${terms.ticker} is already taken.`);
       const payer = this.ownPayer();
       const envelope = encodeDeploy({ ...terms, treasury: terms.treasury ? scriptOf(terms.treasury) : new Uint8Array() });
@@ -2479,6 +2480,7 @@ export class Session {
         await this.sync();
         return { detail: `#${this.view.height.toLocaleString("en-US")}` };
       });
+      if (Object.hasOwn(RESERVED_TICKERS, terms.ticker)) throw new Error(`Ticker ${terms.ticker} is reserved on ${NETWORK}: only its pinned launch transaction may deploy it.`);
       if (this.assetList.some((a) => a.ticker === terms.ticker)) throw new Error(`Ticker ${terms.ticker} is already taken.`);
       const payer = this.ownPayer();
       const envelope = encodeDeployPow({ ...terms, treasury: terms.treasury ?? new Uint8Array() });

@@ -22,7 +22,7 @@ import { copyText } from "../ui/behaviors.js";
 import { encodeDeploy, encodeDeployPow } from "../../../src/envelope.mjs";
 import { LAUNCH_DEFAULTS, startHeightFor, suggestFloor, suggestInitialDifficulty } from "../../../src/mine.mjs";
 import { D_MAX, MAX_PER_BLOCK, MINE_FEE, MIN_DIFFICULTY, MIN_SPAN_CLAIMS, SPAN_MAX, SPAN_MIN, mineFeeReady } from "../../../src/params.mjs";
-import { BTC_WORD, IS_SIGNET } from "../config.js";
+import { BTC_WORD, IS_SIGNET, RESERVED_TICKERS } from "../config.js";
 import { dustLimit, scriptOf } from "../../../src/btc/funding.mjs";
 import * as api from "../api.js";
 import { parseUnits } from "../session.js";
@@ -42,12 +42,17 @@ export const LAUNCH_STEPS = (payerKind) => [
   { id: "broadcast", label: "Broadcast, then in mempool", prov: "BTC" },
 ];
 
+/** Tickers reserved for the operator's own pinned launch transaction on this network (SPEC.md §7): no launch from here can use one. */
+export const reservedSet = () => new Set(Object.keys(RESERVED_TICKERS));
+const RESERVED_TEXT = (ticker) => `${ticker} is reserved on this network: only its pinned launch transaction may deploy it. Pick another ticker.`;
+
 /** Form values -> { terms, envelope, errors{}, supply, raise }. Pure. */
-export function buildTerms(v, { height = null, taken = new Set() } = {}) {
+export function buildTerms(v, { height = null, taken = new Set(), reserved = reservedSet() } = {}) {
   const errors = {};
   const ticker = String(v.ticker ?? "").trim().toUpperCase();
   if (!ticker) errors.ticker = "Pick a ticker: 1 to 16 letters A-Z or digits.";
   else if (!TICKER.test(ticker)) errors.ticker = "Use 1 to 16 letters A-Z or digits only.";
+  else if (reserved.has(ticker)) errors.ticker = RESERVED_TEXT(ticker);
   else if (taken.has(ticker)) errors.ticker = `${ticker} is already taken. Tickers are first come, first served.`;
   const divisibility = Number(v.decimals ?? 0);
   if (!Number.isInteger(divisibility) || divisibility < 0 || divisibility > 8) errors.decimals = "Decimals go from 0 to 8.";
@@ -169,11 +174,12 @@ export function opensText(r) {
     : "Mining opens at the launch block itself: claims can reference it from the next block on.";
 }
 
-export function buildPowTerms(v, { height = null, taken = new Set() } = {}) {
+export function buildPowTerms(v, { height = null, taken = new Set(), reserved = reservedSet() } = {}) {
   const errors = {};
   const ticker = String(v.ticker ?? "").trim().toUpperCase();
   if (!ticker) errors.ticker = "Pick a ticker: 1 to 16 letters A-Z or digits.";
   else if (!TICKER.test(ticker)) errors.ticker = "Use 1 to 16 letters A-Z or digits only.";
+  else if (reserved.has(ticker)) errors.ticker = RESERVED_TEXT(ticker);
   else if (taken.has(ticker)) errors.ticker = `${ticker} is already taken. Tickers are first come, first served.`;
   const divisibility = Number(v.decimals ?? 0);
   if (!Number.isInteger(divisibility) || divisibility < 0 || divisibility > 8) errors.decimals = "Decimals go from 0 to 8.";

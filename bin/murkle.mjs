@@ -6,6 +6,7 @@ import {
   copyFileSync,
 } from "node:fs";
 import { randomBytes } from "node:crypto";
+import { createInterface } from "node:readline/promises";
 import { availableParallelism, cpus } from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, join } from "node:path";
@@ -1818,6 +1819,33 @@ const activationText = (idx) => {
   return h == null ? "no activation height is set in this release" : `mining activates at block ${h}`;
 };
 
+/**
+ * Pre-broadcast check of a DEPLOY / DEPLOY_POW ticker against the network's reserved tickers
+ * (SPEC.md §7). A reserved ticker is refused unless `allow` (--reserved-ticker, the operator's own
+ * launch deploy); once its launch transaction is pinned a new deploy can never match it, so it is
+ * refused even with the flag; the flag on a ticker that is not reserved is refused too. Never
+ * skips any other check. -> true when the deploy is the reserved launch deploy, else false.
+ */
+export function reservedTickerCheck(ticker, { allow = false, reserved = params.RESERVED_TICKERS, network = NETWORK } = {}) {
+  if (!reserved || !Object.hasOwn(reserved, ticker)) {
+    if (allow) throw new Error(`refused: --reserved-ticker given, but ${ticker} is not a reserved ticker on ${network}; nothing was broadcast`);
+    return false;
+  }
+  const pin = reserved[ticker];
+  if (pin !== null) {
+    throw new Error(`refused: ${ticker} is reserved for its pinned launch transaction ${pin} on ${network}; a new deploy of it is rejected by every node; nothing was broadcast`);
+  }
+  if (!allow) {
+    throw new Error(
+      `refused: ${ticker} is a reserved ticker on ${network}: every deploy of it is rejected unless its txid is pinned in a release (docs/MAINNET.md G5b). ` +
+        "Pass --reserved-ticker only for the operator's own launch deploy; nothing was broadcast",
+    );
+  }
+  return true;
+}
+const reservedWarning = (ticker) =>
+  `warning: ${ticker} is a reserved ticker. This deploy becomes valid only once its txid is pinned as reservedTickers.${ticker} in a release (docs/MAINNET.md G5b); until then every node rejects it and its fee is spent`;
+
 const DEPLOY_POW_VALUES = [
   "ticker", "reward", "max-supply", "divisibility", "span", "per-block", "difficulty", "hashrate", "min-difficulty", "halving", "start", "start-after", "end",
   "fee-rate",
@@ -1825,7 +1853,7 @@ const DEPLOY_POW_VALUES = [
 ];
 export const DEPLOY_POW_USAGE =
   `usage: ${CLI} deploy-pow <wallet> --ticker T --reward N --max-supply N [--divisibility d] [--span 24] [--per-block 1] ` +
-  "[--difficulty D | --hashrate H] [--min-difficulty D] [--halving n] [--start now | --start-after N] [--end h] [--fee-rate r] [--dry-run]";
+  "[--difficulty D | --hashrate H] [--min-difficulty D] [--halving n] [--start now | --start-after N] [--end h] [--fee-rate r] [--dry-run] [--reserved-ticker]";
 const I64_MAX = (1n << 63n) - 1n;
 const U64_MAX = (1n << 64n) - 1n;
 const U32_MAX = 2 ** 32 - 1;
@@ -1841,13 +1869,14 @@ const U32_MAX = 2 ** 32 - 1;
  * the launch block itself) or `--start-after N` (startHeight = tip + 1 + N: N blocks after the
  * next block, counted from the current tip `tip`; without a tip, startHeight is null and only
  * the flags are checked).
- * -> { terms (the encodeDeployPow input), hashrate (H/s behind the suggestion, or null), perBlock, startAfter (0 = now), feeRate | null, dryRun }
+ * A reserved ticker (reservedTickerCheck) is refused unless --reserved-ticker is given.
+ * -> { terms (the encodeDeployPow input), hashrate (H/s behind the suggestion, or null), perBlock, startAfter (0 = now), feeRate | null, dryRun, reservedTicker }
  */
-export function deployPowTerms(args, { lib, fee = params.MINE_FEE, tip = null } = {}) {
+export function deployPowTerms(args, { lib, fee = params.MINE_FEE, tip = null, reserved = params.RESERVED_TICKERS } = {}) {
   const fail = (msg) => {
     throw new Error(`${msg}\n${DEPLOY_POW_USAGE}`);
   };
-  const f = parseStrictFlags(args, { values: DEPLOY_POW_VALUES, booleans: ["dry-run"], usage: DEPLOY_POW_USAGE });
+  const f = parseStrictFlags(args, { values: DEPLOY_POW_VALUES, booleans: ["dry-run", "reserved-ticker"], usage: DEPLOY_POW_USAGE });
   if (!f.ticker || !f.reward || !f["max-supply"]) fail("--ticker, --reward and --max-supply are required");
   const ticker = String(f.ticker).toUpperCase();
   if (!/^[A-Z0-9]{1,16}$/.test(ticker)) fail("--ticker takes 1 to 16 letters A-Z or digits");
@@ -1906,12 +1935,13 @@ export function deployPowTerms(args, { lib, fee = params.MINE_FEE, tip = null } 
   if (treasury.length && claimFeeSats === 0n) {
     throw new Error(`refused: --treasury receives only a deployer claim fee, and none is set (${feePolicyText(fee)}); nothing was broadcast`);
   }
+  const reservedTicker = reservedTickerCheck(ticker, { allow: f["reserved-ticker"] === true, reserved });
   return {
     terms: {
       ticker, divisibility, reward, maxSupply, halvingInterval, span, targetPerSpan, initialDifficulty, minDifficulty, claimFeeSats, treasury,
       startHeight, endHeight,
     },
-    hashrate, perBlock, startAfter, feeRate, dryRun: f["dry-run"] === true,
+    hashrate, perBlock, startAfter, feeRate, dryRun: f["dry-run"] === true, reservedTicker,
   };
 }
 
@@ -1924,10 +1954,10 @@ export function deployPowTerms(args, { lib, fee = params.MINE_FEE, tip = null } 
  * `build({ envelope, feeRate })` signs the carrier (buildCarrierTx with the BTC fee key by default).
  */
 export async function deployPowCommand({
-  args, idx, esplora, lib, btcKey = null, encode = envelopeLib.encodeDeployPow, fee = params.MINE_FEE, print = console.log,
+  args, idx, esplora, lib, btcKey = null, encode = envelopeLib.encodeDeployPow, fee = params.MINE_FEE, print = console.log, reserved = params.RESERVED_TICKERS,
   build = ({ envelope, feeRate }) => buildCarrierTx({ api: esplora, btcKey, envelope, feeRate }),
 }) {
-  const { terms, hashrate, perBlock, startAfter, feeRate, dryRun } = deployPowTerms(args, { lib, fee, tip: idx.height });
+  const { terms, hashrate, perBlock, startAfter, feeRate, dryRun, reservedTicker } = deployPowTerms(args, { lib, fee, tip: idx.height, reserved });
   if (typeof encode !== "function") throw new Error("this checkout has no encodeDeployPow in src/envelope.mjs; nothing was broadcast");
   const envelope = encode(terms);
   if (idx.tickers.has(terms.ticker)) throw new Error(`ticker ${terms.ticker} is taken; nothing was broadcast`);
@@ -1960,7 +1990,8 @@ export async function deployPowCommand({
   print(`  ${MINE_COPY.start}`);
   if (terms.endHeight) print(`  the launch must land by block ${terms.endHeight}, or it is rejected (end before mining start) and its fee is spent`);
   print(`  service fee: ${feePolicyText(fee)}`);
-  for (const line of [MINE_COPY.fee(fee), MINE_COPY.noise, MINE_COPY.quiet, MINE_COPY.hardware, MINE_COPY.censor, MINE_COPY.testCoins]) print(line);
+  if (reservedTicker) print(reservedWarning(terms.ticker));
+  for (const line of [MINE_COPY.fee(fee), MINE_COPY.noise, MINE_COPY.quiet, MINE_COPY.hardware, MINE_COPY.censor, ...(IS_TESTNET ? [MINE_COPY.testCoins] : [])]) print(line);
   if (!active) print(`note: mining is not active at block ${deployAt} (${activationText(idx)}); this launch is built for inspection only`);
   const tx = await build({ envelope, feeRate: feeRate ?? undefined });
   if (dryRun) {
@@ -1974,7 +2005,7 @@ export async function deployPowCommand({
 }
 
 export const MINE_USAGE =
-  `usage: ${CLI} mine <wallet> <TICKER> [--threads N] [--pay key|relay] [--linkable] [--max-claims n] [--max-fee-rate r] [--prepare-coins n] [--esplora url] [--relay url]`;
+  `usage: ${CLI} mine <wallet> <TICKER> [--threads N] [--pay key|relay] [--linkable] [--max-claims n] [--max-fee-rate r] [--prepare-coins n] [--accept-cap-risk] [--esplora url] [--relay url]`;
 // A self-paid claim pays headroomRate(next-block rate) up front (a bump can be blocked): the one
 // headroom of src/btc/funding.mjs (FEE_HEADROOM), as the web wallet. Every input carries its RBF_SEQUENCE.
 const MINE_RELAY_MODE = "fast"; // a relayed claim goes out at once: its 12-block window is short
@@ -1985,15 +2016,17 @@ const CHANGE_FLOOR = 330n;
  * --max-claims, --max-fee-rate (sat/vB), --prepare-coins (key only), --esplora (the Bitcoin backend
  * the reference re-check reads block hashes from; default MURKLE_ESPLORA) and --relay (the relayer
  * for --pay relay, default MURKLE_RELAY_URL, else localhost; with --pay key it is read only for the
- * claims in flight); --linkable (with --pay relay only) relays claims even while the relay pool is thin (L1).
- * -> { name, ticker, pay, threads, maxClaims, maxFeeRate, prepareCoins, esplora, relay, linkable }
+ * claims in flight); --linkable (with --pay relay only) relays claims even while the relay pool is thin (L1);
+ * --accept-cap-risk pays a claim even when the supply cap is close enough that it may land beyond it
+ * (the warning is printed either way; without the flag a terminal asks, anything else stops).
+ * -> { name, ticker, pay, threads, maxClaims, maxFeeRate, prepareCoins, esplora, relay, linkable, acceptCapRisk }
  * --threads is 1 … this machine's logical processors (each worker holds 4 MiB for Argon2 and
  * loads its own hash-wasm; thousands of them would exhaust memory before the self-test ends).
  */
 export function parseMineArgs(args, { read = env, processors = logicalProcessors() } = {}) {
   const [name, ticker, ...rest] = args.map(String);
   if (!name || name.startsWith("--") || !ticker || ticker.startsWith("--")) throw new Error(MINE_USAGE);
-  const f = parseStrictFlags(rest, { values: ["threads", "pay", "max-claims", "max-fee-rate", "prepare-coins", "esplora", "relay"], booleans: ["linkable"], usage: MINE_USAGE });
+  const f = parseStrictFlags(rest, { values: ["threads", "pay", "max-claims", "max-fee-rate", "prepare-coins", "esplora", "relay"], booleans: ["linkable", "accept-cap-risk"], usage: MINE_USAGE });
   const count = (k) => {
     if (f[k] === undefined) return null;
     if (!/^[1-9]\d{0,5}$/.test(f[k])) throw new Error(`--${k} must be a whole number above 0\n${MINE_USAGE}`);
@@ -2008,13 +2041,38 @@ export function parseMineArgs(args, { read = env, processors = logicalProcessors
   const out = {
     name, ticker: ticker.toUpperCase(), pay, threads: count("threads"), maxClaims: count("max-claims"), maxFeeRate: count("max-fee-rate"),
     prepareCoins: count("prepare-coins"), esplora: f.esplora === undefined ? null : checkRelayUrl(f.esplora, "--esplora"), relay: null,
-    linkable: f.linkable === true,
+    linkable: f.linkable === true, acceptCapRisk: f["accept-cap-risk"] === true,
   };
   if (out.linkable && pay !== "relay") throw new Error(`--linkable goes with --pay relay: a claim paid from the mining key shows that key's address anyway\n${MINE_USAGE}`);
   if (out.prepareCoins !== null && pay === "relay") throw new Error(`--prepare-coins splits the mining key's coins; it does not go with --pay relay\n${MINE_USAGE}`);
   if (pay === "relay") out.relay = f.relay !== undefined ? checkRelayUrl(f.relay) : checkRelayUrl(read("RELAY_URL") || DEFAULT_RELAY, "MURKLE_RELAY_URL");
   else if (f.relay !== undefined) out.relay = checkRelayUrl(f.relay);
   return out;
+}
+
+/**
+ * The yes/no question after the supply-cap warning (already printed): asks on a terminal (default no), null elsewhere, so a
+ * run without a terminal and without --accept-cap-risk stops instead of paying. Ctrl-C, Ctrl-D, a closed input and an
+ * aborted `signal` all answer no (a pending readline question never settles by itself when its interface closes).
+ */
+export function terminalConfirm({ input = process.stdin, output = process.stdout, signal } = {}) {
+  if (!input.isTTY) return null;
+  return () =>
+    new Promise((resolve) => {
+      const rl = createInterface({ input, output });
+      const finish = (yes) => {
+        rl.removeListener("close", onClose);
+        signal?.removeEventListener("abort", onAbort);
+        rl.close();
+        resolve(yes === true);
+      };
+      const onClose = () => finish(false);
+      const onAbort = () => finish(false);
+      rl.once("close", onClose);
+      if (signal?.aborted) return onAbort();
+      signal?.addEventListener("abort", onAbort, { once: true });
+      rl.question("Pay this claim anyway? [y/N] ").then((a) => finish(/^y(es)?$/i.test(a.trim())), () => finish(false));
+    });
 }
 
 /** This machine's logical processors (the --threads bound). */
@@ -2167,12 +2225,15 @@ export async function prepareCoinsCommand({
  *     rate x 1.25 paid up front, RBF signalled); `pay: "relay"` submits it, signed by the relay
  *     account, after checking that the relay balance covers the quote. A relayed claim is never
  *     paid from the mining key, whatever the relayer answers.
+ *  6. close to the supply cap (lib.capRisk) it prints a warning before paying: claims beyond the cap in
+ *     the same block are not credited and their fees are lost. It pays only after `acceptCapRisk` or a
+ *     `confirm(text)` that answers true; otherwise it stops with nothing paid.
  * Prints H/s, solutions, claims sent, claims landed and fees spent.
  * -> { status: "done" | "stopped" | "ended" | "error", solutions, sent, landed, feesSats, hashes, reason? }
  */
 export async function runMiner({
   idx, wallet, file, save = () => {}, name = "<wallet>", ticker, lib, pool, esplora, resync = async () => {}, pay = "key", maxClaims = Infinity,
-  maxFeeRate = null, mineKey = null, relay = null, linkable = false, fee = params.MINE_FEE, fundingLib = funding, decode = decodeEnvelope, sign = signLocal,
+  maxFeeRate = null, mineKey = null, relay = null, linkable = false, acceptCapRisk = false, confirm = null, fee = params.MINE_FEE, fundingLib = funding, decode = decodeEnvelope, sign = signLocal,
   print = console.log, warn = (s) => process.stderr.write(`${s}\n`), now = Date.now, sleep = delay, signal, slice = null, threads = pool.size ?? 1,
   pollMs = 15_000, statsMs = 10_000, randomCounter = () => BigInt(`0x${randomBytes(8).toString("hex")}`),
 }) {
@@ -2182,6 +2243,7 @@ export async function runMiner({
   if (!miningActiveAt(idx, idx.height + 1)) throw new Error(`mining is not active on ${NETWORK} at block ${idx.height + 1} (${activationText(idx)}); nothing was mined`);
   if (!fee) throw new Error(`mining has no service-fee policy on ${NETWORK}; nothing was mined`);
   const stats = { solutions: 0, sent: 0, landed: 0, feesSats: 0, hashes: 0 };
+  let capAccepted = false; // the supply-cap warning was accepted once in this run
   const sent = []; // this run's W-M entries, for their verdicts
   const settled = new Set(); // entries whose verdict was printed
   const done = (status, reason) => {
@@ -2227,7 +2289,7 @@ export async function runMiner({
     print(`relay ${relay.url}: about ${int(quoteOf(info.mine))} sats of relay balance per claim (Bitcoin fee ${int(info.mine.carrierFeeSats)} + service fee + margin ${int(info.mine.marginSats)})`);
     print(MINE_COPY.relay(asset.ticker, lib.rewardAt(asset, Math.max(idx.height, asset.mineStart ?? 0))));
   }
-  for (const line of [MINE_COPY.fee(fee), MINE_COPY.hardware, MINE_COPY.censor, MINE_COPY.window, ...(pay === "key" ? [MINE_COPY.bump] : []), MINE_COPY.testCoins]) print(line);
+  for (const line of [MINE_COPY.fee(fee), MINE_COPY.hardware, MINE_COPY.censor, MINE_COPY.window, ...(pay === "key" ? [MINE_COPY.bump] : []), ...(IS_TESTNET ? [MINE_COPY.testCoins] : [])]) print(line);
 
   // Claims of this token still on the way: this wallet's own, or what the relayer counts (relayer
   // queue and mempool), whichever is more. -> { n, reward: Σ their rewards (each its own) | null }
@@ -2316,14 +2378,33 @@ export async function runMiner({
     // 2. The checks before paying, at the current tip.
     if (await tipMoved()) await refresh();
     const n = await inflight(draft.reward);
-    const why = claimRefusal({ lib, idx, asset, draft, powHash: reference, solutionIdHex, tip: idx.height, inflight: n.n, inflightReward: n.reward });
+    const refusal = () => claimRefusal({ lib, idx, asset, draft, powHash: reference, solutionIdHex, tip: idx.height, inflight: n.n, inflightReward: n.reward });
+    const why = refusal();
     if (why) {
       print(`solution not paid: ${why}`);
       return null;
     }
-    const room = asset.maxSupply - asset.issued;
-    const recent = (asset.claimsByHeight ?? []).filter(([h]) => h > idx.height - 3).reduce((s, [, c]) => s + c, 0);
-    if (room < BigInt(draft.reward) * BigInt(recent + 1)) print(MINE_COPY.nearCap);
+    // Close to the cap: claims beyond it in the same block are not credited and their fees are lost.
+    const risk = lib.capRisk({
+      remaining: asset.maxSupply - asset.issued - n.reward, reward: draft.reward, claims: asset.claimsByHeight ?? [], tip: idx.height, mineStart: asset.mineStart ?? lib.mineStartOf(asset),
+    });
+    if (risk) {
+      const text = lib.capWarningText(risk, asset.ticker);
+      print(`warning: ${text}`);
+      const asked = !capAccepted && !acceptCapRisk && confirm;
+      capAccepted ||= acceptCapRisk || (confirm ? (await confirm(text)) === true : false);
+      if (!capAccepted) return "the supply cap is close; nothing was paid. Run mine again with --accept-cap-risk to pay anyway";
+      if (asked) {
+        // The terminal may have waited for any length of time: the tip, the 12-block window and the cap are checked again.
+        if (await tipMoved()) await refresh();
+        Object.assign(n, await inflight(draft.reward));
+        const late = refusal();
+        if (late) {
+          print(`solution not paid: ${late}`);
+          return null;
+        }
+      }
+    }
     const entry = {
       kind: "mine", via: pay === "relay" ? "relay" : "self", ticker: asset.ticker, asset: String(asset.id), reward: String(draft.reward), ref: draft.refHeight,
       solutionId: solutionIdHex, commitments: draft.commitments.map(String), spends: (draft.rolled ?? []).map(String),
@@ -2592,22 +2673,22 @@ export function minedAssetLines(a, tip, lib) {
 const DEPLOY_FLAGS = ["ticker", "amount", "cap", "price", "treasury", "divisibility", "start", "end"];
 const BTC1 = `${params.BTC_HRP}1…`; // tb1… on signet, bc1… on mainnet
 const MRK1 = `${params.ADDRESS_HRP}1…`; // mrk1… on signet, murk1… on mainnet
-const DEPLOY_USAGE = `usage: ${CLI} deploy <wallet> --ticker T --amount <per mint> --cap <mints> [--price sats --treasury ${BTC1}] [--divisibility d --start h --end h]`;
+const DEPLOY_USAGE = `usage: ${CLI} deploy <wallet> --ticker T --amount <per mint> --cap <mints> [--price sats --treasury ${BTC1}] [--divisibility d --start h --end h] [--reserved-ticker]`;
 
 const SEND_USAGE = `usage: ${CLI} send <wallet> <ticker> <amount> <${MRK1} address> [--relay [url] [--fast | --batch | --batch10] [--linkable] [--no-wait] [--wait-max <minutes>]]`;
 
 export const HELP = [
   `${BRAND} CLI (${NETWORK}). Commands:`,
   "  new <w> | address <w> | balance <w> | sync | assets | log [n]",
-  `  deploy <w> --ticker T --amount N --cap N [--price sats --treasury ${BTC1}] [--divisibility d --start h --end h]`,
+  `  deploy <w> --ticker T --amount N --cap N [--price sats --treasury ${BTC1}] [--divisibility d --start h --end h] [--reserved-ticker]`,
   `  mint <w> <ticker> | send <w> <ticker> <amount> <${MRK1}>`,
   `  send <w> <ticker> <amount> <${MRK1}> --relay [url] [--fast | --batch | --batch10] [--linkable] [--no-wait] [--wait-max <minutes>]`,
   "  pending <w> [--relay url] | retry <w> [--relay [url]] [--fast | --batch | --batch10] [--linkable] [--no-wait] [--wait-max <minutes>]",
   "  relay account <w> [--relay url]   your relay balance and next deposit address (alias: relay balance <w>)",
   "  relay topup <w> [--relay url] [--pay <sats> [--fee-rate n] [--dry-run]]   a fresh deposit address; --pay pays it from the BTC fee key",
   "  relay credit <w> [<txid:vout> [<n>]] [--older] [--relay url]   credits confirmed deposits to your relay balance",
-  "  deploy-pow <w> --ticker T --reward N --max-supply N [--span 24] [--per-block 1] [--difficulty D | --hashrate H] [--min-difficulty D] [--halving n] [--start now | --start-after N] [--end h] [--fee-rate r] [--dry-run]",
-  "  mine <w> <TICKER> [--threads N] [--pay key|relay] [--linkable] [--max-claims n] [--max-fee-rate r] [--prepare-coins n] [--esplora url] [--relay url]",
+  "  deploy-pow <w> --ticker T --reward N --max-supply N [--span 24] [--per-block 1] [--difficulty D | --hashrate H] [--min-difficulty D] [--halving n] [--start now | --start-after N] [--end h] [--fee-rate r] [--dry-run] [--reserved-ticker]",
+  "  mine <w> <TICKER> [--threads N] [--pay key|relay] [--linkable] [--max-claims n] [--max-fee-rate r] [--prepare-coins n] [--accept-cap-risk] [--esplora url] [--relay url]",
   `Mining (once the mining activation height is set): every claim pays a Bitcoin fee and a service fee of ${params.MINE_FEE ? int(params.MINE_FEE.platformSats) : "N"} sats to the ${BRAND} platform address. --pay key (the default) pays from the wallet's separate mining key, so the token, the reward and that address are public; --pay relay pays from the relay balance, and the relayer sees the token and the reward of every claim it carries for you.`,
   "  attest genesis <w> [--dry-run] [--force]",
   "  address-script <bitcoin address>   prints its scriptPubKey hex (this network's addresses only)",
@@ -2715,7 +2796,7 @@ const commands = {
 
   async deploy([name, ...rest]) {
     // Strict: a mistyped flag (--prcie, --price=…, --ned) is refused, never left to default to 0.
-    const f = parseStrictFlags(rest, { values: DEPLOY_FLAGS, usage: DEPLOY_USAGE });
+    const f = parseStrictFlags(rest, { values: DEPLOY_FLAGS, booleans: ["reserved-ticker"], usage: DEPLOY_USAGE });
     if (!name || name.startsWith("--") || !f.ticker || !f.amount || !f.cap) throw new Error(DEPLOY_USAGE);
     if (f.treasury !== undefined && f.price === undefined) {
       throw new Error(`--treasury goes with --price <sats>: without it the mint is free and the treasury receives nothing\n${DEPLOY_USAGE}`);
@@ -2726,6 +2807,9 @@ const commands = {
     if (priceSats > 0n && treasury.length && priceSats < dustLimit(treasury)) {
       throw new Error(`--price must be 0 or at least ${dustLimit(treasury)} sats: a smaller payment to this treasury is dust that nodes refuse to relay`);
     }
+    // A reserved ticker (SPEC.md §7) is the operator's own launch deploy only, and only with the flag.
+    const reservedTicker = reservedTickerCheck(f.ticker.toUpperCase(), { allow: f["reserved-ticker"] === true });
+    if (reservedTicker) console.log(reservedWarning(f.ticker.toUpperCase()));
     const envelope = encodeDeploy({
       ticker: f.ticker.toUpperCase(),
       divisibility: Number(whole(f, "divisibility", "0")),
@@ -2816,7 +2900,7 @@ const commands = {
       if (ready.impl === "noble") console.log(MINE_COPY.slow);
       const out = await runMiner({
         idx, wallet, file, save, name: f.name, ticker: f.ticker, lib, pool, esplora: own, resync: () => syncInPlace(idx), pay: f.pay,
-        maxClaims: f.maxClaims ?? Infinity, maxFeeRate: f.maxFeeRate, mineKey, relay, linkable: f.linkable, signal: ac.signal, threads: ready.workers ?? pool.size,
+        maxClaims: f.maxClaims ?? Infinity, maxFeeRate: f.maxFeeRate, mineKey, relay, linkable: f.linkable, acceptCapRisk: f.acceptCapRisk, confirm: terminalConfirm({ signal: ac.signal }), signal: ac.signal, threads: ready.workers ?? pool.size,
       });
       process.exitCode = out.status === "error" ? 1 : 0;
     } finally {

@@ -64,6 +64,8 @@ export const GENESIS_TXID = P.GENESIS_TXID ?? PINS.genesisTxid ?? null;
 export const ACTIVATION_HEIGHT = P.ACTIVATION_HEIGHT ?? PINS.activationHeight ?? null;
 export const MANIFEST_SHA256 = P.MANIFEST_SHA256 ?? PINS.manifestSha256 ?? null;
 export const ARTIFACT_SHA256 = P.ARTIFACT_SHA256 ?? PINS.artifacts;
+// Tickers only their pinned launch transaction may deploy (SPEC.md §7): { TICKER: txid | null }, {} on signet.
+export const RESERVED_TICKERS = P.RESERVED_TICKERS ?? {};
 export const PRE_GENESIS = !GENESIS_TXID || ACTIVATION_HEIGHT === null || ACTIVATION_HEIGHT === undefined;
 
 export const EXPLORER = P.EXPLORER ?? (IS_SIGNET ? "https://mempool.space/signet" : "https://mempool.space");

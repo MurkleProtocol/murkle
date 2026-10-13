@@ -168,6 +168,10 @@ Evidence: the transaction at its height on two explorers (the Esplora source rea
 use a second, independent explorer such as blockstream.info); the server starts without
 `MURKLE_ALLOW_PRE_GENESIS`; `GET /api/state` shows `genesis` and no `warning`.
 
+`src/pins.mainnet.json` already holds `"reservedTickers": { "MURK": null }` before the genesis is broadcast, so
+the ticker `MURK` is reserved in every build from the first release (see G5b). Keep that line. For the MURK launch the
+genesis fields, the mining height (G5) and the reserved-ticker pin are set in one release (G5b).
+
 ### G5. Mining (optional at launch)
 
 ```bash
@@ -185,10 +189,91 @@ mainnet: feeRule({ hrp: "bc", platformScript: "5120ed5a3a83573cc1ab10e34128a21f3
 ```
 
 The platform fee is 500 sats per claim (owner decision 2026-10-13). Then pin a mining height above the genesis height in `src/pins.mainnet.json` (`activations[0].height`), in a
-release, at a future height. Without a pinned mining height mining stays off. A rule that is a placeholder (no script) is still refused: the
+release. For the MURK launch the height is genesis + 1, already in the past when the release is cut, and G5b explains
+why that is safe (and why the reserved ticker rule is needed); any other launch pins a future height. Without a pinned mining height mining stays off. A rule that is a placeholder (no script) is still refused: the
 server and the CLI say "mining is not configured on mainnet", and an indexer with a mining height and such a
 rule refuses to start. Evidence: `npm test`; `mineFeeReady()` returns null with `MURKLE_NETWORK=mainnet` exported (without it the function checks signet and
 returns null whatever the mainnet rule says).
+
+#### G5b. The MURK launch (owner decision 2026-10-13; nothing here is broadcast until the owner runs it)
+
+The owner deploys the mined token MURK on mainnet right after the genesis. The ticker namespace is shared with
+plain `deploy`: the first valid DEPLOY or DEPLOY_POW in block order owns the ticker, and nobody can take it back.
+Because a plain DEPLOY counts from the genesis block while a DEPLOY_POW counts only from the mining height
+(genesis + 1), anyone who sees the genesis ATTEST in the mempool could deploy `MURK` first, and no fee rate would
+prevent it. So `MURK` is a **reserved ticker** (SPEC.md section 7, security audit M1): `src/pins.mainnet.json` holds
+`reservedTickers.MURK`, every node rejects every deploy of `MURK` except the one carrier transaction pinned there,
+and the pin is `null` (nothing is valid) until the operator pins the txid of its own signed deploy, which it
+broadcasts only after that release is deployed.
+
+| Term | Value | Check against SPEC.md section 15 and `src/mine.mjs` |
+|---|---|---|
+| ticker | `MURK` | 1 to 16 characters of A-Z0-9, raw bytes (strict ticker on mainnet) |
+| divisibility | 8 | at most 8 |
+| reward per claim | 1000 MURK = `100000000000` base units | 1 to 2^63 - 1 |
+| maxSupply | 21,000 claims x 1000 = 21,000,000 MURK = `2100000000000000` base units | at least the reward, below 2^64, an exact multiple of the reward, so the last claim fits exactly |
+| halvingInterval | 0 | none |
+| span | 12 blocks | the minimum (12 to 432) |
+| targetPerSpan | 1200 (`--per-block 100` x span 12) | the maximum, 100 per block; the difficulty rises only when a block carries more than 100 claims on average |
+| initialDifficulty = minDifficulty | 3,600,000 | at least 256, at most 2^63 - 1; equal, so the difficulty never falls below its start |
+| claimFeeSats / treasury | 0 / empty | the mainnet fee policy allows no deployer fee (`deployerMaxSats = 0`) |
+| startHeight / endHeight | 0 / 0 | mining opens at the launch block itself (`--start now`); no end block |
+
+Expected time per solution is the difficulty divided by the hash rate (one hash in 3,600,000 meets the target).
+At 1,000 H/s that is 3,600 s, about one hour, as intended. The measured figure for one `hash-wasm` browser thread
+is 210 to 280 H/s (mining.md section 4.4, a Ryzen 9 7950X), so a single thread needs 3.6 to 4.8 hours and the
+"about one solution per hour" holds for a tab with about 4 threads. One GPU (an estimate, not a measurement: roughly 80,000 to 120,000 H/s from the memory-bandwidth argument in mining.md
+section 4.4) would find about 13 to 20 solutions per block and would mine out the supply in roughly 1,000 to 1,600
+blocks (7 to 11 days). With the floor equal to the start, the difficulty only climbs once the network averages
+more than 100 claims per block, about 600,000 H/s.
+
+Exact commands, after the genesis is pinned (G4) and the owner wallet is funded for the launch (the carrier is
+192 vB: about 3,900 sats at 20 sat/vB, about 19,000 sats at 100 sat/vB; use twice the next-block rate shown by
+mempool.space, the CLI accepts `--fee-rate` up to 10,000):
+
+The deploy's txid is pinned BEFORE the deploy is broadcast, so the public node knows MURK from its first block
+and mining opens for everyone at once (security audit M-1: if the txid were pinned only after the deploy
+confirmed, anyone adding the public txid to their own pins could mine MURK for hours while the public site showed
+none). A taproot txid does not cover the signatures, so the txid of the signed transaction from the dry run is
+the one that confirms, as long as that exact transaction is broadcast.
+
+```bash
+# 1. After the genesis has 6 confirmations, edit src/pins.mainnet.json in the checkout: genesisTxid,
+#    activationHeight and the mining height (activations[0].height = <activationHeight> + 1). Keep
+#    reservedTickers.MURK null for now: until step 3 nothing may be valid under that ticker.
+# 2. The owner wallet (G4), never a scratch wallet:
+export MURKLE_NETWORK=mainnet MURKLE_DATA_DIR=/secure/murkle-owner MURKLE_BTC_SOURCE=esplora
+node bin/murkle.mjs sync                       # must reach the tip with the genesis pinned
+# 3. Build the signed deploy without broadcasting it; keep its output in a file only the operator reads (anyone
+#    holding the hex could broadcast it). MURK is reserved, so the CLI refuses it without --reserved-ticker (the
+#    operator's own launch deploy; the flag skips no other check). Use a fee rate that confirms in the next block.
+node bin/murkle.mjs deploy-pow owner --ticker MURK --reserved-ticker --divisibility 8 --reward 100000000000 --max-supply 2100000000000000 --span 12 --per-block 100 --difficulty 3600000 --min-difficulty 3600000 --halving 0 --claim-fee 0 --start now --end 0 --fee-rate <sat/vB> --dry-run > /secure/murkle-owner/murk-deploy.txt
+#    The first line is "DEPLOY_POW (not broadcast): <txid> ..."; the second is the signed transaction.
+# 4. Pin that txid as reservedTickers.MURK in src/pins.mainnet.json, run npm test, commit, cut the release and
+#    deploy it (G6). Spend nothing from the owner wallet until step 5: the saved transaction spends its coin.
+# 5. Broadcast exactly the saved transaction (never rebuild it: a new build may pick another fee or coin, and
+#    a txid other than the pinned one is rejected for good). If it is slow, speed it up with a child transaction
+#    that spends its change output, which keeps the txid; never replace it (RBF changes the txid).
+curl -sS -X POST --data "$(sed -n 2p /secure/murkle-owner/murk-deploy.txt)" https://mempool.space/api/tx
+#    Mining opens at the deploy block, for everyone at once.
+node bin/murkle.mjs sync && node bin/murkle.mjs assets          # MURK, mining, 0/2100000000000000
+```
+
+What was checked before launch (2026-10-13): the exact values above are accepted by `deployPowTerms` and
+`deployPowCommand` on the mainnet parameters (a fake chain view and a scratch key, nothing broadcast): they
+print the terms above, build a 192 vB carrier with a 70-byte envelope, and decode back to the same fields. The CLI
+cannot dry-run it on the real mainnet before the genesis: `deploy-pow` is refused while `src/pins.mainnet.json`
+has no genesis ("has not launched on mainnet", the pre-genesis command list), and after the genesis it is
+refused with "mining is not active" until the mining height is pinned (only `--dry-run` builds regardless).
+
+Notes: step 1 pins a height that is already in the past when the release comes out. That is safe only while no
+public mainnet indexer has served verdicts yet, because a replay with the release sees any DEPLOY_POW that landed
+after the genesis as valid, except a DEPLOY or DEPLOY_POW of `MURK`, which the reserved ticker rule rejects until
+step 5 (a squatter's `MURK` in the genesis block or at genesis + 1 stays rejected for good). Pin the txid that
+actually confirmed: if the carrier was replaced (RBF) the first txid is not the one on chain. A saved indexer state that ran past the pin without it is rolled back to the block before the pin (when its
+144-block undo journal reaches that far) or archived and re-synced from the genesis; the server does this on start. If the deploy
+confirms but its txid is not pinned yet, `log` shows it as rejected with `ticker reserved`: that is expected; do not
+broadcast a second deploy, pin the first. Check `assets` and the explorer before announcing anything.
 
 ### G6. Build and deploy
 

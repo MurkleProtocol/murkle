@@ -19,8 +19,8 @@ import { decodeProof } from "./proof-codec.mjs";
 import { isNullOutpoint } from "./btc/block.mjs";
 import { bigToBytes, concat, equal, hex, u32le, u64le, unhex } from "./bytes.mjs";
 import {
-  ACTIVATIONS, DIGEST_V, LABELS, MINE_FEE, MINE_WINDOW, PROTOCOL, SNAPSHOT_VERSION, STRICT_TICKER, VERSION, mineFeeReady,
-  activationHeight, digestTag, digestVersionAt,
+  ACTIVATIONS, DIGEST_V, LABELS, MINE_FEE, MINE_WINDOW, PROTOCOL, RESERVED_TICKERS, SNAPSHOT_VERSION, STALE_FACTOR, STRICT_TICKER, VERSION, mineFeeReady,
+  activationHeight, digestTag, digestVersionAt, reservedTickerReason, reservedTickersOf,
 } from "./params.mjs";
 import * as M from "./mine.mjs";
 
@@ -95,8 +95,14 @@ export class Indexer {
    * @param pow Argon2 backend { hash(password), hashMany?(passwords) }: inlinePow, or a PowPool on the server.
    * @param mineFee the service-fee constants (MINE_FEE of this network).
    * @param strictTicker SPEC.md §7 ticker rule: raw ticker bytes (mainnet from genesis) or the historical decoder (signet).
+   * @param staleFactor SPEC.md §15 stale bound of this network: 4 on signet, null (off, D_eff = D(ref)) on mainnet.
+   * @param reservedTickers SPEC.md §7 { TICKER: txid | null } of this network (pins file): a deploy of a reserved ticker
+   *   is valid only in its pinned carrier transaction. {} on signet. Refused (throws) when malformed.
    */
-  constructor({ vkey, startHeight, genesis = null, activations = ACTIVATIONS, pow = M.inlinePow, mineFee = MINE_FEE, strictTicker = STRICT_TICKER }) {
+  constructor({
+    vkey, startHeight, genesis = null, activations = ACTIVATIONS, pow = M.inlinePow, mineFee = MINE_FEE, strictTicker = STRICT_TICKER,
+    staleFactor = STALE_FACTOR, reservedTickers = RESERVED_TICKERS,
+  }) {
     // Contract §2: activation heights lie strictly above the genesis activation height (this
     // indexer's genesis rule when it has one, else the pinned one). A replay may start above an
     // activation (murkle audit --from h): the table is not checked against startHeight.
@@ -114,6 +120,8 @@ export class Indexer {
     this.pow = pow;
     this.mineFee = mineFee;
     this.strictTicker = !!strictTicker;
+    this.staleFactor = staleFactor ?? null;
+    this.reservedTickers = reservedTickersOf(reservedTickers ?? {}, "mainnet");
     this.hashes = new Map(); // height -> block hash (display hex); kept for every height
     this.tree = new MerkleTree();
     this.nullifiers = new Set();
@@ -200,7 +208,7 @@ export class Indexer {
           continue;
         }
         if (env.op === OP.DEPLOY_POW) {
-          const verdict = this.checkDeployPow(env, H);
+          const verdict = this.checkDeployPow(env, H, tx.txid);
           if (verdict !== true) {
             this.record(at, env.op, false, { reason: verdict, ...this.details(env) });
             continue;
@@ -221,7 +229,7 @@ export class Indexer {
           this.record(at, env.op, true, { ...this.details(env), difficulty: dEff.toString() });
           continue;
         }
-        const verdict = env.op === OP.DEPLOY ? this.checkDeploy(env) : await this.checkTx(env, tx, H);
+        const verdict = env.op === OP.DEPLOY ? this.checkDeploy(env, tx.txid) : await this.checkTx(env, tx, H);
         if (verdict !== true) {
           if (isMint(env.op)) this.noteRejectedMint(env, tx, undo);
           this.record(at, env.op, false, { reason: verdict, ...this.details(env) });
@@ -291,7 +299,12 @@ export class Indexer {
     return {};
   }
 
-  checkDeploy(env) {
+  /** The reserved-ticker rule (SPEC.md §7), first among the deploy checks: a rejected deploy never claims the ticker. */
+  reservedReason(env, txid) { return reservedTickerReason(env.ticker, txid, this.reservedTickers); }
+
+  checkDeploy(env, txid) {
+    const reserved = this.reservedReason(env, txid);
+    if (reserved) return reserved;
     if (this.tickers.has(env.ticker)) return `ticker ${env.ticker} already deployed`;
     return true;
   }
@@ -319,7 +332,9 @@ export class Indexer {
   }
 
   /** DEPLOY_POW indexer rules (structure is checked by the decoder): true or a reason. */
-  checkDeployPow(env, height) {
+  checkDeployPow(env, height, txid) {
+    const reserved = this.reservedReason(env, txid);
+    if (reserved) return reserved;
     const fee = M.checkFeePolicy(env.claimFeeSats, env.treasury, this.mineFee);
     if (fee) return fee;
     const mineStart = M.mineStartOf({ startHeight: env.startHeight, deployHeight: height });
@@ -488,7 +503,7 @@ export class Indexer {
 
   /** Helpers by asset id (pages, relayer, CLI). */
   difficultyAt(assetId, h) { return M.difficultyAt(this.minedAsset(assetId), h); }
-  effectiveDifficulty(assetId, ref, height) { return M.effectiveDifficulty(this.minedAsset(assetId), ref, height); }
+  effectiveDifficulty(assetId, ref, height) { return M.effectiveDifficulty(this.minedAsset(assetId), ref, height, this.staleFactor); }
   rewardAt(assetId, ref) { return M.rewardAt(this.minedAsset(assetId), ref); }
   requiredFeeOutputs(assetId) { return M.requiredFeeOutputs(this.minedAsset(assetId), this.mineFee); }
   minedAsset(assetId) {
@@ -566,7 +581,7 @@ export class Indexer {
     const asset = this.assets.get(env.publicAsset);
     const claim = this.claimOf(env);
     if (!claim) return "unknown reference block";
-    const dEff = M.effectiveDifficulty(asset, env.refHeight, height);
+    const dEff = M.effectiveDifficulty(asset, env.refHeight, height, this.staleFactor);
     const h = await this.powOf(claim, memo);
     if (!(h instanceof Uint8Array) || h.length !== 32) throw Object.assign(new Error("Argon2 backend returned a malformed hash"), { code: "POW_FAILED" });
     return M.meetsTarget(h, M.targetOf(dEff)) ? true : "insufficient work";
@@ -646,7 +661,7 @@ export class Indexer {
   applyMine(env, tx, height, undo, work) {
     const asset = this.assets.get(env.publicAsset);
     const claim = this.claimOf(env);
-    const dEff = M.effectiveDifficulty(asset, env.refHeight, height);
+    const dEff = M.effectiveDifficulty(asset, env.refHeight, height, this.staleFactor);
     this.touchMine(asset, undo);
     this.applyTx(env, tx, height, undo);
     asset.claims += 1;
@@ -851,6 +866,8 @@ export class Indexer {
       undo: this.undo.map(undoOut),
       log: this.log,
     };
+    // Only when a ticker is reserved (mainnet), so a signet snapshot keeps its layout.
+    if (Object.keys(this.reservedTickers).length) snap.reservedTickers = { ...this.reservedTickers };
     if (v3) {
       snap.activations = this.activations.map((a) => ({ ...a }));
       snap.mine = { mineAcc: hex(this.mineAcc), claimed: [...this.claimed] };
@@ -863,7 +880,10 @@ export class Indexer {
    * the snapshot height; version 2 loads (by a fixed migration) only when no activation is at or
    * below its height. Anything else throws, so callers archive it and resync from the activation height.
    */
-  static restore(snap, { vkey, activations = ACTIVATIONS, pow = M.inlinePow, mineFee = MINE_FEE, strictTicker = STRICT_TICKER } = {}) {
+  static restore(snap, {
+    vkey, activations = ACTIVATIONS, pow = M.inlinePow, mineFee = MINE_FEE, strictTicker = STRICT_TICKER, staleFactor = STALE_FACTOR,
+    reservedTickers = RESERVED_TICKERS,
+  } = {}) {
     if (snap.version !== SNAPSHOT_VERSION && snap.version !== SNAPSHOT_V2) throw new Error("unsupported snapshot version");
     if (snap.protocol !== PROTOCOL || snap.envelopeVersion !== VERSION) throw new Error("snapshot is from another protocol");
     const v3 = snap.version === SNAPSHOT_VERSION;
@@ -884,7 +904,10 @@ export class Indexer {
     const mineOf = (st) => ({
       ...st, ...Object.fromEntries(MINE_BIG_FIELDS.map((k) => [k, BigInt(st[k])])), dPts: st.dPts.map(([h, d]) => [h, BigInt(d)]),
     });
-    const idx = new Indexer({ vkey, startHeight: snap.startHeight, genesis: snap.genesis, activations, pow, mineFee, strictTicker });
+    // Reserved tickers are consensus: a state written under other pins holds verdicts the new pins would change.
+    const theirReserved = JSON.stringify(Object.entries(snap.reservedTickers ?? {}).sort());
+    if (theirReserved !== JSON.stringify(Object.entries(reservedTickers ?? {}).sort())) throw new Error("snapshot reserved tickers differ");
+    const idx = new Indexer({ vkey, startHeight: snap.startHeight, genesis: snap.genesis, activations, pow, mineFee, strictTicker, staleFactor, reservedTickers });
     idx.height = snap.height;
     for (const o of snap.outputs) {
       idx.tree.insert(BigInt(o.commitment));

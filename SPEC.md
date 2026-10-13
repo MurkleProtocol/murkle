@@ -208,7 +208,7 @@ circulates inside it.
 ### DEPLOY (op = 0x02), no proof
 | Field | Type |
 |---|---|
-| ticker | u8 length + ASCII `[A-Z0-9]{1,16}`, unique: the first valid DEPLOY claims the ticker |
+| ticker | u8 length + ASCII `[A-Z0-9]{1,16}`, unique: the first valid DEPLOY claims the ticker, unless the ticker is reserved (below) |
 | divisibility | u8, ≤ 8 |
 | mintAmount | u64 LE, > 0 and ≤ 2^63 − 1 (MINT carries `publicAmount` as i64): units per mint |
 | mintCap | u32 LE, > 0: number of mints; `mintAmount × mintCap` ≤ u64 |
@@ -229,6 +229,26 @@ valid DEPLOY can still claim that ticker.
 - The two rules accept different byte strings only when the ticker starts with `EF BB BF` followed by 1 to
   16 valid characters (signet accepts it, mainnet does not). No signet DEPLOY depends on that (checked by a
   replay of the live chain), so signet keeps its verdicts with no activation height.
+
+**Reserved tickers, per network.** The mainnet pins file (`src/pins.mainnet.json`) carries
+`reservedTickers`, a map `{ TICKER: txid | null }`; this release reserves `MURK` (`{ "MURK": null }`).
+Signet has none: its pins file has no such key, the signet indexer ignores the rule and every signet verdict
+and digest is unchanged.
+- A DEPLOY or DEPLOY_POW whose ticker is a key of the map is valid only if its carrier txid equals the pinned
+  txid. While the value is `null`, every DEPLOY and DEPLOY_POW of that ticker is rejected.
+- It is the first deploy rule, checked before the ticker is looked up, so a rejected deploy never claims the
+  ticker. The log entry has ok = false and the reason `ticker reserved: …`; nothing changes but the rejected
+  counter. The pinned transaction is still subject to every other rule (fee policy, a free ticker, …).
+- Keys obey the strict mainnet ticker rule above; a value is `null` or 64 lowercase hex. A node refuses to
+  start with a malformed map.
+- The map is consensus, pinned like `genesisTxid` (section 9): a node with other pins disagrees. A snapshot
+  records the map (key `reservedTickers`, only when it is not empty) and is refused with
+  `snapshot reserved tickers differ` under other pins, so the loader archives it and resyncs.
+- Why: a DEPLOY counts from genesis but a DEPLOY_POW only from the mining height (genesis + 1), so anyone who
+  sees the genesis ATTEST could otherwise take the flagship ticker first, and no fee rate prevents it. The
+  operator's own launch is the one transaction that may deploy the ticker; its signed transaction is built
+  first, its txid pinned in a release, and only then broadcast (docs/MAINNET.md G5b), so every node knows
+  `MURK` from its deploy block. Until a txid is pinned the node shows no `MURK`.
 
 - `asset id = (height << 32) | transaction index in block`; the coinbase has index 0.
 - The block adapter must pass **all** transactions of the block in their original order.
@@ -287,7 +307,8 @@ There is no per-wallet limit in the MVP: it can be bypassed with multiple wallet
 ## 9. Genesis rule and pins
 - Each network has its own pins file: `src/pins.json` (signet, unchanged) and `src/pins.mainnet.json`
   (mainnet). The mainnet file starts with `manifestSha256`, `artifacts.zkey`, `artifacts.vkey`,
-  `genesisTxid` and `activationHeight` all `null` and the mining activation `null`; its wasm pin equals
+  `genesisTxid` and `activationHeight` all `null` and the mining activation `null`, plus
+  `reservedTickers` = `{ "MURK": null }` (section 7); its wasm pin equals
   signet's (same circuit). The operator writes the artifact pins from the output of `npm run key:mainnet` and
   the genesis fields after the mainnet ATTEST confirms
   (docs/MAINNET.md). On mainnet the server refuses to start with an unpinned verification key, and before
@@ -388,7 +409,10 @@ holds the whole state there. `restore()` accepts version 3 when every activation
 caller's or both are `null` or above the snapshot height, and version 2 (digest version 1) when every
 caller activation is `null` or above the snapshot height (assets become `kind: "mint"`, mining state
 empty). Anything else throws `snapshot activations differ` or `unsupported snapshot version`; the
-caller archives the file and resyncs. Before that, node and browser loaders (`Indexer.restoreRewound`)
+caller archives the file and resyncs. A snapshot also records the reserved-ticker map (section 7) when it is
+not empty, and `restore()` throws `snapshot reserved tickers differ` when it is not the caller's; that error is
+not rewound (the reserved-ticker pins change the verdict of a deploy at a height the snapshot does not
+name), so the file is archived and replay restarts from the activation height. Before that, node and browser loaders (`Indexer.restoreRewound`)
 take a snapshot written past an activation height the loading release pins (by the release before it):
 restored under the table it was written with, it rolls back through its undo journal to the block
 before the first height where the two tables differ, and the loader syncs from there under the new
@@ -485,7 +509,8 @@ here applies only at and above the `mining` activation height (section 9), which
 release: on the live chain ops 7, 8 and 9 are `malformed: unknown op N` (section 6, rule 1). No circuit
 change and no new setup: a MINE proof has the MINT shape.
 
-Constants (`src/params.mjs`, consensus): `MINE_WINDOW = 12`, `STALE_FACTOR = 4`, `MIN_DIFFICULTY = 256`,
+Constants (`src/params.mjs`, consensus): `MINE_WINDOW = 12`, `STALE_FACTOR` (per network: 4 on signet,
+none on mainnet; see `D_eff` below), `MIN_DIFFICULTY = 256`,
 span 12 … 432, `16 ≤ targetPerSpan ≤ 100 × span`, `D_MAX = 2^63 − 1`, label
 `murkle/mine/v1`, Argon2 salt `murkle/mine/salt`, Argon2id version 0x13, m = 4096 KiB, t = 1, p = 1,
 tag 32 bytes, no secret, no associated data. Service fee (`MINE_FEE`, per network): on signet
@@ -498,7 +523,7 @@ with its own activation height. The fee recipient's own claims pay the fee back 
 ### DEPLOY_POW (op = 0x09), no proof, 66 bytes + ticker + treasury (67 … 116)
 | Field | Type and rule |
 |---|---|
-| ticker | u8 length + ASCII `[A-Z0-9]{1,16}`; one namespace with DEPLOY: the first valid DEPLOY or DEPLOY_POW claims it |
+| ticker | u8 length + ASCII `[A-Z0-9]{1,16}`; one namespace with DEPLOY: the first valid DEPLOY or DEPLOY_POW claims it, unless the ticker is reserved (section 7) |
 | divisibility | u8, ≤ 8 |
 | reward | u64 LE, 1 … 2^63 − 1 (MINE carries it as i64) |
 | maxSupply | u64 LE, ≥ reward |
@@ -512,7 +537,8 @@ with its own activation height. The fee recipient's own claims pay the fee back 
 | startHeight / endHeight | u32 LE / u32 LE, startHeight 0 = mining opens at the deploy block / endHeight 0 = unbounded; endHeight ≠ 0 needs endHeight ≥ startHeight |
 
 Breaking a rule of the table (or trailing bytes) is `malformed: …`. The indexer then requires, in
-order: the fee policy (with this release's constants any `claimFeeSats ≠ 0` is
+order: the reserved-ticker rule (section 7: a reserved ticker passes only as its pinned transaction;
+`ticker reserved: …`), the fee policy (with this release's constants any `claimFeeSats ≠ 0` is
 `malformed: deployer claim fee not allowed`), `endHeight = 0` or `endHeight ≥ mineStart`
 (`malformed: end before mining start`), and an unclaimed ticker. Asset id as for DEPLOY;
 `mineStart = max(startHeight, deployHeight)`: there is no lead, so with startHeight 0 (or any height at
@@ -533,9 +559,17 @@ password   = challenge ‖ nonce                    (40 bytes)
 powHash    = Argon2id(password, "murkle/mine/salt", m = 4096 KiB, t = 1, p = 1, v = 0x13, 32 bytes)
 solutionId = sha256(password)
 valid      ⇔ int_BE(powHash) ≤ floor((2^256 − 1) / D_eff)
-D_eff      = max(D(refHeight), floor(D(H − 1) / 4))           (H = inclusion height)
+D_eff      = D(refHeight)                                     (mainnet)
+D_eff      = max(D(refHeight), floor(D(H − 1) / 4))           (signet; H = inclusion height)
 ```
 `refHash` is the 32 bytes of the display hex of block `refHeight` from the replay's own chain.
+
+`STALE_FACTOR` is a per-network consensus parameter. On **mainnet** it is off: `D_eff = D(refHeight)`, so
+an honest solution is never refused because the difficulty rose after its reference block (the
+12-block window already bounds how old a reference can be). On **signet** it is 4, exactly as it was
+when mining went live there, so signet verdicts and digests do not change. The value is read from the
+network table in `src/params.mjs`; every check that evaluates the rule (the indexer, the browser
+replay, the wallet and CLI checks before paying, the relayer) uses `effectiveDifficulty` in `src/mine.mjs`.
 
 Checks, in this order, all before any mutation (the first failure is the reason):
 1. activation gate, strict decoding (section 6, rule 1);
@@ -589,7 +623,10 @@ journal restores every mining field, `dPts`, `mineAcc` and the claimed set.
 What this does not promise: a GPU or a server miner can be thousands of times faster than a browser
 tab, and anyone can rent many computers; Bitcoin miners choose what goes into blocks and in what order
 and can delay a claim until it expires; with few solutions per span, emission runs a few percent above
-target, and after a quiet period or a hashrate jump the first block can carry many claims.
+target, and after a quiet period or a hashrate jump the first block can carry many claims. The supply
+cap is exact: in the block that reaches `maxSupply`, claims beyond it are rejected (`supply cap reached`)
+and the fees they paid are spent. The wallet and the CLI warn before paying when the claims left are at
+most 10, or at most 3 times the average claims per block over the last 144 blocks (not consensus).
 
 ## 16. Chain data and header verification (non-consensus)
 

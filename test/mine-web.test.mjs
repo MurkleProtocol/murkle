@@ -492,6 +492,46 @@ test("page helpers: threads, live figures, near-cap, default route, quotes and w
 /* 3. session: keys, assets, W-M                                                           */
 /* ======================================================================================= */
 
+test("capWarning: at most 10 claims left, or at most 3 times the average claims per block over 144 blocks; claims in flight count", () => {
+  const left = (n, over = {}) => minedView({ issued: String(1_050_000 - 50 * n), ...over }); // reward 50
+  assert.equal(MINEVIEW.capWarning(null), null);
+  assert.equal(MINEVIEW.capWarning(minedView()), null, "plenty left");
+  // Always at 10 claims or fewer, however quiet.
+  const ten = MINEVIEW.capWarning(left(10));
+  assert.equal(ten, "Only 10 ORE claims are left under the supply cap. Claims beyond the cap in the same block are not credited, and their Bitcoin fee and service fee are lost.");
+  assert.match(MINEVIEW.capWarning(left(1)), /^Only 1 ORE claim is left under the supply cap\./);
+  assert.equal(MINEVIEW.capWarning(left(11)), null, "11 left and a quiet chain: no warning");
+  // Busy blocks: the series is the last 144 blocks, mining began long ago, so the average is claims / 144.
+  const busy = (perBlock) => ({ series: { claims: [[330_000 - 1, perBlock * 144]] } });
+  assert.match(MINEVIEW.capWarning(left(120, busy(40))), /^Only 120 ORE claims are left under the supply cap, and recent blocks carried about 40 claims each\. /, "120 <= 3 x 40");
+  assert.equal(MINEVIEW.capWarning(left(121, busy(40))), null, "121 > 3 x 40");
+  assert.equal(MINEVIEW.capWarning(left(100, busy(30))), null, "100 > 3 x 30");
+  assert.notEqual(MINEVIEW.capWarning(left(90, busy(30))), null, "90 <= 3 x 30");
+  // Claims older than 144 blocks are not counted.
+  assert.equal(MINEVIEW.capWarning(left(100, { series: { claims: [[330_000 - 200, 99_999]] } })), null);
+  // Mining began 5 blocks ago: the average is over those 5 blocks.
+  assert.notEqual(MINEVIEW.capWarning(left(100, { mineStart: 329_996, series: { claims: [[329_999, 200]] } })), null, "200 claims in 5 blocks = 40 per block");
+  // Claims in flight leave fewer: 15 left less 6 in flight is 9.
+  assert.match(MINEVIEW.capWarning(left(15, { pendingClaims: 6 })), /^Only 9 ORE claims are left/);
+  assert.match(MINEVIEW.capWarning(left(15, { pendingReward: "300" })), /^Only 9 ORE claims are left/, "pendingReward wins");
+  // The page gates the claim on it, before anything is checked or paid.
+  const page = src("web/src/views/app-mine.js");
+  const claimFn = page.slice(page.indexOf("async function claim(sol) {"), page.indexOf("/* ----- data ----- */"));
+  assert.ok(claimFn.indexOf("capWarning(view)") > 0 && claimFn.indexOf("capWarning(view)") < claimFn.indexOf("s.claimMine("), "the warning comes before the claim");
+  assert.match(claimFn, /sol\.capSeen = true;[^]*return paint\(\);/, "automatic claiming stops at the warning; the second click goes on");
+  assert.match(page, /"Claim anyway"/);
+});
+
+test("the mined token page hides the stale floor on a network without a stale bound (staleFactor null)", async () => {
+  const TOKEN = await import("../web/src/views/token.js");
+  const page = (over) => String(TOKEN.minedPageHTML(minedView(over), { height: 330_000, feed: [] }));
+  assert.ok(has(page({}), "Stale floor"), "signet: the floor is shown");
+  assert.ok(has(page({}), "difficulty now / 4: older work must meet at least this"));
+  const main = page({ staleFactor: null, staleFloor: null });
+  assert.ok(!has(main, "Stale floor"), "mainnet: D_eff is D(ref), there is no floor to show");
+  assert.ok(has(main, "Difficulty now"));
+});
+
 test("the mining key differs from the transfer key; mining coins never pay transfers or top-ups", () => {
   const phrase = S.newPhrase();
   const s = new S.Session({ phrase });

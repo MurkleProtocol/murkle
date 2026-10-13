@@ -92,9 +92,9 @@ const powError = (codeName) => Object.assign(new Error("Argon2 worker failed"), 
  * has started: tip = mineStart. `w.coins(values)` adds confirmed C coins, `w.account(sats)` a funded
  * relay account.
  */
-async function world({ config = {}, fee = 1, mineFee = MINE_FEE, terms = {}, deploy = true, act = ACT, pow = true, start = START, table = null } = {}) {
+async function world({ config = {}, fee = 1, mineFee = MINE_FEE, terms = {}, deploy = true, act = ACT, pow = true, start = START, table = null, staleFactor } = {}) {
   const esplora = makeFakeEsplora({ fee });
-  const idx = new MineIndexer({ startHeight: start, activations: table ?? activations(act), mineFee });
+  const idx = new MineIndexer({ startHeight: start, activations: table ?? activations(act), mineFee, ...(staleFactor === undefined ? {} : { staleFactor }) });
   const pool = new FakePool();
   if (pow) idx.pow = pool;
   // The MINE_SCRIPT bind needs the spent output's script: read from the fake's raw transactions.
@@ -758,6 +758,37 @@ test("stale_work: work that meets D(ref) but not the stale bound is refused with
   assert.deepEqual([out.status, out.body.error], [422, { code: "stale_work", message: MESSAGES.stale_work }]);
   assert.equal(w.r.books.account(a.idHex).balance, before, "no penalty for stale work");
   assert.equal(w.r.invalidFor(a.idHex).length, 0);
+  booksOk(w);
+});
+
+test("mainnet rule (no stale factor): work that meets D(ref) is queued, signed and carried after a difficulty jump of more than 4x", async () => {
+  const w = await world({ staleFactor: null });
+  await w.coins([20_000, 20_000, 20_000]);
+  const a = await w.account();
+  const ref = w.idx.height;
+  const d0 = w.idx.difficultyAt(w.asset, ref);
+  const exact = bigToBytes(targetOf(d0), 32); // meets D(ref) exactly
+  const early = claimOf(w);
+  w.pool.answers.set(hex(early.claim.password), exact);
+  const queued = await send(w, a, early.envelope);
+  assert.equal(queued.status, 202, JSON.stringify(queued.body));
+  await w.mine(Array.from({ length: 60 }, () => selfPaid(w).tx));
+  assert.ok(w.idx.difficultyAt(w.asset, w.idx.height) > 4n * d0, "the difficulty jumped more than 4x");
+  assert.equal(w.idx.effectiveDifficulty(w.asset, ref, w.idx.height + 1), d0, "D_eff is D(ref)");
+  // Not dropped as stale: it goes out.
+  await w.tick();
+  assert.equal(item(w, queued).status, "broadcast", item(w, queued).reason);
+  assert.equal(carriersOf(w, early.envelope).length, 1);
+  // A new submit of a pre-jump solution is accepted too, with no stale_work.
+  const late = claimOf(w, { ref });
+  w.pool.answers.set(hex(late.claim.password), exact);
+  const out = await send(w, a, late.envelope);
+  assert.equal(out.status, 202, JSON.stringify(out.body));
+  // Work that misses D(ref) is still pow_invalid (penalised): there is no stale_work without a stale bound.
+  const miss = claimOf(w, { ref });
+  w.pool.answers.set(hex(miss.claim.password), new Uint8Array(32).fill(0xff));
+  const bad = await send(w, a, miss.envelope);
+  assert.deepEqual([bad.status, bad.body.error.code], [422, "pow_invalid"]);
   booksOk(w);
 });
 

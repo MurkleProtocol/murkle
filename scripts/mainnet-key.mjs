@@ -277,7 +277,7 @@ export async function main(argv = process.argv.slice(2), out = console) {
 
   out.log(`\nMainnet key written to ${r.dir}`);
   out.log(`  contribution "${MAINNET_CONTRIBUTION_NAME}"\n  hash ${r.contributionHash}`);
-  out.log("\nPut these into src/pins.mainnet.json (leave genesisTxid, activationHeight and activations as they are):");
+  out.log("\nPut these into src/pins.mainnet.json (leave genesisTxid, activationHeight, reservedTickers and activations as they are):");
   out.log(`  "manifestSha256": "${r.manifestSha256}",`);
   out.log(`  "artifacts": { "wasm": "${r.sha256.wasm}", "zkey": "${r.sha256.zkey}", "vkey": "${r.sha256.vkey}" }`);
   out.log("\nNext (docs/MAINNET.md, G2): run `npm run key:verify -- --network mainnet`, publish the three files in a release");

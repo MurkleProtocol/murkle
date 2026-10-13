@@ -670,7 +670,7 @@ export function minedPageHTML(m, { height = null, feed = null, walletReady = fal
           <header class="panel-head"><div class="panel-titles"><div class="eyebrow">MINING ${prov("IDX")}</div><h2 class="h3" id="tk-mining-h">Difficulty and hashrate</h2></div></header>
           ${kv([
             ["Difficulty now", html`<span class="mono">${int(m.difficulty)}</span>`],
-            ["Stale floor", html`<span class="mono">${int(m.staleFloor)}</span> <span class="caption t-3">difficulty now / ${m.staleFactor ?? 4}: older work must meet at least this</span>`],
+            ...(m.staleFactor === null ? [] : [["Stale floor", html`<span class="mono">${int(m.staleFloor)}</span> <span class="caption t-3">difficulty now / ${m.staleFactor ?? 4}: older work must meet at least this</span>`]]),
             ["Target per block", html`<span class="mono">${perBlock.toFixed(2)}</span>`],
             ["Network hashrate", html`<span class="mono">${rateText(hs)}</span> <span class="caption t-3">an estimate from the work counted in the last 144 blocks</span>`],
             ["Claims in flight", m.pendingClaims != null ? int(m.pendingClaims) : DASH],

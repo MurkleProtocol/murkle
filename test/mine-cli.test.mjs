@@ -20,6 +20,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { PassThrough } from "node:stream";
 import * as btc from "@scure/btc-signer";
 import { sha256 } from "@noble/hashes/sha256";
 import { concat, hex, unhex } from "../src/bytes.mjs";
@@ -27,6 +28,7 @@ import * as envelopeLib from "../src/envelope.mjs";
 import * as funding from "../src/btc/funding.mjs";
 import { btcAccount, dustLimit } from "../src/btc/funding.mjs";
 import * as params from "../src/params.mjs";
+import { capRisk, capWarningText } from "../src/mine.mjs";
 import { auditFacts } from "../scripts/facts.mjs";
 
 const DIR = mkdtempSync(join(tmpdir(), "murkle-mine-cli-"));
@@ -36,7 +38,7 @@ delete process.env.MURKLE_RELAY_URL;
 const CLI = await import("../bin/murkle.mjs");
 const {
   DEPLOY_POW_USAGE, HELP, MINE_COPY, MINE_USAGE, claimRefusal, deployPowCommand, deployPowTerms, digestVersionLine, keepPending, listPending,
-  mergeWalletFile, mineKeyOf, minedAssetLines, parseMineArgs, pickRetry, prepareCoinsCommand, runMiner,
+  mergeWalletFile, mineKeyOf, minedAssetLines, parseMineArgs, pickRetry, prepareCoinsCommand, runMiner, terminalConfirm,
 } = CLI;
 const relayLib = await import("../src/relay-account.mjs");
 
@@ -93,6 +95,8 @@ function stubLib(over = {}) {
     rewardAt: (asset) => asset.reward,
     mineStatus: (asset, tip) => (tip < asset.mineStart ? "mining-soon" : asset.issued + asset.reward > asset.maxSupply ? "mined-out" : "mining"),
     requiredFeeOutputs: (asset, fee) => [{ script: unhex(fee.platformScript), sats: fee.platformSats, role: "platform" }],
+    capRisk,
+    capWarningText,
     disabled: null,
     disableFastPath(reason) {
       lib.disabled = reason;
@@ -549,6 +553,85 @@ test("mine prints its hashrate, rolls notes under W-M, and stops on Ctrl+C after
   assert.equal(stop.esplora.broadcasts.length, 0);
 });
 
+test("mine warns before paying when the supply cap is close and pays only after an explicit continue", async () => {
+  const warnings = (out) => out.filter((l) => l.startsWith("warning: Only "));
+  const text6 = "warning: Only 6 DIG claims are left under the supply cap. Claims beyond the cap in the same block are not credited, and their Bitcoin fee and service fee are lost.";
+  // 6 claims left (10,000 - 9,700 = 6 x 50): warned whatever the traffic (always at 10 or fewer). No flag and no terminal: stops, nothing paid.
+  const stop = fakeChain({ issued: 9_700n });
+  const r1 = await run(stop, { maxClaims: 1, threads: 1 });
+  assert.equal(r1.status, "error");
+  assert.match(r1.reason, /the supply cap is close; nothing was paid\. Run mine again with --accept-cap-risk to pay anyway/);
+  assert.deepEqual(warnings(r1.out), [text6]);
+  assert.deepEqual([stop.wallet.finals.length, stop.esplora.broadcasts.length, stop.file.pending.length], [0, 0, 0], "nothing proved, paid or locked");
+  // --accept-cap-risk: the same warning, then the claim is paid.
+  const flag = fakeChain({ issued: 9_700n });
+  const r2 = await run(flag, { maxClaims: 1, threads: 1, acceptCapRisk: true });
+  assert.deepEqual([r2.status, r2.sent], ["done", 1]);
+  assert.deepEqual(warnings(r2.out), [text6]);
+  assert.equal(flag.esplora.broadcasts.length, 1);
+  // A terminal answers yes: asked once, then paid. It answers no: stops, nothing paid.
+  const asked = [];
+  const yes = fakeChain({ issued: 9_700n });
+  const r3 = await run(yes, { maxClaims: 1, threads: 1, confirm: async (t) => (asked.push(t), true) });
+  assert.deepEqual([r3.status, r3.sent, asked], ["done", 1, [text6.slice("warning: ".length)]]);
+  const no = fakeChain({ issued: 9_700n });
+  const r4 = await run(no, { maxClaims: 1, threads: 1, confirm: async () => false });
+  assert.equal(r4.status, "error");
+  assert.equal(no.esplora.broadcasts.length, 0);
+  // The terminal waited past the reference block's window before the yes: the claim is checked again and not paid late.
+  const late = fakeChain({ issued: 9_700n });
+  const lateAsked = [];
+  const r7 = await run(late, { maxClaims: 1, threads: 1, confirm: async (t) => (lateAsked.push(t), late.chain.tip === 1000 && (late.chain.tip += 20), true) });
+  assert.ok(r7.out.some((l) => /^solution not paid: the reference block 1000 is too old to pay for now \(tip 1020/.test(l)), r7.out.join("\n"));
+  assert.deepEqual([r7.status, r7.sent, late.esplora.broadcasts.length, lateAsked.length], ["done", 1, 1, 1], "asked once; the first answer is not reused for a stale claim, the next fresh claim pays");
+  // Busy blocks: 100 claims left; 440 claims in the 11 blocks since mining began = 40 per block, and 100 <= 3 x 40.
+  const busy = fakeChain({ issued: 5_000n });
+  busy.asset.claimsByHeight = [[999, 220], [1000, 220]];
+  const r5 = await run(busy, { maxClaims: 1, threads: 1 });
+  assert.equal(r5.status, "error");
+  assert.ok(r5.out.includes("warning: Only 100 DIG claims are left under the supply cap, and recent blocks carried about 40 claims each. Claims beyond the cap in the same block are not credited, and their Bitcoin fee and service fee are lost."), r5.out.join("\n"));
+  assert.equal(busy.esplora.broadcasts.length, 0);
+  // Quiet blocks (18 per block, 3 x 18 < 100) and plenty left: no warning, no question.
+  const quiet = fakeChain({ issued: 5_000n });
+  quiet.asset.claimsByHeight = [[999, 100], [1000, 100]];
+  const r6 = await run(quiet, { maxClaims: 1, threads: 1 });
+  assert.deepEqual([r6.status, warnings(r6.out).length], ["done", 0]);
+  const plenty = await run(fakeChain(), { maxClaims: 1, threads: 1 });
+  assert.deepEqual([plenty.status, warnings(plenty.out).length], ["done", 0]);
+});
+
+test("the cap question: asked on a terminal (default no), absent without one", async () => {
+  assert.equal(terminalConfirm({ input: Object.assign(new PassThrough(), { isTTY: false }) }), null, "no terminal: the miner stops unless --accept-cap-risk");
+  const ask = async (line) => {
+    const input = Object.assign(new PassThrough(), { isTTY: true });
+    const output = new PassThrough();
+    let shown = "";
+    output.on("data", (b) => (shown += b));
+    const confirm = terminalConfirm({ input, output });
+    const answer = confirm("ignored");
+    input.write(line);
+    return [await answer, shown];
+  };
+  assert.deepEqual(await ask("y\n"), [true, "Pay this claim anyway? [y/N] "]);
+  assert.equal((await ask("YES\n"))[0], true);
+  assert.equal((await ask("\n"))[0], false, "Enter alone is no");
+  assert.equal((await ask("n\n"))[0], false);
+  assert.equal((await ask("maybe\n"))[0], false);
+
+  // Ctrl-D / a closed input (Ctrl-C closes the interface the same way) and an aborted signal answer no instead of hanging.
+  const settle = (p) => Promise.race([p, new Promise((r) => setTimeout(() => r("hung"), 2000))]);
+  const eof = Object.assign(new PassThrough(), { isTTY: true });
+  const pending = terminalConfirm({ input: eof, output: new PassThrough() })("x");
+  eof.end();
+  assert.equal(await settle(pending), false, "end of input is no");
+  const ac = new AbortController();
+  const quiet = Object.assign(new PassThrough(), { isTTY: true });
+  const pending3 = terminalConfirm({ input: quiet, output: new PassThrough(), signal: ac.signal })("x");
+  ac.abort();
+  assert.equal(await settle(pending3), false, "an aborted run is no");
+  assert.equal(await settle(terminalConfirm({ input: quiet, output: new PassThrough(), signal: ac.signal })("x")), false, "already aborted is no");
+});
+
 test("mine refuses before paying when the claim cannot land: cap with claims in flight, a stale bound, a reorged reference, a disagreeing fast path", async () => {
   // The cap, counting the relayer's in-flight claims (pendingClaims), checked after the solution and before any proof.
   const ac = new AbortController();
@@ -842,7 +925,7 @@ test("the mining key: created once in the wallet file, 32 bytes, never the BTC f
 test("mine flags, strictly: defaults, routes, relayer URLs, --prepare-coins only with the mining key", () => {
   const none = () => undefined;
   assert.deepEqual(parseMineArgs(["erin", "dig"], { read: none }), {
-    name: "erin", ticker: "DIG", pay: "key", threads: null, maxClaims: null, maxFeeRate: null, prepareCoins: null, esplora: null, relay: null, linkable: false,
+    name: "erin", ticker: "DIG", pay: "key", threads: null, maxClaims: null, maxFeeRate: null, prepareCoins: null, esplora: null, relay: null, linkable: false, acceptCapRisk: false,
   });
   const r = parseMineArgs(["erin", "DIG", "--pay", "relay", "--threads", "3", "--max-claims", "4", "--max-fee-rate=9"], { read: none });
   assert.deepEqual([r.pay, r.threads, r.maxClaims, r.maxFeeRate, r.relay], ["relay", 3, 4, 9, "http://localhost:8787"]);
@@ -851,6 +934,7 @@ test("mine flags, strictly: defaults, routes, relayer URLs, --prepare-coins only
   // L1: --linkable consents to relayed claims while the pool is thin; only with --pay relay.
   assert.equal(parseMineArgs(["erin", "DIG", "--pay", "relay", "--linkable"], { read: none }).linkable, true);
   assert.throws(() => parseMineArgs(["erin", "DIG", "--linkable"], { read: none }), /--linkable goes with --pay relay/);
+  assert.equal(parseMineArgs(["erin", "DIG", "--accept-cap-risk"], { read: none }).acceptCapRisk, true);
   assert.equal(parseMineArgs(["erin", "DIG", "--esplora", "https://mempool.space/signet/api/"], { read: none }).esplora, "https://mempool.space/signet/api");
   assert.equal(parseMineArgs(["erin", "DIG", "--prepare-coins", "8"], { read: none }).prepareCoins, 8);
   const bad = [
@@ -867,6 +951,7 @@ test("mine flags, strictly: defaults, routes, relayer URLs, --prepare-coins only
   ];
   for (const [args, re, read = none] of bad) assert.throws(() => parseMineArgs(args, { read }), re, args.join(" "));
   assert.ok(MINE_USAGE.includes("[--pay key|relay]"));
+  assert.ok(MINE_USAGE.includes("[--accept-cap-risk]"));
 });
 
 /* ------------------------------------------------------------------ W-M in the wallet file */
@@ -974,7 +1059,7 @@ test("README documents deploy-pow and mine, the routes, the disclosures and the 
   for (const s of [
     "deploy-pow alice --ticker", "--dry-run", "mine alice", "--pay relay", "--pay key", "--prepare-coins", "--max-fee-rate", "--max-claims", "--threads", "--esplora", "mineKey",
     "500 sats", "platform address", "no deployer", "claim fee", "--treasury", "activation height", "--start now", "--start-after N", MINE_COPY.start, "12 blocks", "W-M", "ref + 12", "GPU", "rent", "Bitcoin miners",
-    "relayer", "token and the reward", "Test coins", "digest version changes at",
+    "relayer", "token and the reward", "test coins", "digest version changes at",
   ]) {
     assert.ok(mining.includes(s), `README mining: ${s}`);
   }

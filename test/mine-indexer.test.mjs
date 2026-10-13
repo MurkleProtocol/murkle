@@ -74,8 +74,8 @@ const powTerms = (o = {}) => ({
  * A chain with mining active from START + 1, a DEPLOY_POW at START + 1 and every block up to
  * its mineStart applied, so the next block can carry claims.
  */
-async function minedChain({ start = 900_000, activation, pow = ctlPow(), stub = true, terms = {}, vkey = VKEY } = {}) {
-  const idx = new Indexer({ vkey, startHeight: start, activations: mining(activation ?? start + 1), pow });
+async function minedChain({ start = 900_000, activation, pow = ctlPow(), stub = true, terms = {}, vkey = VKEY, staleFactor } = {}) {
+  const idx = new Indexer({ vkey, startHeight: start, activations: mining(activation ?? start + 1), pow, ...(staleFactor === undefined ? {} : { staleFactor }) });
   if (stub) idx.verifyGroth16 = async () => true;
   const blocks = [];
   const add = async (txs, { hash = h32() } = {}) => {
@@ -830,6 +830,59 @@ test("stale bound: a claim at D(ref) is accepted while D(H - 1) <= 4 D(ref) and 
   assert.equal(verdictOf(calm.idx, okTx).ok, true);
   assert.equal(verdictOf(calm.idx, okTx).difficulty, dr.toString());
   assert.ok(a.dPts.length <= MINE_WINDOW + 2);
+});
+
+test("stale factor per network: the same difficulty surge is rejected on signet (factor 4) and accepted on mainnet (none); signet replays are unchanged", async () => {
+  assert.equal(P.NETWORKS.signet.staleFactor, 4);
+  assert.equal(P.NETWORKS.mainnet.staleFactor, null);
+  assert.equal(P.STALE_FACTOR, P.NETWORKS[P.NETWORK].staleFactor, "this process follows its network");
+  const start = 972_000;
+  const pow = ctlPow();
+  const { idx, asset, add, blocks } = await minedChain({ start, pow });
+  const ref0 = idx.height; // D = 256
+  for (let k = 0; k < 2; k++) await add(Array.from({ length: 100 }, () => claimTx(synthClaim(idx, asset))));
+  const H = idx.height + 1;
+  const d0 = idx.difficultyAt(asset, ref0);
+  const dTip = idx.difficultyAt(asset, H - 1);
+  assert.ok(dTip > 4n * d0, `the difficulty rose more than 4x between the reference and the inclusion: ${d0} -> ${dTip}`);
+  // Work exactly at D(ref0): enough for D(ref0), far short of D(H - 1) / 4.
+  const late = synthClaim(idx, asset, { ref: ref0 });
+  pow.forced.set(hex(idx.claimOf(late.env).password), bigToBytes(M.targetOf(d0), 32));
+  const lateTx = claimTx(late);
+  await add([lateTx]);
+  assert.equal(verdictOf(idx, lateTx).reason, "insufficient work", "signet keeps the factor");
+
+  // Replay the very same blocks under each rule.
+  const replay = async (opts) => {
+    const r = new Indexer({ vkey: VKEY, startHeight: start, activations: mining(start + 1), pow, ...opts });
+    r.verifyGroth16 = async () => true;
+    for (const b of blocks) await r.applyBlock(b);
+    return r;
+  };
+  const dflt = await replay({});
+  const four = await replay({ staleFactor: 4 });
+  const main = await replay({ staleFactor: null });
+  assert.equal(dflt.digestAt(dflt.height), idx.digestAt(idx.height), "a signet replay (the default rule) reproduces the digest");
+  assert.equal(four.digestAt(four.height), idx.digestAt(idx.height), "factor 4 is the signet rule");
+  assert.equal(dflt.staleFactor, 4);
+  assert.equal(main.staleFactor, null);
+  const mainVerdict = verdictOf(main, lateTx);
+  assert.equal(mainVerdict.ok, true, "mainnet: D_eff = D(ref)");
+  assert.equal(mainVerdict.difficulty, d0.toString());
+  assert.equal(main.effectiveDifficulty(asset, ref0, H), d0);
+  assert.equal(dflt.effectiveDifficulty(asset, ref0, H), dTip / 4n);
+  // The signet rule written out as it stood before the per-network parameter: max(D(ref), floor(D(H - 1) / 4)), at every pair in the window.
+  for (let ref = ref0 - 3; ref <= idx.height; ref++) {
+    for (let at = ref + 1; at <= H; at++) {
+      const dRef = idx.difficultyAt(asset, ref);
+      const dPrev = idx.difficultyAt(asset, at - 1) / 4n;
+      assert.equal(dflt.effectiveDifficulty(asset, ref, at), dRef > dPrev ? dRef : dPrev, `signet rule at ref ${ref}, block ${at}`);
+    }
+  }
+  assert.notEqual(main.digestAt(main.height), idx.digestAt(idx.height), "the networks differ exactly where the stale bound bites");
+  assert.equal(main.assets.get(asset).claims, idx.assets.get(asset).claims + 1);
+  // Where the bound never bites, the rules agree claim for claim: the first 200 claims and their digests (block by block).
+  for (let h = start; h <= idx.height - 1; h++) assert.equal(main.digestAt(h), idx.digestAt(h), `block ${h}`);
 });
 
 test("difficulty points: a block of claims steps D from D(H - 1) by the counted work; quiet blocks decay lazily", async () => {

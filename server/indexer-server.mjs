@@ -38,7 +38,7 @@ import { loadIndexer, loadPinnedVkey, saveIndexer } from "../src/store-node.mjs"
 import { hex } from "../src/bytes.mjs";
 import { ANCHOR_WINDOW } from "../src/indexer.mjs";
 import {
-  difficultyAt, difficultySeries, hashrateEstimate, lowFloor, mineStatus, nextHalving, requiredFeeOutputs, rewardAt, targetHex,
+  difficultyAt, difficultySeries, hashrateEstimate, lowFloor, mineStatus, nextHalving, requiredFeeOutputs, rewardAt, staleFloorOf, targetHex,
 } from "../src/mine.mjs";
 import { createNodePowPool } from "../src/pow-pool.mjs";
 import {
@@ -309,7 +309,7 @@ function minedView(a, height, claims, mineFee) {
     halvingInterval: a.halvingInterval,
     nextHalving: nextHalving(a, height),
     difficulty: difficulty.toString(),
-    staleFloor: (difficulty / BigInt(STALE_FACTOR)).toString(),
+    staleFloor: staleFloorOf(difficulty)?.toString() ?? null, // null: no stale bound on this network (SPEC.md §15)
     target: targetHex(difficulty),
     initialDifficulty: a.initialDifficulty.toString(),
     minDifficulty: a.minDifficulty.toString(),
@@ -337,7 +337,7 @@ function minedDetail(a, height, claims) {
   const from = Math.max(a.mineStart, height - SERIES_BLOCKS + 1);
   return {
     window: MINE_WINDOW,
-    staleFactor: STALE_FACTOR,
+    staleFactor: STALE_FACTOR, // null on mainnet: no stale bound
     hashrateEstimate: hashrateEstimate(claims, height),
     series: {
       difficulty: from > height ? [] : difficultySeries(a, claims, { from, to: height }).map(([h, d]) => [h, d.toString()]),
@@ -512,6 +512,7 @@ export function createApp({
       tipHash: hashAt(height),
       recentHashes: recent,
       genesis: idx.genesis ? { txid: idx.genesis.txid, height: idx.startHeight, manifestSha256: idx.genesis.manifestSha256 } : null,
+      reservedTickers: { ...idx.reservedTickers },
       outputs: idx.outputs.slice(),
       nullifiers: [...idx.nullifiers],
       log: idx.log.slice(),
@@ -774,6 +775,7 @@ export function createApp({
       nullifiers: v.nullifiers.length,
       genesis: v.genesis,
       preGenesis: !v.genesis,
+      ...(Object.keys(v.reservedTickers).length ? { reservedTickers: v.reservedTickers } : {}),
       ...(v.genesis ? {} : { warning: `Pre-genesis: no genesis attestation is pinned yet. This indexer started at block ${v.startHeight}; a re-genesis will reset it.` }),
       anchorWindow: ANCHOR_WINDOW,
       syncing: status.syncing,

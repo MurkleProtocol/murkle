@@ -17,7 +17,7 @@ import { prov } from "../ui/prov.js";
 import { sigil } from "../ui/sigil.js";
 import { toast } from "../ui/toast.js";
 import { hex } from "../../../src/bytes.mjs";
-import { targetHex } from "../../../src/mine.mjs";
+import { capRisk, capWarningText, targetHex } from "../../../src/mine.mjs";
 import { MINE_FEE, mineFeeReady } from "../../../src/params.mjs";
 import { IS_SIGNET } from "../config.js";
 import * as api from "../api.js";
@@ -99,6 +99,30 @@ export function defaultRoute({ relayMine = null, balance = null, serviceSats = 0
   return q && Number.isSafeInteger(balance?.balance) && BigInt(balance.balance) >= q.total ? "relay" : "key";
 }
 
+/** Rewards of claims in flight: at their own rewards (pendingReward) when the server reports it. */
+function pendingRewardOf(view, reward) {
+  return /^\d+$/.test(String(view.pendingReward ?? ""))
+    ? BigInt(view.pendingReward)
+    : reward * (Number.isSafeInteger(view.pendingClaims) ? BigInt(view.pendingClaims) : 0n);
+}
+
+/**
+ * The warning shown before a claim is paid when the supply cap is close, or null: the claims that
+ * still fit (counting claims in flight) are at most 10, or at most 3 times the average claims per
+ * block over the last 144 blocks (capRisk). Claims beyond the cap in the same block are not credited
+ * and their fees are lost. The page shows it and waits for a second, explicit click.
+ */
+export function capWarning(view) {
+  if (!view) return null;
+  const reward = BigInt(view.reward ?? 0);
+  if (reward <= 0n) return null;
+  const risk = capRisk({
+    remaining: BigInt(view.maxSupply) - BigInt(view.issued) - pendingRewardOf(view, reward), reward,
+    claims: view.series?.claims ?? [], tip: view.tip?.height ?? 0, mineStart: view.mineStart ?? 0,
+  });
+  return risk ? capWarningText(risk, view.ticker) : null;
+}
+
 /**
  * Supply is nearly mined out when what is left, counting claims in flight, is below the reward
  * times (claims in the last 3 blocks + 1) (mining.md §6.4).
@@ -107,11 +131,7 @@ export function nearCap(view) {
   if (!view) return false;
   const reward = BigInt(view.reward ?? 0);
   if (reward <= 0n) return false;
-  // Claims in flight at their own rewards (pendingReward) when the server reports it.
-  const pending = /^\d+$/.test(String(view.pendingReward ?? ""))
-    ? BigInt(view.pendingReward)
-    : reward * (Number.isSafeInteger(view.pendingClaims) ? BigInt(view.pendingClaims) : 0n);
-  const remaining = BigInt(view.maxSupply) - BigInt(view.issued) - pending;
+  const remaining = BigInt(view.maxSupply) - BigInt(view.issued) - pendingRewardOf(view, reward);
   const tip = view.tip?.height ?? 0;
   const recent = (view.series?.claims ?? []).filter(([h]) => Number(h) > tip - 3).reduce((s, [, n]) => s + Number(n), 0);
   return remaining < reward * BigInt(recent + 1);
@@ -410,6 +430,14 @@ export function mineView(root, s, query, { spawn = spawnWorker } = {}) {
 
   async function claim(sol) {
     if (sol.status !== "found") return;
+    // Close to the supply cap: say so before anything is paid. The solution stays "found" (also with
+    // automatic claiming); only a second click, on "Claim anyway", goes on.
+    if (capWarning(view) && !sol.capSeen) {
+      sol.capSeen = true;
+      sol.message = capWarning(view);
+      return paint();
+    }
+    if (sol.capSeen) sol.message = null;
     sol.status = "checking";
     paint();
     try {
@@ -622,8 +650,8 @@ export function mineView(root, s, query, { spawn = spawnWorker } = {}) {
       const left = s.view ? mineWindowLeft(sol.ref, s.view.height, routeNow()) : null;
       return html`<li class="mine-sol">
         <span class="mine-sol-main"><b>+${amountHTML(sol.reward, view?.divisibility ?? 0)}</b> <span class="caption t-3">block ${heightText(sol.ref)}</span>${chip}${sol.step && (status === "checking" || status === "proving") ? html`<span class="caption t-3">${sol.step}</span>` : ""}</span>
-        ${status === "found" ? button({ label: `Claim · ${ROUTE_LABEL[routeNow()]}`, kind: "btc", size: "sm", action: "mine-claim", attrs: { "data-key": sol.key }, disabled: left !== null && left < 0, reason: left !== null && left < 0 ? MINE_TEXT.window : null }) : ""}
-        ${sol.message ? html`<p class="caption ${status === "failed" || status === "stale" ? "t-warn" : "t-3"}">${sol.message}</p>` : ""}
+        ${status === "found" ? button({ label: `${sol.capSeen && capWarning(view) ? "Claim anyway" : "Claim"} · ${ROUTE_LABEL[routeNow()]}`, kind: "btc", size: "sm", action: "mine-claim", attrs: { "data-key": sol.key }, disabled: left !== null && left < 0, reason: left !== null && left < 0 ? MINE_TEXT.window : null }) : ""}
+        ${sol.message ? html`<p class="caption ${status === "failed" || status === "stale" || (status === "found" && sol.capSeen) ? "t-warn" : "t-3"}">${sol.message}</p>` : ""}
         ${entry?.via === "relay" && MINE_PENDING.has(entry.status) ? html`<p class="caption t-3">${MINE_TEXT.pendingRelay}</p>` : ""}
         ${entry?.txid ? html`<a class="caption" href="/tx/${entry.txid}" data-link>Receipt →</a>` : ""}
       </li>`;
