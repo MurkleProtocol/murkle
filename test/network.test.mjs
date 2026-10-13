@@ -636,15 +636,20 @@ test("mainnet relayer defaults, funding network and the pool script", async () =
 
 test("mainnet server: refuses to start before its key is pinned, and before genesis (never binds a port)", async () => {
   const env = { MURKLE_NETWORK: "mainnet", MURKLE_INDEXER_PORT: "0", MURKLE_STATE_PATH: join(DIR, "m-state.json"), MURKLE_RELAYER: "0" };
-  let out = await run(["server/indexer-server.mjs"], env);
-  assert.equal(out.code, 1);
-  assert.match(out.stderr, /refusing to start: mainnet artifacts are not pinned yet \(src\/pins\.mainnet\.json has no vkey\): run npm run key:mainnet/);
-  out = await run(["server/indexer-server.mjs"], { ...env, MURKLE_ALLOW_PRE_GENESIS: "1" });
-  assert.equal(out.code, 1, "staging still refuses an unpinned verification key");
-  assert.match(out.stderr, /artifacts are not pinned yet/);
+  // The mainnet key is pinned (2026-10-13); until the genesis is, the real server refuses for that.
+  if (!JSON.parse(readFileSync(join(ROOT, "src/pins.mainnet.json"), "utf8")).genesisTxid) {
+    const out = await run(["server/indexer-server.mjs"], env);
+    assert.equal(out.code, 1);
+    assert.match(out.stderr, /refusing to start: Murkle has not launched on mainnet: no genesis is pinned in src\/pins\.mainnet\.json/);
+  }
   const r = await child(`
     const S = await import("./server/indexer-server.mjs");
-    console.log(JSON.stringify({ refusal: S.startRefusal({ vkeyPinned: true }), staging: S.startRefusal({ vkeyPinned: true, allowPreGenesis: true }), artifacts: S.ARTIFACTS }));`);
+    console.log(JSON.stringify({
+      unpinned: S.startRefusal({ vkeyPinned: false }), unpinnedStaging: S.startRefusal({ vkeyPinned: false, allowPreGenesis: true }),
+      refusal: S.startRefusal({ vkeyPinned: true, preGenesis: true }), staging: S.startRefusal({ vkeyPinned: true, preGenesis: true, allowPreGenesis: true }),
+      artifacts: S.ARTIFACTS }));`);
+  assert.match(r.unpinned, /mainnet artifacts are not pinned yet \(src\/pins\.mainnet\.json has no vkey\): run npm run key:mainnet/);
+  assert.match(r.unpinnedStaging, /artifacts are not pinned yet/, "staging still refuses an unpinned verification key");
   assert.match(r.refusal, /Murkle has not launched on mainnet: no genesis is pinned in src\/pins\.mainnet\.json/);
   assert.equal(r.staging, null);
   assert.match(r.artifacts["verification_key.json"].replaceAll("\\", "/"), /build\/mainnet\/verification_key\.json$/);

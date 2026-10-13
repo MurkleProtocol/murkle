@@ -204,7 +204,9 @@ served as a signet build and the indexer answers 503 for it.
 
 Install with `deploy/` on the small VPS (systemd units, `deploy/env/murkle.mainnet.env.example` with the Esplora
 source, the reverse proxy with HTTPS for the rented domain, `MURKLE_CSP_ENFORCE=1`; no `bitcoind` service), start the monitor and the backups, and run the restore drill
-(`docs/OPERATIONS.md`). The relayer is optional; if it runs, review its settings against current fee levels
+(`docs/OPERATIONS.md`). The relayer does not run at launch (owner decision 2026-10-13): the launch server is a
+rented host, and no key that holds users' funds is kept there; users pay their own fees. If it runs later, on a
+host the operator controls, review its settings against current fee levels
 (mainnet defaults: fee cap 50 sat/vB, 45,000 sats per transaction, minimum deposit 70,000 sats (its sweep plus two sends at the cap), margin floor
 300 sats). Evidence: `GET /api/health?strict=1` answers 200 with `chainTip` not null and `preGenesis` false (a node
 before genesis answers 200 too); the monitor prints `ok`;

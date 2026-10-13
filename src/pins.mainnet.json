@@ -1,9 +1,9 @@
 {
-  "manifestSha256": null,
+  "manifestSha256": "7b88c7aaaadcd16eaefeff7d132ce6d521fa6f9c6c89f6f35bed5fce6d3c2d8a",
   "artifacts": {
     "wasm": "7b9f73d4c5eccdb982f0a132979f5ceedd0bc08b569b94c022dcf0718ca0fe7d",
-    "zkey": null,
-    "vkey": null
+    "zkey": "ce548f1e3957d28ce0ace521cbc40cd43e5312eda9b55bc0cfb1e7ec68d24351",
+    "vkey": "3df5bf97268f41c7d107ec26cc12223ca2da8c0dee32b2ddc680bf053e50030c"
   },
   "genesisTxid": null,
   "activationHeight": null,

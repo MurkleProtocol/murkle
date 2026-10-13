@@ -401,9 +401,12 @@ test("the pins files and package.json wire the tools up; the signet DEV key is u
   const signet = JSON.parse(readFileSync(join(ROOT, "src/pins.json"), "utf8"));
   assert.equal(signet.artifacts.zkey, "511df703529958a75ffb26b0e285aee902d8b4efe8d19617bf126372ba6915fa");
   assert.equal(signet.artifacts.vkey, "893e125967e305cedb1b2d6748ef906a2903779849ef51989ed74969d193a557");
+  // The mainnet key was made and pinned on 2026-10-13: its own hashes, never the signet DEV key's.
   const mainnet = JSON.parse(readFileSync(join(ROOT, "src/pins.mainnet.json"), "utf8"));
-  assert.equal(mainnet.artifacts.zkey, null);
-  assert.equal(mainnet.manifestSha256, null);
+  for (const v of [mainnet.artifacts.zkey, mainnet.artifacts.vkey, mainnet.manifestSha256]) assert.match(v, /^[0-9a-f]{64}$/);
+  assert.notEqual(mainnet.artifacts.zkey, signet.artifacts.zkey);
+  assert.notEqual(mainnet.artifacts.vkey, signet.artifacts.vkey);
+  assert.equal(mainnet.artifacts.wasm, signet.artifacts.wasm, "the same circuit on both networks");
 });
 
 // The real signet DEV key against the real Hermez file: minutes of work, so opt in (MURKLE_KEY_REAL=1).
