@@ -356,8 +356,9 @@ test("mainnet: headers across the real retarget boundary 969696 (B-1 context) an
   assert.equal(c.height - 969695, 35);
   assert.notEqual(main(969695).bits, main(969696).bits);
   assert.equal(nextBits(RULES.mainnet, { height: 969696, prevBits: main(969695).bits, prevTime: main(969695).time, firstTime: MAIN_PERIOD.time }), main(969696).bits);
-  // The default mainnet chain starts at the pinned boundary and verifies everything above it.
-  const d = new HeaderChain({ network: "mainnet" });
+  // Pinned for the boundary (startHeight 969696): the chain starts at the pinned boundary and verifies everything above it.
+  // (The newest base, #971316, is the launched mainnet's genesis block; the test below covers the default.)
+  const d = new HeaderChain({ network: "mainnet", startHeight: 969696 });
   assert.equal(d.base.height, 969696);
   for (let h = 969697; h <= MAIN_TO; h++) d.append(h, main(h).bytes);
   assert.equal(d.hash, main(MAIN_TO).hash);
@@ -440,8 +441,30 @@ test("failure codes on synthetic headers: wrong bits mid-period, wrong retarget,
   assert.throws(() => h2.append(100001, easy.bytes), code("bits-range"));
 });
 
+test("mainnet base choice: the default is the newest checkpoint (the launched genesis block #971316), startHeight picks the one at or below it", () => {
+  const bases = CHECKPOINTS.mainnet.map((x) => x.height);
+  assert.deepEqual(bases, [969696, 971316]);
+  const newest = new HeaderChain({ network: "mainnet" });
+  assert.deepEqual(newest.base, { height: 971316, hash: CHECKPOINTS.mainnet[1].hash });
+  assert.deepEqual(new HeaderChain({ network: "mainnet", startHeight: 971316 }).base, newest.base, "the pinned activation height gives the genesis block");
+  assert.equal(new HeaderChain({ network: "mainnet", startHeight: 971317 }).base.height, 971316);
+  assert.equal(new HeaderChain({ network: "mainnet", startHeight: 971315 }).base.height, 969696, "just below the genesis: the older base");
+  assert.equal(new HeaderChain({ network: "mainnet", startHeight: 969696 }).base.height, 969696);
+  assert.equal(new HeaderChain({ network: "mainnet", startHeight: 900000 }).base.height, 969696, "below every base: blocks under it are not header-checked");
+  assert.equal(HeaderChain.baseFor("mainnet", 971400).height, 971316);
+  assert.equal(HeaderChain.baseFor("mainnet", 970000).height, 969696);
+  assert.throws(() => HeaderChain.baseFor("mainnet", 969000), code("below-base"));
+  // The genesis block itself is the base: its header is compared with the pin, never skipped; below it is refused.
+  assert.throws(() => newest.append(971315, main(969697).bytes), code("below-base"));
+  assert.throws(() => newest.append(971316, main(969697).bytes), (e) => ["checkpoint", "linkage"].includes(e.code), "another block at the base height contradicts the pinned hash");
+  // A snapshot saved on the older base is not restored for a launched start (the caller starts again from the genesis block).
+  const saved = new HeaderChain({ network: "mainnet", startHeight: 969696 }).snapshot();
+  assert.throws(() => HeaderChain.restore(saved, { network: "mainnet", startHeight: 971316 }), code("checkpoint"));
+  assert.equal(HeaderChain.restore(saved, { network: "mainnet", startHeight: 969696 }).base.height, 969696);
+});
+
 test("the real mainnet BIP65 rule: a version-3 header above 388381 is bad-version (checked before the clock)", () => {
-  const c = new HeaderChain({ network: "mainnet" });
+  const c = new HeaderChain({ network: "mainnet", startHeight: 969696 });
   const d = main(969697);
   // Version 3 changes the hash, so it fails proof of work first; the version rule is checked on
   // the rule table directly and through a chain whose rules have an easy powLimit.

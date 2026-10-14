@@ -36,10 +36,14 @@ after(async () => {
 const silent = { warn() {}, error() {}, log() {} };
 const sha256 = (b) => createHash("sha256").update(b).digest("hex");
 
-/** Runs an ES module snippet in a child Node with `env`; its last stdout line is parsed as JSON. */
-function child(code, env = {}) {
+// A process that sees src/pins.mainnet.json as it was before the launch (test/pre-genesis-hook.mjs): the
+// shipped file pins the genesis now, and the pre-genesis branches are still covered through this.
+const PRE_GENESIS = ["--import", pathToFileURL(join(ROOT, "test/pre-genesis-register.mjs")).href];
+
+/** Runs an ES module snippet in a child Node with `env`; its last stdout line is parsed as JSON. `pre`: the pre-launch pins. */
+function child(code, env = {}, { pre = false } = {}) {
   return new Promise((done, fail) => {
-    execFile(process.execPath, ["--input-type=module", "-e", code], {
+    execFile(process.execPath, [...(pre ? PRE_GENESIS : []), "--input-type=module", "-e", code], {
       cwd: ROOT, env: { ...process.env, MURKLE_NETWORK: "mainnet", ...env }, timeout: 120_000, maxBuffer: 1 << 24,
     }, (err, stdout, stderr) => {
       if (err) return fail(new Error(`${err.message}\n${stderr}`));
@@ -540,9 +544,11 @@ test("mainnet params: network, HRP, labels, pins, explorer, strict tickers, real
   assert.equal(r.faucet, null);
   assert.deepEqual(r.pins, JSON.parse(readFileSync("src/pins.mainnet.json", "utf8")));
   assert.equal(r.pins.artifacts.wasm, JSON.parse(readFileSync("src/pins.json", "utf8")).artifacts.wasm, "same circuit, same wasm");
-  assert.equal(r.preGenesis, true);
-  assert.equal(r.genesis, null);
-  assert.equal(r.mining, null);
+  // Launched (2026-10-14): the genesis, its block and the mining height are pinned.
+  assert.equal(r.preGenesis, false);
+  assert.deepEqual(r.genesis, { txid: "7d345f2222bd3c4501c4c344d9707d488935fe31f4d255ec4b673c7de2cf8eab", height: 971316, manifestSha256: r.pins.manifestSha256 });
+  assert.equal(r.mining, 971317);
+  assert.deepEqual(r.pins.reservedTickers, { MURK: "56313672937803be4847fdb264259ba2b838d2dccc9a9737da4eb1d0b3a79f26" });
   assert.equal(r.pinsFile, "src/pins.mainnet.json");
   assert.deepEqual(r.paths, { manifest: "build/mainnet/manifest.json", vkey: "build/mainnet/verification_key.json", zkey: "build/mainnet/transaction.zkey", wasm: "build/transaction_js/transaction.wasm" });
   assert.deepEqual(r.fee, {
@@ -552,6 +558,11 @@ test("mainnet params: network, HRP, labels, pins, explorer, strict tickers, real
   assert.equal(r.ready, null, "the owner's platform address is set (2026-10-13): mainnet mining is configured");
   assert.equal(r.placeholderReady, "mining is not configured on mainnet: the platform address is TODO_PLATFORM_ADDRESS", "a placeholder rule is still refused");
   assert.equal(r.signetReady, null);
+  // The same process before the launch (injected pre-genesis pins): no genesis, no mining height, MURK unpinned.
+  const pre = await child(`
+    const P = await import("./src/params.mjs");
+    console.log(JSON.stringify({ preGenesis: P.PRE_GENESIS, genesis: P.GENESIS, mining: P.MINING_HEIGHT, genesisTxid: P.GENESIS_TXID, activation: P.ACTIVATION_HEIGHT, reserved: P.RESERVED_TICKERS }));`, {}, { pre: true });
+  assert.deepEqual(pre, { preGenesis: true, genesis: null, mining: null, genesisTxid: null, activation: null, reserved: { MURK: null } });
 });
 
 test("an unknown MURKLE_NETWORK refuses to load; an empty one is signet", async () => {
@@ -601,12 +612,14 @@ test("mainnet Indexer: strict tickers by default, the v1 chain replays to the sa
     const tx = { txid: "bb".repeat(32), inputs: [{ outpoint: new Uint8Array(36).fill(1) }], outputs: [{ script: opReturnScript(unhex("${bomDeploy}")), value: 0n }] };
     await one.applyBlock({ height: 900000, hash: "cc".repeat(32), txs: [cb, tx] });
     let mining = null;
-    const acts = [{ name: "mining", height: 900100, digestV: 2 }];
+    const acts = [{ name: "mining", height: 971400, digestV: 2 }]; // above the pinned genesis height 971316
     const placeholder = { placeholder: true, platformAddress: "TODO_PLATFORM_ADDRESS", platformScript: null, platformSats: 500n, deployerMinSats: 0n, deployerMaxSats: 0n };
     try { new Indexer({ vkey: VKEY, startHeight: 900000, activations: acts, mineFee: placeholder }); } catch (e) { mining = e.message; }
     let real = null;
     try { new Indexer({ vkey: VKEY, startHeight: 900000, activations: acts }); } catch (e) { real = e.message; }
-    console.log(JSON.stringify({ strict: idx.strictTicker, digests: [...idx.digests], log: idx.log, bom: one.log.find((l) => l.txid === tx.txid), mining, real }));
+    let below = null;
+    try { new Indexer({ vkey: VKEY, startHeight: 900000, activations: [{ name: "mining", height: 900100, digestV: 2 }] }); } catch (e) { below = e.message; }
+    console.log(JSON.stringify({ strict: idx.strictTicker, digests: [...idx.digests], log: idx.log, bom: one.log.find((l) => l.txid === tx.txid), mining, real, below }));
     await globalThis.curve_bn128?.terminate?.(); // snarkjs keeps worker threads alive otherwise`);
   assert.equal(r.strict, true);
   assert.deepEqual(r.digests, FIX.digests, "consensus is the same on mainnet for canonical tickers");
@@ -615,6 +628,7 @@ test("mainnet Indexer: strict tickers by default, the v1 chain replays to the sa
   assert.equal(r.bom.reason, `malformed: ${TICKER_BYTES_ERROR}`);
   assert.equal(r.mining, "mining activation needs a complete MINE_FEE: mining is not configured on mainnet: the platform address is TODO_PLATFORM_ADDRESS");
   assert.equal(r.real, null, "the real mainnet fee rule is complete: the same activation is accepted");
+  assert.equal(r.below, "activation mining must be above the genesis height 971316", "an activation at or below the pinned genesis is refused");
 });
 
 test("mainnet relayer defaults, funding network and the pool script", async () => {
@@ -636,39 +650,46 @@ test("mainnet relayer defaults, funding network and the pool script", async () =
 
 test("mainnet server: refuses to start before its key is pinned, and before genesis (never binds a port)", async () => {
   const env = { MURKLE_NETWORK: "mainnet", MURKLE_INDEXER_PORT: "0", MURKLE_STATE_PATH: join(DIR, "m-state.json"), MURKLE_RELAYER: "0" };
-  // The mainnet key is pinned (2026-10-13); until the genesis is, the real server refuses for that.
-  if (!JSON.parse(readFileSync(join(ROOT, "src/pins.mainnet.json"), "utf8")).genesisTxid) {
-    const out = await run(["server/indexer-server.mjs"], env);
-    assert.equal(out.code, 1);
-    assert.match(out.stderr, /refusing to start: Murkle has not launched on mainnet: no genesis is pinned in src\/pins\.mainnet\.json/);
-  }
+  // The mainnet key is pinned (2026-10-13); with the pre-launch pins (injected) the real server refuses for the missing genesis.
+  const out = await run([...PRE_GENESIS, "server/indexer-server.mjs"], env);
+  assert.equal(out.code, 1);
+  assert.match(out.stderr, /refusing to start: Murkle has not launched on mainnet: no genesis is pinned in src\/pins\.mainnet\.json/);
   const r = await child(`
     const S = await import("./server/indexer-server.mjs");
     console.log(JSON.stringify({
       unpinned: S.startRefusal({ vkeyPinned: false }), unpinnedStaging: S.startRefusal({ vkeyPinned: false, allowPreGenesis: true }),
       refusal: S.startRefusal({ vkeyPinned: true, preGenesis: true }), staging: S.startRefusal({ vkeyPinned: true, preGenesis: true, allowPreGenesis: true }),
-      artifacts: S.ARTIFACTS }));`);
+      launched: S.startRefusal({ vkeyPinned: true, preGenesis: false }), artifacts: S.ARTIFACTS }));`);
   assert.match(r.unpinned, /mainnet artifacts are not pinned yet \(src\/pins\.mainnet\.json has no vkey\): run npm run key:mainnet/);
   assert.match(r.unpinnedStaging, /artifacts are not pinned yet/, "staging still refuses an unpinned verification key");
   assert.match(r.refusal, /Murkle has not launched on mainnet: no genesis is pinned in src\/pins\.mainnet\.json/);
   assert.equal(r.staging, null);
+  assert.equal(r.launched, null, "a launched mainnet with its key pinned starts");
   assert.match(r.artifacts["verification_key.json"].replaceAll("\\", "/"), /build\/mainnet\/verification_key\.json$/);
   assert.match(r.artifacts["transaction.wasm"].replaceAll("\\", "/"), /build\/transaction_js\/transaction\.wasm$/);
 });
 
-test("mainnet CLI: help and usage name the network; value-moving commands and mining refuse before genesis (mining by the genesis rule, not the fee rule)", async () => {
+test("mainnet CLI: help and usage name the network; before genesis (injected pins) value-moving commands and mining refuse by the genesis rule; launched, they get past it", async () => {
   const env = { MURKLE_NETWORK: "mainnet", MURKLE_DATA_DIR: join(DIR, "cli-main"), MURKLE_ESPLORA: "http://127.0.0.1:9/api" };
   const help = await run(["bin/murkle.mjs"], env);
   assert.match(help.stdout, /Murkle CLI \(mainnet\)\. Commands:/);
   assert.match(help.stdout, /--treasury bc1…/);
   assert.match(help.stdout, /<murk1…>/);
-  const send = await run(["bin/murkle.mjs", "send", "w", "ABC", "1", "murk1x"], env);
+  // Before the launch (pre-genesis pins injected): the genesis rule refuses, not the fee rule.
+  const send = await run([...PRE_GENESIS, "bin/murkle.mjs", "send", "w", "ABC", "1", "murk1x"], env);
   assert.equal(send.code, 1);
   assert.match(send.stderr, /has not launched on mainnet: no genesis is pinned in src\/pins\.mainnet\.json, so send is refused/);
-  const mine = await run(["bin/murkle.mjs", "mine", "w", "ABC"], env);
+  const mine = await run([...PRE_GENESIS, "bin/murkle.mjs", "mine", "w", "ABC"], env);
   assert.equal(mine.code, 1);
   assert.match(mine.stderr, /has not launched on mainnet: no genesis is pinned in src\/pins\.mainnet\.json, so mine is refused/);
   assert.doesNotMatch(mine.stderr, /TODO_PLATFORM_ADDRESS/, "the fee rule is set; only the missing genesis refuses");
+  // Launched (the shipped pins): the same commands are past the pre-genesis guard and fail later, on their own input.
+  const sendNow = await run(["bin/murkle.mjs", "send", "w", "ABC", "1", "murk1x"], env);
+  assert.equal(sendNow.code, 1);
+  assert.doesNotMatch(sendNow.stderr, /has not launched|no genesis is pinned/);
+  assert.match(sendNow.stderr, /invalid string length/, "the address is checked now");
+  const mineNow = await run(["bin/murkle.mjs", "mine", "w", "ABC"], env);
+  assert.doesNotMatch(mineNow.stderr, /has not launched|no genesis is pinned|TODO_PLATFORM_ADDRESS/);
   const script = await run(["bin/murkle.mjs", "address-script", "bc1p33wm0auhr9kkahzd6l0kqj85af4cswn276hsxg6zpz85xe2r0y8syx4e5t"], env);
   assert.equal(script.code, 0);
   assert.equal(script.stdout.trim(), "51208c5db7f797196d6edc4dd7df6048f4ea6b883a6af6af032342088f436543790f");
@@ -691,7 +712,7 @@ test("signet CLI: help and the address line are verbatim", async () => {
   assert.doesNotMatch(created.stdout, /plaintext keys/);
 });
 
-test("mainnet web: config, Unisat chain, pre-launch guards and copy", async () => {
+test("mainnet web: config, Unisat chain, pre-launch guards and copy (pre-launch pins injected)", async () => {
   const r = await child(`
     const C = await import("./web/src/config.js");
     const Pay = await import("./web/src/payers.js");
@@ -707,7 +728,7 @@ test("mainnet web: config, Unisat chain, pre-launch guards and copy", async () =
       unisat: C.UNISAT_CHAIN, strict: C.STRICT_TICKER, pins: C.PINS, explorer: C.EXPLORER, notLaunched: C.NOT_LAUNCHED, word: C.BTC_WORD,
       notice: Pay.UNISAT_SIGNET_NOTICE, reason: Pay.NOT_LAUNCHED_REASON, carried, blocked: St.chainWritesBlocked(),
       data: T.copyText([]).split("\\n").pop(), legacyPhrase: K.legacyPhrase(storage),
-    }));`);
+    }));`, {}, { pre: true });
   assert.equal(r.network, "mainnet");
   assert.equal(r.testnet, false);
   assert.equal(r.faucet, null);
@@ -726,6 +747,35 @@ test("mainnet web: config, Unisat chain, pre-launch guards and copy", async () =
   assert.equal(r.carried, r.reason, "no payer carries anything before launch");
   assert.match(r.blocked, /has not launched on Bitcoin mainnet/);
   assert.equal(r.data, "Data: mempool.space, independent of us.");
+});
+
+test("mainnet web, launched (the shipped pins): the genesis is pinned, nothing says not launched, the payers carry", async () => {
+  const r = await child(`
+    const C = await import("./web/src/config.js");
+    const Pay = await import("./web/src/payers.js");
+    const St = await import("./web/src/ui/status.js");
+    const S = await import("./web/src/verify/share-card.js");
+    let carried = null;
+    try { await new Pay.LocalPayer(new Uint8Array(32).fill(1)).carry({ api: {}, envelope: new Uint8Array(38), utxos: [] }); } catch (e) { carried = e.message; }
+    console.log(JSON.stringify({
+      network: C.NETWORK, pins: C.PINS, pre: C.PRE_GENESIS, notLaunched: C.NOT_LAUNCHED, activation: C.ACTIVATION_HEIGHT, reserved: C.RESERVED_TICKERS,
+      reason: Pay.NOT_LAUNCHED_REASON, carried, blocked: St.chainWritesBlocked(), notice: Pay.UNISAT_SIGNET_NOTICE,
+      tag: S.cardNetwork().tag, footer: S.receiptCardText({ opName: "TRANSFER", verdict: "verified" }).footer,
+      pool: S.poolCardText({ proofs: 1, blocks: 1, seconds: 1, height: 1, digest: "00", matched: true }),
+    }));`);
+  assert.equal(r.network, "mainnet");
+  assert.equal(r.pins.genesisTxid, "7d345f2222bd3c4501c4c344d9707d488935fe31f4d255ec4b673c7de2cf8eab");
+  assert.equal(r.activation, 971316);
+  assert.equal(r.reserved.MURK, "56313672937803be4847fdb264259ba2b838d2dccc9a9737da4eb1d0b3a79f26");
+  assert.equal(r.pre, false);
+  assert.equal(r.notLaunched, false);
+  assert.equal(r.reason, null);
+  assert.equal(r.blocked, null);
+  assert.equal(r.notice, null);
+  assert.doesNotMatch(String(r.carried), /has not launched/, "the payer is past the pre-launch guard");
+  assert.equal(r.tag, "MAINNET");
+  assert.match(r.footer, /^Bitcoin mainnet, experimental software\. Single-party proving key \(Murkle operator\)\./);
+  assert.doesNotMatch(`${r.footer}\n${r.pool}`, /signet|test coins|no value|development keys|not launched|not checked yet/i);
 });
 
 test("signet web: config and copy unchanged", async () => {

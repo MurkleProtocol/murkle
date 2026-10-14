@@ -5,13 +5,13 @@
     "zkey": "ce548f1e3957d28ce0ace521cbc40cd43e5312eda9b55bc0cfb1e7ec68d24351",
     "vkey": "3df5bf97268f41c7d107ec26cc12223ca2da8c0dee32b2ddc680bf053e50030c"
   },
-  "genesisTxid": null,
-  "activationHeight": null,
-  "reservedTickers": { "MURK": null },
+  "genesisTxid": "7d345f2222bd3c4501c4c344d9707d488935fe31f4d255ec4b673c7de2cf8eab",
+  "activationHeight": 971316,
+  "reservedTickers": { "MURK": "56313672937803be4847fdb264259ba2b838d2dccc9a9737da4eb1d0b3a79f26" },
   "activations": [
     {
       "name": "mining",
-      "height": null,
+      "height": 971317,
       "digestV": 2
     }
   ]

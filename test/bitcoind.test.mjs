@@ -358,7 +358,11 @@ test("openChainSource: utxos and merkleProof go to Esplora when MURKLE_ESPLORA i
     assert.equal(def.headers.base.height, 324592);
     const mn = await openChainSource({ network: "mainnet", read: () => undefined, log: null });
     assert.equal(mn.api.base, "https://mempool.space/api");
-    assert.equal(mn.headers.base.height, 969696);
+    assert.equal(mn.headers.base.height, 971316, "no start height: the newest base, the launched genesis block");
+    const mn2 = await openChainSource({ network: "mainnet", read: () => undefined, startHeight: 971316, log: null });
+    assert.equal(mn2.headers.base.height, 971316, "the pinned activation height: the genesis block is the base");
+    const older = await openChainSource({ network: "mainnet", read: () => undefined, startHeight: 969696, log: null });
+    assert.equal(older.headers.base.height, 969696, "an earlier start height keeps the older pinned boundary");
   } finally {
     await node.close();
   }
@@ -381,6 +385,17 @@ test("openChainSource: headers persist through save() and load back; a corrupt f
   a.save();
   const warned2 = [];
   const d = await openChainSource({ network: "mainnet", read, headersPath: path, log: { warn: (m) => warned2.push(m) } });
-  assert.equal(d.headers.base.height, 969696);
+  assert.equal(d.headers.base.height, 971316);
   assert.match(warned2[0], /is for signet, this is mainnet/);
+  // A mainnet file saved from the older base (before the genesis) is not reused for the launched start: a fresh chain from the genesis block.
+  const oldPath = join(DIR, "headers-old-base.json");
+  const older = await openChainSource({ network: "mainnet", read, headersPath: oldPath, startHeight: 969696, log: null });
+  older.save();
+  const warned3 = [];
+  const fresh = await openChainSource({ network: "mainnet", read, headersPath: oldPath, startHeight: 971316, log: { warn: (m) => warned3.push(m) } });
+  assert.equal(fresh.headers.base.height, 971316);
+  assert.match(warned3[0], /not usable .*expected base is #971316/);
+  const same = await openChainSource({ network: "mainnet", read, headersPath: oldPath, startHeight: 969696, log: { warn: (m) => warned3.push(m) } });
+  assert.equal(same.headers.base.height, 969696);
+  assert.equal(warned3.length, 1);
 });

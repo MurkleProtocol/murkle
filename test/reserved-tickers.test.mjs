@@ -244,9 +244,12 @@ test("the pins loader accepts a good map and refuses every malformed one (mainne
   assert.match(read("src/params.mjs"), /export const RESERVED_TICKERS = reservedTickersOf\(pins\.reservedTickers\)/, "the loader runs on the active network's pins at import");
 });
 
-test("the shipped pins: src/pins.mainnet.json reserves MURK with a null pin, and a mainnet process loads exactly that", async () => {
+test("the shipped pins: src/pins.mainnet.json reserves MURK with the operator's signed deploy txid, and a mainnet process loads exactly that", async () => {
   const pins = JSON.parse(read("src/pins.mainnet.json"));
-  assert.deepEqual(pins.reservedTickers, { MURK: null });
+  // Launched 2026-10-14: the operator's signed MURK deploy (not broadcast at pin time) is the one carrier. The null-pin
+  // branch stays covered by the injected-chain tests above and the loader tests.
+  const MURK_PIN = "56313672937803be4847fdb264259ba2b838d2dccc9a9737da4eb1d0b3a79f26";
+  assert.deepEqual(pins.reservedTickers, { MURK: MURK_PIN });
   const txid = "cd".repeat(32);
   const out = await new Promise((done, fail) => {
     execFile(process.execPath, ["--input-type=module", "-e", `
@@ -254,17 +257,19 @@ test("the shipped pins: src/pins.mainnet.json reserves MURK with a null pin, and
       const { Indexer } = await import("./src/indexer.mjs");
       const idx = new Indexer({ vkey: {}, startHeight: 5 });
       console.log(JSON.stringify({ n: P.NETWORK, r: P.RESERVED_TICKERS, frozen: Object.isFrozen(P.RESERVED_TICKERS), idx: idx.reservedTickers,
-        why: P.reservedTickerReason("MURK", "${txid}"), none: P.reservedTickerReason("OTHER", "${txid}") }));
+        why: P.reservedTickerReason("MURK", "${txid}"), mine: P.reservedTickerReason("MURK", "${MURK_PIN}"), none: P.reservedTickerReason("OTHER", "${txid}") }));
     `], { cwd: ROOT, env: { ...process.env, MURKLE_NETWORK: "mainnet" }, timeout: 120_000 }, (err, stdout, stderr) => {
       if (err) return fail(new Error(`${err.message}\n${stderr}`));
       done(JSON.parse(stdout.trim().split("\n").pop()));
     });
   });
   assert.equal(out.n, "mainnet");
-  assert.deepEqual(out.r, { MURK: null });
+  assert.deepEqual(out.r, { MURK: MURK_PIN });
   assert.equal(out.frozen, true);
-  assert.deepEqual(out.idx, { MURK: null }, "a default mainnet Indexer carries the pinned map");
+  assert.deepEqual(out.idx, { MURK: MURK_PIN }, "a default mainnet Indexer carries the pinned map");
   assert.match(out.why, RESERVED);
+  assert.match(out.why, /only by its pinned launch transaction/, "another carrier is refused");
+  assert.equal(out.mine, null, "the pinned transaction itself may deploy MURK");
   assert.equal(out.none, null);
 });
 

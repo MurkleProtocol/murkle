@@ -75,7 +75,7 @@ function buildInChild(outDir, entropyHex) {
     console.error("stderr works");
     await closeCurves();
   `);
-  const args = JSON.stringify({ r1cs: R1CS, ptau: phase1.path, wasm: WASM, outDir, ptauPin: phase1.pin, entropy: entropyHex });
+  const args = JSON.stringify({ r1cs: R1CS, ptau: phase1.path, wasm: WASM, outDir, ptauPin: phase1.pin, entropy: entropyHex, pins: { genesisTxid: null } });
   const r = spawnSync(process.execPath, [script, args], { cwd: ROOT, encoding: "buffer" });
   assert.equal(r.status, 0, r.stderr.toString());
   return { stdout: r.stdout, stderr: r.stderr, files: JSON.parse(r.stdout.toString().trim().split(/\r?\n/).at(-1)).done };
@@ -96,7 +96,9 @@ const build = (over = {}) => {
   return buildMainnetKey({
     r1cs: R1CS, ptau: phase1.path, wasm: WASM, outDir, ptauPin: phase1.pin,
     circuitSource: join(ROOT, "circuits/transaction.circom"), circom: "2.2.2", circomlib: "2.0.5",
-    now: new Date("2026-10-11T12:00:00.000Z"), ...over,
+    // The checkout is launched (genesis pinned) and the tool refuses for good then, so these tests inject the
+    // pre-genesis pins it was built for; the launched refusal is asserted against the real file below.
+    now: new Date("2026-10-11T12:00:00.000Z"), pins: { genesisTxid: null }, ...over,
   });
 };
 const pinsOf = (r) => ({ manifestSha256: r.manifestSha256, artifacts: { wasm: r.sha256.wasm, zkey: r.sha256.zkey, vkey: r.sha256.vkey } });
@@ -186,10 +188,10 @@ test("an existing key is refused without --force-new, and moved aside with it", 
   const made = await build({ outDir });
   const before = sha256File(made.files[0]);
   await assert.rejects(build({ outDir }), /already holds a key.*refusing to overwrite/);
-  assert.throws(() => assertOutputFree(outDir), /already holds a key/);
+  assert.throws(() => assertOutputFree(outDir, false, { genesisTxid: null }), /already holds a key/);
   assert.equal(sha256File(made.files[0]), before, "the refused run left the key alone");
   // The command line refuses first, before it looks at anything else.
-  await assert.rejects(keyMain(["--out", outDir]), /already holds a key/);
+  await assert.rejects(keyMain(["--out", outDir]), /refused: .*already pins the genesis transaction/, "the real pins file names the genesis now, so the command line refuses for that reason first");
   assert.equal(sha256File(made.files[0]), before);
 
   const again = await build({ outDir, forceNew: true, pins: { genesisTxid: null } });
@@ -197,7 +199,7 @@ test("an existing key is refused without --force-new, and moved aside with it", 
   const aside = readdirSync(outDir).filter((f) => f.startsWith("superseded-"));
   assert.equal(aside.length, 1);
   assert.equal(sha256File(join(outDir, aside[0], "transaction.zkey")), before, "the earlier key is kept, not deleted");
-  assert.deepEqual(assertOutputFree(join(DIR, "never-made")), []);
+  assert.deepEqual(assertOutputFree(join(DIR, "never-made"), false, { genesisTxid: null }), []);
 });
 
 test("every run is refused once the mainnet pins file has a genesis txid", async () => {
@@ -217,7 +219,10 @@ test("every run is refused once the mainnet pins file has a genesis txid", async
   assert.equal(readdirSync(outDir).filter((f) => f.startsWith("superseded-")).length, 0);
   // Before genesis --force-new moves the old key aside.
   assert.deepEqual(assertOutputFree(outDir, true, { genesisTxid: null }), ["transaction.zkey", "verification_key.json", "manifest.json"]);
-  assert.equal(readMainnetPins().genesisTxid, null, "this checkout has not pinned a mainnet genesis yet");
+  // This checkout is launched: the real pins file names the genesis, so the on-disk pins refuse every run too.
+  assert.match(readMainnetPins().genesisTxid, /^[0-9a-f]{64}$/);
+  assert.throws(() => assertOutputFree(outDir, true), refused);
+  assert.throws(() => assertOutputFree(join(DIR, "never-made")), refused);
 });
 
 test("the tool refuses to run under a debugger or heap snapshot option", () => {

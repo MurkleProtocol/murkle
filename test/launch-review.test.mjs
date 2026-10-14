@@ -9,6 +9,7 @@ import { execFile } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { sha256 } from "@noble/hashes/sha256";
 import { Esplora } from "../src/btc/esplora.mjs";
 import { decodeHeader, encodeHeader, targetFromBits } from "../src/btc/headers.mjs";
@@ -29,9 +30,10 @@ after(() => {
   rmSync(DIR, { recursive: true, force: true });
 });
 
-function child(code, env = {}) {
+// `pre`: the process sees src/pins.mainnet.json as before the launch (test/pre-genesis-hook.mjs).
+function child(code, env = {}, { pre = false } = {}) {
   return new Promise((done, fail) => {
-    execFile(process.execPath, ["--input-type=module", "-e", code], { cwd: ROOT, env: { ...process.env, ...env }, timeout: 120_000, maxBuffer: 1 << 24 }, (err, stdout, stderr) => {
+    execFile(process.execPath, [...(pre ? ["--import", pathToFileURL(join(ROOT, "test/pre-genesis-register.mjs")).href] : []), "--input-type=module", "-e", code], { cwd: ROOT, env: { ...process.env, ...env }, timeout: 120_000, maxBuffer: 1 << 24 }, (err, stdout, stderr) => {
       if (err) return fail(new Error(`${err.message}\n${stderr}`));
       done(JSON.parse(stdout.trim().split("\n").pop()));
     });
@@ -272,13 +274,19 @@ test("share cards: signet keeps its words; mainnet never says signet, test coins
   assert.equal(cardNetwork({ network: "mainnet", notLaunched: true }).tag, "MAINNET · NOT LAUNCHED");
   assert.equal(cardNetwork({ network: "mainnet", notLaunched: false }).tag, "MAINNET");
   assert.match(receiptCardText({ ...receipt, network: "mainnet", notLaunched: false }).footer, /^Bitcoin mainnet, experimental software\. Single-party proving key \(Murkle operator\)\./);
-  // A mainnet build (pre-genesis) uses its own words by default.
-  const m = await child(`
+  // A mainnet build uses its own words by default. Launched (the shipped pins): no "not launched" anywhere.
+  const probe = `
     const S = await import("./web/src/verify/share-card.js");
-    console.log(JSON.stringify({ tag: S.cardNetwork().tag, footer: S.receiptCardText({ opName: "TRANSFER", verdict: "verified" }).footer, pool: S.poolCardText({ proofs: 1, blocks: 1, seconds: 1, height: 1, digest: "00", matched: true }) }));`, { MURKLE_NETWORK: "mainnet" });
-  assert.equal(m.tag, "MAINNET · NOT LAUNCHED");
-  assert.match(m.footer, /has not launched on Bitcoin mainnet/);
-  assert.doesNotMatch(`${m.footer}\n${m.pool}`, /signet|test coins|no value/i);
+    console.log(JSON.stringify({ tag: S.cardNetwork().tag, footer: S.receiptCardText({ opName: "TRANSFER", verdict: "verified" }).footer, pool: S.poolCardText({ proofs: 1, blocks: 1, seconds: 1, height: 1, digest: "00", matched: true }) }));`;
+  const m = await child(probe, { MURKLE_NETWORK: "mainnet" });
+  assert.equal(m.tag, "MAINNET");
+  assert.match(m.footer, /^Bitcoin mainnet, experimental software\. Single-party proving key \(Murkle operator\)\./);
+  assert.doesNotMatch(`${m.footer}\n${m.pool}`, /signet|test coins|no value|development keys|not launched|not checked yet/i);
+  // Before the launch (pre-genesis pins injected): the not-launched words stay.
+  const pre = await child(probe, { MURKLE_NETWORK: "mainnet" }, { pre: true });
+  assert.equal(pre.tag, "MAINNET · NOT LAUNCHED");
+  assert.match(pre.footer, /has not launched on Bitcoin mainnet/);
+  assert.doesNotMatch(`${pre.footer}\n${pre.pool}`, /signet|test coins|no value/i);
 });
 
 /* ------------------------------------------------- the web wallet's indexer network */

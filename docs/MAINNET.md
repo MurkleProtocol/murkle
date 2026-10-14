@@ -248,13 +248,14 @@ node bin/murkle.mjs sync                       # must reach the tip with the gen
 #    holding the hex could broadcast it). MURK is reserved, so the CLI refuses it without --reserved-ticker (the
 #    operator's own launch deploy; the flag skips no other check). Use a fee rate that confirms in the next block.
 node bin/murkle.mjs deploy-pow owner --ticker MURK --reserved-ticker --divisibility 8 --reward 100000000000 --max-supply 2100000000000000 --span 12 --per-block 100 --difficulty 3600000 --min-difficulty 3600000 --halving 0 --claim-fee 0 --start now --end 0 --fee-rate <sat/vB> --dry-run > /secure/murkle-owner/murk-deploy.txt
-#    The first line is "DEPLOY_POW (not broadcast): <txid> ..."; the second is the signed transaction.
+#    It prints the terms and warnings, then "DEPLOY_POW (not broadcast): <txid> ...", and on the line after
+#    that the signed transaction.
 # 4. Pin that txid as reservedTickers.MURK in src/pins.mainnet.json, run npm test, commit, cut the release and
 #    deploy it (G6). Spend nothing from the owner wallet until step 5: the saved transaction spends its coin.
 # 5. Broadcast exactly the saved transaction (never rebuild it: a new build may pick another fee or coin, and
 #    a txid other than the pinned one is rejected for good). If it is slow, speed it up with a child transaction
 #    that spends its change output, which keeps the txid; never replace it (RBF changes the txid).
-curl -sS -X POST --data "$(sed -n 2p /secure/murkle-owner/murk-deploy.txt)" https://mempool.space/api/tx
+curl -sS -X POST --data "$(grep -A1 '^DEPLOY_POW (not broadcast):' /secure/murkle-owner/murk-deploy.txt | tail -1)" https://mempool.space/api/tx
 #    Mining opens at the deploy block, for everyone at once.
 node bin/murkle.mjs sync && node bin/murkle.mjs assets          # MURK, mining, 0/2100000000000000
 ```
