@@ -207,6 +207,15 @@ export function cspEnforced({ read = env, test = IS_TESTNET } = {}) {
 }
 
 /**
+ * The address the API listens on: MURKLE_INDEXER_HOST when set, else loopback only. The reverse
+ * proxy on the same machine reaches it there; a container sets 0.0.0.0 so the proxy container can.
+ */
+export function listenHost({ read = env } = {}) {
+  const v = read("INDEXER_HOST");
+  return v !== undefined && v.trim() !== "" ? v.trim() : "127.0.0.1";
+}
+
+/**
  * The chain source (hook H1): src/btc/source.mjs openChainSource when it exists, else (on a test
  * network only) today's Esplora client without header verification. Mainnet never runs without
  * header verification, so a missing source module refuses there.
@@ -1198,6 +1207,7 @@ async function main() {
 
   // Not PORT: dev tooling sets PORT for the web server that runs alongside.
   const port = Number(env("INDEXER_PORT") ?? 8787);
+  const host = listenHost();
   if (!env("PUBLIC_URL")) {
     console.warn("MURKLE_PUBLIC_URL is not set: link previews get a relative og:image and no large-image card. Set it to this site's public origin (https://...).");
   }
@@ -1213,7 +1223,7 @@ async function main() {
   });
   const build = checkWebBuild(WEB_DIST, NETWORK);
   if (!build.ok) console.error(`WARNING: ${build.message} The web app answers 503 until then.`);
-  app.server.listen(port, () => console.log(`${BRAND} indexer API (${NETWORK}) on http://localhost:${port} (height ${idx.height})`));
+  app.server.listen(port, host, () => console.log(`${BRAND} indexer API (${NETWORK}) on http://${host}:${port} (height ${idx.height})`));
   await app.tick();
   setInterval(app.tick, SYNC_MS);
 }

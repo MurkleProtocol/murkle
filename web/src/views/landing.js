@@ -34,6 +34,7 @@ import { BRAND, PRE_GENESIS, ARTIFACT_SHA256, MANIFEST_SHA256, GENESIS_TXID, IS_
 // Where this site runs, in the hero's status line. Mainnet never says "live" before or after launch:
 // it says it has not launched, then names the network.
 const LIVE_TEXT = IS_SIGNET ? "Live on Bitcoin signet" : NOT_LAUNCHED ? "Bitcoin mainnet · Not launched" : "On Bitcoin mainnet";
+import { heroMicro } from "./landing-micro.js";
 import { launchCard, boardGroups } from "../share/launch.js";
 import { crowdChart } from "../share/charts.js";
 import { logTail } from "../share/feed.js";
@@ -150,7 +151,7 @@ export function render(root) {
             ${button({ label: "Verify a live proof", kind: "secondary", size: "lg", icon: "proof", action: "ld-goverify" })}
           </div>
           <a class="ld-sec-link" href="/security#status" data-link>Read the security status →</a>
-          <p class="ld-micro"><span>${icon("check", { size: 14 })}No sign-up</span><span>${icon("lock", { size: 14 })}Keys never leave your device</span><span>${icon("warn", { size: 14 })}Test coins only</span></p>
+          ${heroMicro(IS_SIGNET)}
         </div>
         ${verifierShell()}
       </div>

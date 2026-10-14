@@ -25,7 +25,7 @@ import { resolveSearch } from "../ui/search.js";
 import { navigate } from "../router.js";
 import { getWalletStatus } from "../ui/status.js";
 import facts from "../facts.json";
-import { ADDRESS_HRP, BRAND, GENESIS_TXID, ACTIVATION_HEIGHT, MANIFEST_SHA256, PRE_GENESIS, REPO_URL } from "../config.js";
+import { ADDRESS_HRP, BRAND, GENESIS_TXID, ACTIVATION_HEIGHT, MANIFEST_SHA256, PINS_FILE, PRE_GENESIS, REPO_URL } from "../config.js";
 import { ARTIFACT_LIST, fingerprint } from "../verify/artifacts.js";
 import { replayPlan, PoolReplay, compareReplay, resetReplay, loadReplay } from "../verify/replay.js";
 import { logAll } from "../verify/pool-data.js";
@@ -437,7 +437,7 @@ function runPanel() {
     body: html`<p class="small t-2">${REPO_URL
         ? "The indexer is open source and deterministic: anyone who replays the same blocks gets the same pool, digest for digest."
         : "The indexer is deterministic: anyone who replays the same blocks gets the same pool, digest for digest. Its source isn't at a public URL yet, so these steps start from a copy of it."}</p>
-      ${cmd(runCommands({ repoUrl: REPO_URL, origin }), html`The proving key can't be rebuilt, so the steps download the pinned files from this site. The indexer hashes them against <span class="mono">src/pins.json</span> in your copy and won't start with a different verification key or manifest. It serves the site and the API on http://localhost:8787; then <a href="#indexer" data-link>switch this site to it</a>.`)}
+      ${cmd(runCommands({ repoUrl: REPO_URL, origin }), html`The proving key can't be rebuilt, so the steps download the pinned files from this site. The indexer hashes them against <span class="mono">${PINS_FILE}</span> in your copy and won't start with a different verification key or manifest. It serves the site and the API on http://localhost:8787; then <a href="#indexer" data-link>switch this site to it</a>.`)}
       ${cmd(`node bin/murkle.mjs audit --compare ${origin}`, "Replays from the activation block into a temporary state and prints \"OK up to <height>\" or the first block where our indexer differs.")}
       ${cmd("node bin/murkle.mjs audit --esplora http://127.0.0.1:3002/api --compare http://localhost:8787", "Use any Esplora-compatible API, such as your own electrs or mempool backend, so you don't depend on mempool.space either.")}`,
   });

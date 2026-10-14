@@ -46,7 +46,8 @@ ARG MURKLE_NETWORK=signet
 ENV NODE_ENV=production \
     MURKLE_NETWORK=$MURKLE_NETWORK \
     MURKLE_RELAYER=0 \
-    MURKLE_INDEXER_PORT=8787
+    MURKLE_INDEXER_PORT=8787 \
+    MURKLE_INDEXER_HOST=0.0.0.0
 WORKDIR /app
 COPY --from=build /app /app
 RUN mkdir -p /app/data /app/build && chown -R node:node /app/data /app/build

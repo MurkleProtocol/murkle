@@ -922,3 +922,26 @@ test("my files keep their line endings, are English only, and pins.mainnet.json 
     assert.ok(!CYRILLIC.test(b), `${f}: English only`);
   }
 });
+
+test("mainnet pages do not render signet-only words: the hero small print, the proving-key line, the pins file", async () => {
+  const code = `
+    const { heroMicro } = await import("./web/src/views/landing-micro.js");
+    const C = await import("./web/src/config.js");
+    const strip = (s) => String(s).replace(/<[^>]+>/g, " ").split(" ").filter(Boolean).join(" ");
+    console.log(JSON.stringify({ signet: C.IS_SIGNET, pins: C.PINS_FILE, micro: strip(heroMicro(C.IS_SIGNET)), warn: String(heroMicro(C.IS_SIGNET)).includes("Test coins") }));`;
+  const main = await child(code, { MURKLE_NETWORK: "mainnet" });
+  assert.deepEqual([main.signet, main.pins, main.warn], [false, "src/pins.mainnet.json", false]);
+  assert.equal(main.micro, "No sign-up Keys never leave your device", "nothing takes the place of the chip on mainnet");
+  const sig = await child(code, { MURKLE_NETWORK: "signet" });
+  assert.deepEqual([sig.signet, sig.pins, sig.warn], [true, "src/pins.json", true]);
+  assert.match(sig.micro, /Test coins only$/);
+
+  // The landing hero goes through heroMicro with the network flag, never a literal chip.
+  const landing = readFileSync("web/src/views/landing.js", "utf8");
+  assert.ok(landing.includes("heroMicro(IS_SIGNET)") && !landing.includes("Test coins only"), "landing.js: no hard-coded test-coin chip");
+  // The proving-key line of /verify names the single-party key on mainnet, and its pins file follows the network.
+  const art = readFileSync("web/src/verify/artifacts.js", "utf8");
+  assert.match(art, /IS_SIGNET \? "Proving key: from the single-party development setup \(A-8\)\." : "Proving key: made by one party, the Murkle operator \(A-8\)\."/);
+  const vf = readFileSync("web/src/views/verify.js", "utf8");
+  assert.ok(vf.includes("${PINS_FILE}</span> in your copy") && !vf.includes("against <span class=\"mono\">src/pins.json"), "verify.js: the network's pins file");
+});

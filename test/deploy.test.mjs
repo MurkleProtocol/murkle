@@ -356,7 +356,15 @@ test("Caddyfile and nginx: HTTPS, HSTS, X-Forwarded-For overwritten, no access l
   assert.equal((caddy.match(/^\s*keepalive 60s$/gm) ?? []).length, 1, "the indexer upstream: keepalive 60s");
   assert.match(read("server/indexer-server.mjs"), /server\.keepAliveTimeout = 65_000;/);
   const code = caddy.split("\n").filter((l) => !l.trim().startsWith("#")).join("\n");
-  assert.doesNotMatch(code, /^\s*log\b/m, "no access log");
+  const [globalBlock, siteBlock] = code.split(/^\{\$SITE_DOMAIN\} \{/m);
+  assert.ok(siteBlock, "the site block follows the global options");
+  assert.doesNotMatch(siteBlock, /^\s*log\b/m, "no access log: the site block has no log directive");
+  // The one log that exists is Caddy's default (error) log, with the visitor's address, port and headers removed.
+  assert.match(globalBlock, /^\s*log \{\s*format filter \{\s*wrap console\s*fields \{/m, "global log: a filter around the console format");
+  for (const f of ["request>remote_ip", "request>client_ip", "request>remote_port", "request>headers"]) {
+    assert.ok(globalBlock.split("\n").some((l) => l.trim() === `${f} delete`), `the error log drops ${f}`);
+  }
+  assert.doesNotMatch(globalBlock, /^\s*(output|level|include|exclude)\b/m, "the filter keeps the default destination and level (errors stay)");
   assert.doesNotMatch(code, /trusted_proxies/, "Caddy is the edge: no incoming X-Forwarded-For is believed");
 
   const nginx = read("deploy/nginx/murkle.conf");
@@ -366,6 +374,8 @@ test("Caddyfile and nginx: HTTPS, HSTS, X-Forwarded-For overwritten, no access l
   assert.doesNotMatch(nginx, /\$proxy_add_x_forwarded_for/, "never append to a client-supplied header");
   assert.match(nginx, /add_header Strict-Transport-Security "max-age=31536000" always;/);
   assert.match(nginx, /access_log off;/);
+  assert.match(nginx, /nginx cannot filter that out/, "nginx: the error-log client address is called out");
+  assert.match(read("docs/OPERATIONS.md"), /request>remote_ip[\s\S]*request>client_ip[\s\S]*request>remote_port[\s\S]*request>headers/, "docs: the Caddy log filter");
   assert.match(nginx, /listen 443 ssl;/);
   assert.match(nginx, /return 301 https:\/\/\$host\$request_uri;/);
 });
@@ -877,6 +887,36 @@ test("check-books: I2 holds on consistent books; tampering, short coins, wrong k
   assert.equal(nodeRun(["deploy/bin/check-books.mjs", "--state", join(good, "relayer.json")]).status, 1);
   assert.equal(nodeRun(["deploy/bin/check-books.mjs"]).status, 2);
   assert.equal(nodeRun(["deploy/bin/check-books.mjs", "--state", join(good, "missing.json")]).status, 1);
+});
+
+test("the indexer binds 127.0.0.1 unless MURKLE_INDEXER_HOST says otherwise; the container setups say 0.0.0.0", async () => {
+  const { listenHost } = await import("../server/indexer-server.mjs");
+  const only = (v) => (name) => (name === "INDEXER_HOST" ? v : undefined);
+  assert.equal(listenHost({ read: only(undefined) }), "127.0.0.1", "default: loopback");
+  assert.equal(listenHost({ read: only("") }), "127.0.0.1", "empty counts as unset");
+  assert.equal(listenHost({ read: only("0.0.0.0") }), "0.0.0.0");
+  assert.equal(listenHost({ read: only(" ::1 ") }), "::1");
+  assert.match(read("server/indexer-server.mjs"), /app\.server\.listen\(port, host, /, "listen names the host");
+  assert.doesNotMatch(read("server/indexer-server.mjs"), /app\.server\.listen\(port, \(\)/, "never listen on every interface by default");
+  // A real socket: the address it binds.
+  const { createServer } = await import("node:http");
+  const srv = createServer((_q, r) => r.end("ok"));
+  await new Promise((done) => srv.listen(0, listenHost({ read: only(undefined) }), done));
+  try {
+    assert.equal(srv.address().address, "127.0.0.1");
+  } finally {
+    srv.close();
+  }
+  assert.match(read("deploy/docker/docker-compose.yml"), /murkle-indexer:[\s\S]*?MURKLE_INDEXER_HOST: 0\.0\.0\.0[\s\S]*?\n  electrs:/, "compose: the indexer container binds the network");
+  assert.match(read("Dockerfile"), /MURKLE_INDEXER_PORT=8787 \\\r?\n {4}MURKLE_INDEXER_HOST=0\.0\.0\.0\r?\n/, "the image keeps docker run -p working (one ENV, real line continuations)");
+  assert.doesNotMatch(read("Dockerfile"), /\\n/, "no literal backslash-n: Docker reads it as a bare word and refuses the build");
+  assert.doesNotMatch(read("deploy/docker/docker-compose.yml"), /^\s*- "8787/m, "compose publishes no indexer port");
+  for (const f of ["deploy/env/murkle.mainnet.env.example", "deploy/env/murkle.signet.env.example"]) {
+    assert.match(read(f), /^# MURKLE_INDEXER_HOST=127\.0\.0\.1$/m, `${f} documents the variable`);
+  }
+  assert.match(read("docs/OPERATIONS.md"), /`MURKLE_INDEXER_HOST`/);
+  assert.match(read("README.md"), /`MURKLE_INDEXER_HOST`/);
+  assert.match(read("web/vite.config.mjs"), /http:\/\/127\.0\.0\.1:\$\{process\.env\.MURKLE_INDEXER_PORT/, "the dev proxy follows the loopback bind");
 });
 
 /* ------------------------------------------------------------------ copy: /security and /verify */

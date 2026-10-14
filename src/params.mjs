@@ -262,7 +262,7 @@ export function mineFeeReady(fee = MINE_FEE) {
   return null;
 }
 
-// Consensus changes after v1 (SPEC.md §10), from src/pins.json: [{ name, height: number | null, digestV }].
+// Consensus changes after v1 (SPEC.md §10), from the network's pins file (PINS_FILE): [{ name, height: number | null, digestV }].
 export const ACTIVATIONS = Object.freeze((pins.activations ?? []).map((a) => Object.freeze({ ...a })));
 
 /** Height at which the named rule set activates, or null (not scheduled). */

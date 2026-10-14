@@ -3,7 +3,8 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const INDEXER = `http://localhost:${process.env.MURKLE_INDEXER_PORT ?? 8787}`;
+// The indexer binds 127.0.0.1 by default (MURKLE_INDEXER_HOST), so the proxy names that address, not "localhost" (which can resolve to ::1).
+const INDEXER = `http://127.0.0.1:${process.env.MURKLE_INDEXER_PORT ?? 8787}`;
 const here = (p) => fileURLToPath(new URL(p, import.meta.url));
 
 // The network is fixed at build time (mainnet-readiness.md D1): src/params.mjs reads the

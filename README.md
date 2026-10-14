@@ -94,6 +94,7 @@ The same recovery phrase gives different keys on each network (network-separated
 |---|---|---|
 | `MURKLE_NETWORK` | `signet` | `signet` or `mainnet` (server, CLI, web build); anything else refuses to start |
 | `MURKLE_INDEXER_PORT` | 8787 | API port (the Vite dev proxy reads it too) |
+| `MURKLE_INDEXER_HOST` | `127.0.0.1` | address the API binds: loopback only by default; the Docker image and the compose file set `0.0.0.0` for the container network |
 | `MURKLE_STATE_PATH` | `data/signet/state.json` | indexer server snapshot (`data/<network>/state.json`) |
 | `MURKLE_DATA_DIR` | `data/signet` | CLI data directory: its own index snapshot `cli-state.json` (a first run starts from a copy of `state.json` there, if any, and never writes `state.json`) and `wallets/`. Point it elsewhere to test the CLI without touching `data/signet`; keep it outside the checkout, since wallet files hold private keys |
 | `MURKLE_ESPLORA` | mempool.space signet | Esplora-compatible chain data source (mempool.space mainnet on mainnet); with the bitcoind source, still used for wallet lookups when set |

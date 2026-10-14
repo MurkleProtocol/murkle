@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Downloads the pinned circuit artifacts (manifest, verification key, wasm, zkey) and writes
 // them where the indexer, the CLI and the tests load them (build/...). Every file is checked
-// against src/pins.json before anything is written; one mismatch and nothing is written, so
+// against the network's pins file (src/pins.json, src/pins.mainnet.json) before anything is written; one mismatch and nothing is written, so
 // the download source never has to be trusted.
 //
 // Usage: node scripts/fetch-artifacts.mjs [--from <url | directory>] [--dest <dir>] [--force] [--check] [--quiet]
@@ -132,7 +132,7 @@ export async function fetchArtifacts({ source, dest = ROOT, force = false, artif
       continue;
     }
     fetched.push({ a, bytes, target });
-    log(`verified ${a.name} (${bytes.length.toLocaleString("en-US")} bytes, sha256 matches src/pins.json)`);
+    log(`verified ${a.name} (${bytes.length.toLocaleString("en-US")} bytes, sha256 matches ${PINS_FILE})`);
   }
   if (problems.length) return { ok: false, written: [], kept, problems };
   for (const { a, bytes, target } of fetched) {
@@ -151,7 +151,7 @@ export async function fetchArtifacts({ source, dest = ROOT, force = false, artif
 }
 
 const HELP = `Usage: node scripts/fetch-artifacts.mjs [--from <url | directory>] [--dest <dir>] [--force] [--check] [--quiet]
-Downloads the pinned circuit artifacts and checks each against src/pins.json before writing.
+Downloads the pinned circuit artifacts and checks each against ${PINS_FILE} (this network's pins file) before writing.
 Source: --from, else MURKLE_ARTIFACTS_URL, else the GitHub release of REPO_URL (src/params.mjs).
 Examples:
   npm run artifacts:fetch -- --from https://<a Murkle site>/artifacts
@@ -189,7 +189,7 @@ async function main() {
   const source = resolveSource({ from: opts.from });
   if (!source) {
     if (checkAll(opts.dest).every((r) => r.ok) && !opts.force) {
-      say("All pinned artifacts are present and match src/pins.json; nothing to fetch.");
+      say(`All pinned artifacts are present and match ${PINS_FILE}; nothing to fetch.`);
       return 0;
     }
     console.error(`error: no artifact source configured.\n${HELP}`);
@@ -200,7 +200,7 @@ async function main() {
   const out = await fetchArtifacts({ source, dest: opts.dest, force: opts.force, log: say });
   if (!out.ok) {
     for (const p of out.problems) console.error(`REFUSED  ${p}`);
-    console.error("Nothing was written. Use another source, or check that it serves the files pinned in src/pins.json.");
+    console.error(`Nothing was written. Use another source, or check that it serves the files pinned in ${PINS_FILE}.`);
     return 1;
   }
   say(out.written.length ? `done: ${out.written.length} written, ${out.kept.length} already present` : "done: every file was already present");

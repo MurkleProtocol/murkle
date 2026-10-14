@@ -73,6 +73,8 @@ services:
       MURKLE_BITCOIND_COOKIE: ${BITCOIN_COOKIE:-/bitcoin/signet/.cookie}
       MURKLE_PUBLIC_URL: ${MURKLE_PUBLIC_URL:-}
       MURKLE_ARTIFACTS_URL: ${MURKLE_ARTIFACTS_URL:-}
+      # The indexer binds 127.0.0.1 by default; the Caddy container reaches it over the compose network.
+      MURKLE_INDEXER_HOST: 0.0.0.0
       MURKLE_TRUST_PROXY: "1"
       # Empty: the server enforces the CSP on mainnet and keeps it Report-Only on signet.
       MURKLE_CSP_ENFORCE: ${MURKLE_CSP_ENFORCE:-}

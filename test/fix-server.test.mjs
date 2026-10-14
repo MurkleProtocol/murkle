@@ -253,8 +253,8 @@ test("#22 the dev launcher no longer claims the Vite proxy ignores MURKLE_INDEXE
   process.env.MURKLE_INDEXER_PORT = "9123";
   try {
     const { default: config } = await import("../web/vite.config.mjs?port=9123");
-    assert.equal(config.server.proxy["/api"], "http://localhost:9123");
-    assert.equal(config.server.proxy["/artifacts"], "http://localhost:9123");
+    assert.equal(config.server.proxy["/api"], "http://127.0.0.1:9123");
+    assert.equal(config.server.proxy["/artifacts"], "http://127.0.0.1:9123");
   } finally {
     if (saved === undefined) delete process.env.MURKLE_INDEXER_PORT;
     else process.env.MURKLE_INDEXER_PORT = saved;

@@ -81,6 +81,19 @@ test("fetch-artifacts: writes only after every file matches its pin, and refuses
   assert.equal(missing.ok, false, "no pin, nothing to verify against");
 });
 
+test("fetch-artifacts names the network's own pins file, not a hard-coded src/pins.json", async () => {
+  const body = Buffer.from("x\n");
+  const lines = [];
+  const out = await fetchArtifacts({
+    source: "https://src.example", dest: join(DIR, "pinsfile"), artifacts: [{ name: "x", path: "build/x", sha256: hash(body) }],
+    read: async () => body, log: (l) => lines.push(l),
+  });
+  assert.equal(out.ok, true);
+  assert.ok(lines.some((l) => l.includes(`sha256 matches ${NETWORKS[NETWORK].pinsFile})`)), lines.join("\n"));
+  const src = readFileSync(join(ROOT, "scripts/fetch-artifacts.mjs"), "utf8");
+  assert.ok(!/(?:matches|match|pinned in) src\/pins\.json/.test(src), "no message may name src/pins.json whatever the network");
+});
+
 test("the /verify steps fetch and check the artifacts from a clone, and keep plain downloads without one", () => {
   const clone = runCommands({ repoUrl: "https://git.example/o/murkle", origin: "https://site.example" }).split("\n");
   assert.deepEqual(clone, [

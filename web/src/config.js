@@ -31,6 +31,8 @@ const DEFAULT_PINS = {
 const BUILT_NETWORK = typeof __MURKLE_NETWORK__ !== "undefined" ? __MURKLE_NETWORK__ : undefined; // eslint-disable-line no-undef
 export const NETWORK = P.NETWORK ?? globalThis.process?.env?.MURKLE_NETWORK ?? BUILT_NETWORK ?? "signet";
 const PINS_NAME = NETWORK === "mainnet" ? "pins.mainnet.json" : "pins.json";
+/** Repo-relative path of this network's pins file, for the words the pages print. */
+export const PINS_FILE = `src/${PINS_NAME}`;
 const vitePins = import.meta.env ? import.meta.glob(["../../src/pins.json", "../../src/pins.mainnet.json"], { eager: true, import: "default" }) : null;
 const filePins = vitePins ? vitePins[`../../src/${PINS_NAME}`] : (await loadNode(PINS_NAME)).default;
 const rawPins = P.PINS ?? P.pins ?? filePins ?? DEFAULT_PINS;

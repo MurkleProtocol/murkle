@@ -215,6 +215,14 @@ Caddy (`deploy/caddy/Caddyfile`, automatic certificates; give the Caddy service 
 client address (the relayer rate-limits by it), keep no access log, and send everything to the
 indexer. Set `MURKLE_TRUST_PROXY=1` only behind the proxy.
 
+The indexer listens on `127.0.0.1` only (port `MURKLE_INDEXER_PORT`, default 8787), so nothing but
+the proxy on the same machine reaches it; nobody can bypass the proxy and send the indexer a forged
+`X-Forwarded-For`. `MURKLE_INDEXER_HOST` changes the address it binds: leave it unset on a host
+install, and set `0.0.0.0` only where the proxy is on another network (the Docker image and
+`deploy/docker/docker-compose.yml` do, because the Caddy container reaches the indexer over the compose
+network and the compose file publishes no port for it). `npm run dev` needs nothing: the Vite proxy
+connects to `127.0.0.1`.
+
 The server sends its own Content-Security-Policy: enforced by default on mainnet (a mainnet server
 running Report-Only, `MURKLE_CSP_ENFORCE=0`, logs a warning at start), Report-Only by default on
 signet, where `MURKLE_CSP_ENFORCE=1` makes it enforcing.
@@ -244,6 +252,10 @@ docker compose -f deploy/docker/docker-compose.yml --env-file deploy/docker/comp
 # Optional upgrade, an own node: set MURKLE_BTC_SOURCE=bitcoind in compose.env, then add --profile bitcoind
 docker compose -f deploy/docker/docker-compose.yml --env-file deploy/docker/compose.env --profile bitcoind up -d --build
 ```
+
+The compose file sets `MURKLE_INDEXER_HOST=0.0.0.0` for the indexer (default `127.0.0.1`) so the Caddy
+container can reach it; only Caddy publishes ports (80, 443). Keep it that way: publishing 8787 would
+expose the indexer without the proxy.
 
 The containers log through the json-file driver with size limits. The image's `HEALTHCHECK` is
 liveness only: a halted relayer or a lagging indexer never restarts the container. Run
@@ -401,7 +413,14 @@ wait for the webhook, start it again and wait for the recovery post.
 The services log to the journal (`journalctl -u murkle-indexer`); `deploy/journald/murkle.conf`
 bounds it (2 GB, 30 days). The indexer and the relayer do not log IP addresses, keys or relay
 account secrets. The proxies keep no access log; `deploy/logrotate/murkle` rotates their error logs
-and anything under `/var/log/murkle`. Docker Compose services use the json-file driver with 5 files
+and anything under `/var/log/murkle`. Caddy's own log (errors, to stderr and so the journal or the
+container log) is filtered in `deploy/caddy/Caddyfile`: `request>remote_ip`, `request>client_ip`,
+`request>remote_port` and `request>headers` are deleted from every entry, so an error line names the
+method, host and path but not the visitor. After editing the file check it with
+`caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile`. nginx's error log
+(`deploy/nginx/murkle.conf`) writes the client address into each line ("client: ..."); nginx has no
+field filter, so keep `error_log` at `warn` as shipped, rotate it (logrotate keeps 14 days) and treat
+it as personal data. Docker Compose services use the json-file driver with 5 files
 of 20 MB each.
 
 ## 10. Incident playbook
