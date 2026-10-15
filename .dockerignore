@@ -3,6 +3,8 @@
 .github
 node_modules
 build
+gpu/build
+gpu/bin
 data
 web/dist
 docs/internal

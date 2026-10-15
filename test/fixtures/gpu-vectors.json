@@ -1,0 +1,175 @@
+{
+  "format": "murkle-gpu-vectors/1",
+  "argon2": {
+    "type": "argon2id",
+    "version": 19,
+    "memoryKiB": 4096,
+    "passes": 1,
+    "lanes": 1,
+    "tagLength": 32,
+    "salt": "murkle/mine/salt"
+  },
+  "generatedBy": "@noble/hashes 1.8.0 argon2id (reference), each tag checked against hash-wasm 4.12.0",
+  "vectors": [
+    {
+      "name": "nonce-0",
+      "password": "241f844bc274aa6cfffa62b3ffd0e9eaf14143ee4b1e0f5af8ffbfdd03efdbbf0000000000000000",
+      "tag": "a44f4d805a58aec3c7cbe71a16cedd2473b56fec45b1d49c10529b8712d2c2eb"
+    },
+    {
+      "name": "nonce-1",
+      "password": "84405fc7aa4b7151a9b6a0bd6029d457d21599e69fdf9130951e287ff932ec670100000000000000",
+      "tag": "e863ce0bb9560e2dc6f08bb5958bf18576a03ce16e2c864571b0858419f791ba"
+    },
+    {
+      "name": "nonce-u32-max",
+      "password": "3d0c92a9698908d353fc165ac1549d6a3e6dbd5b175ea2f5c7d26b8de27d0f7bffffffff00000000",
+      "tag": "3a61b3277559b87c77cf2b50ba6e72b8ded350b505e5b69aa935d6196cdf6ca0"
+    },
+    {
+      "name": "nonce-2^32",
+      "password": "11c43e4c995dee3a66a9e01548cad15fe227a5a9dac72d6084dc7a5d8cb2d0b50000000001000000",
+      "tag": "8fe80b9fbc98a0f17d0a629967cbca051ca204c57a820830c3e3bd48e20027c0"
+    },
+    {
+      "name": "nonce-2^63",
+      "password": "94ef3100f49fceb1ca070cb975f1763f0cb9fb0c86b1efd1041aab61f9ffbcbe0000000000000080",
+      "tag": "0b1918094f556e8d478edfafa0226770f1ed298e29fc736a73103aba2934cf62"
+    },
+    {
+      "name": "nonce-u64-max",
+      "password": "ccab20b18423eae3e8a82ea3f40e427f8b5282f2cd4478bb93962376a91cc9d8ffffffffffffffff",
+      "tag": "4b8f17bc4072060a3c981e6a4973fccf85d5dc3704a6b0365f0db3cd6078625f"
+    },
+    {
+      "name": "all-zero",
+      "password": "00000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "tag": "c036d79a07e899416ab7be0987b3672005f5c436d385444583d9327e6d205d9f"
+    },
+    {
+      "name": "all-ones",
+      "password": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "tag": "94e702cfe7583f554b9fa572aa9be072d098858321ff3567490b19714907448f"
+    },
+    {
+      "name": "random-0",
+      "password": "1b96a7d094312e3bfbb448aa3d0c32a9ef5fdd0ce2eaa1ff6030f2e56e80cfc76d4bad27233ab3b5",
+      "tag": "2c83a9a7f38160ddb94b8d272013221f6846a1d9347886eb4b8de9025473266b"
+    },
+    {
+      "name": "random-1",
+      "password": "feba393dcb8a68ea9491585bb8d4c5b7d11fa4b06149268a1da9d56cd20326c6395ec74db3238832",
+      "tag": "7b73236690dcba732f5ff700432f64c110fdd5ca3213299e18582c8cbc6c6583"
+    },
+    {
+      "name": "random-2",
+      "password": "e08ddd191e219c22aa273a2115ca739f9c0f132116415e35b79a87482dcc97c1054bf93519e572a7",
+      "tag": "5a1a53c56336a4609ba3d06398fb89be620929dffff0f820462f5f61448cc133"
+    },
+    {
+      "name": "random-3",
+      "password": "de32f1940fd54587754fe1458e606984a7323783e7aae56886b518029966365946407859a58d1770",
+      "tag": "1385d7817d2d9f5e5b373756f4d2c025b7a728c00e88b89cb4d7dd945d6085c6"
+    },
+    {
+      "name": "random-4",
+      "password": "82bdc53ebf7d156347a6e500edf3eed84f2f048ad04ec56106de51931b27d3d9834e1c3dca180314",
+      "tag": "1d58f5fc6f9fd5b54b98959c19699526f1425673e927e97220ac9d617a8644a8"
+    },
+    {
+      "name": "random-5",
+      "password": "c570e3d8f58c6aa17686bbc595eb65704bd10db9656ee7294251ae254a1d4b6de4c394c11483d647",
+      "tag": "acbf7e0273c958710d8e0c8e89443828b0c941856e3d598199fc9ff393482f0f"
+    },
+    {
+      "name": "random-6",
+      "password": "f90a7eb59cab383ed1176fd711c5394d31006d9ffb2ddfd3c7b60d76e3d4828c01bcf15689356b5f",
+      "tag": "a69b67f2e1e453c218f4124963972ae1fc81377554d206f76802d9f7fb51e88b"
+    },
+    {
+      "name": "random-7",
+      "password": "e55c0b97cbb2aeee97fb7a0ecc137338c03bdce39c1afc7f0aefaa36bdd50de524b14ba5071ceaf6",
+      "tag": "1de56cea92de4e2964ef43c4a052d75fdb55bfb7a2fb191fd1b8abea1ef48f17"
+    },
+    {
+      "name": "random-8",
+      "password": "2710343ac1e458a8e37127cdaaf4abf9c9162d9e0f67d7582ec48d4f12c89d2166a8896c547d3c12",
+      "tag": "a6f7ef576ebd5a1eb41ecba3f1861496f9948b9a9005b853b109f0a2c36f4fa0"
+    },
+    {
+      "name": "random-9",
+      "password": "cf3dc97ff1dff100aa52cef9349f5a850b9466a8886649834f2ec64502080dea1cd37cbb43dabf3c",
+      "tag": "1912647f64a95078ad8255208f18bd764226f47ee33ecb6790857fcc553b7ac1"
+    },
+    {
+      "name": "random-10",
+      "password": "1aea0d1225e7c44078c341d868767c458fbb2d4453b4725996d0dbb0639e416d1a9212e979bac101",
+      "tag": "98e3934fc0ff9859e1012c7adb67284e346ddfb7f16b1530624ba90ec7745e38"
+    },
+    {
+      "name": "random-11",
+      "password": "033210e8fb3842d78d37ade8f85907a9913f3b773d784ed04e3cfa89a8d1e0867d20ec8c3878e7e3",
+      "tag": "fa7f3b8427d8ebd3ca03394d34c98024001a678b03511562e707e42807b1655e"
+    },
+    {
+      "name": "random-12",
+      "password": "8b42b8e873c08da4bdc9ee98e2419b3d505eaa87e63bf73dd0142f47c0f505b35ee66f3cc2d613f7",
+      "tag": "6803403a0da508d4e9cfec19a156328d57f62cd7770d0fca383f192159aa3884"
+    },
+    {
+      "name": "random-13",
+      "password": "2073a323610818c2624a57b17fd03d339c1d5b4cf701c6a5f09d0500d879e24beeecd6eb1b43a8b8",
+      "tag": "b4decc54f0904ccc94e8443fb0a72efa15f0b13344edfc4f04a6f0838d55650d"
+    },
+    {
+      "name": "random-14",
+      "password": "66ef276bb15a4c13186d5c377a7009085243758ca22e91164eba4d2d827e99be865d44913ea5799f",
+      "tag": "002aaf59935a896eab008769746832e4b20a7ca8ca6a13bb812896c1d9b8c18b"
+    },
+    {
+      "name": "random-15",
+      "password": "ff67a27424cdfc92cd75b9fce6b7082c607b6f997465c1717d26610b5f25f43e88e251b1b0a983ad",
+      "tag": "5305e4501be98c743563d06f639738b2cc5bb0c3bf78e6a0d45773309533e7e7"
+    },
+    {
+      "name": "random-16",
+      "password": "35f0ef6d85200337d4642dbc994b3beba9587f62fdac8100cc4524643d9d85826cb5ca32f4518d74",
+      "tag": "81d4c439d37f9cc01c703ee239390dc582b56cc0bec0895e28c82d7f03f607bc"
+    },
+    {
+      "name": "random-17",
+      "password": "7713ee8bb1099a1c7e9db64be66ec198438f5e34899ece6b8e38846384c8f632ff6d57c4e112d649",
+      "tag": "866295ca1714bc3609cbbaf7549f6b2556fa97fbb656f058a7ecb5baf60e6e2b"
+    },
+    {
+      "name": "random-18",
+      "password": "b894cda7f2cc7938e09f4b96700efce94ef0b3d06c2470793178122fa4fb0d703fdf3ded73fc5caf",
+      "tag": "ad5edd17cf9ad5430b1ada99fa5504e718aaa1096153f3375155973ff000724a"
+    },
+    {
+      "name": "random-19",
+      "password": "5edf4a3171878ea2c933ce74d546de07b9fb67cf7982ccf85a09cb327b15a54369ee8d519c7632aa",
+      "tag": "e5ee3b7cef6955fc24b9e50ca1fbf18d2caf6ce850294b72e48f3ec5e8da5646"
+    },
+    {
+      "name": "random-20",
+      "password": "66f37d891a1c5d02c1535bae60e9c56a8e0cb11fb2784d62d0e0eac35a7ecf3287cc33ebfca04ef7",
+      "tag": "19371a4192805222a20f87ab5729e60ebb60cefe9ba9832341ea22265b573055"
+    },
+    {
+      "name": "random-21",
+      "password": "74b2aebe346a03e626f79541c28562b61b8e45c3fab997f9eb6bf3701f8070c03643005eae69495f",
+      "tag": "dd45e71a7997928ca9751141f440d0f8f06b13124b8e4ae289f8fe0df8fa7fe0"
+    },
+    {
+      "name": "random-22",
+      "password": "1064b0d15e4d79d908ffd3cd7eae381e333d3ca939322a4054b6660602c59dee1c54125731b88ce0",
+      "tag": "d64a4bfaf85b5b65373106be57b4b571377a0e843c5bb42efd799b470f5791c0"
+    },
+    {
+      "name": "random-23",
+      "password": "0eccccd2bbf27b26827141343fa3a546d99b69efcd1f055925ee659fe6f0e999cac9c97790d88013",
+      "tag": "e640f4cc25fa357cb8c631f7f8483283898f06afb07d750ede81c8b9dcc53539"
+    }
+  ]
+}

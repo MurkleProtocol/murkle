@@ -23,6 +23,9 @@
     "prepublish:check": "node scripts/prepublish-check.mjs",
     "headers:checkpoint": "node scripts/checkpoint.mjs",
     "replay:compare": "node scripts/replay-compare.mjs",
+    "gpu:build": "node scripts/gpu-build.mjs",
+    "gpu:fetch": "node scripts/gpu-fetch.mjs",
+    "gpu:bench": "node scripts/gpu-bench.mjs",
     "monitor": "node deploy/bin/monitor.mjs",
     "backup": "node deploy/bin/backup.mjs"
   },

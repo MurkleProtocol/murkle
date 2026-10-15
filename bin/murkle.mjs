@@ -2005,28 +2005,45 @@ export async function deployPowCommand({
 }
 
 export const MINE_USAGE =
-  `usage: ${CLI} mine <wallet> <TICKER> [--threads N] [--pay key|relay] [--linkable] [--max-claims n] [--max-fee-rate r] [--prepare-coins n] [--accept-cap-risk] [--esplora url] [--relay url]`;
+  `usage: ${CLI} mine <wallet> <TICKER> [--gpu all|0,1,...] [--threads N] [--pay key|relay] [--linkable] [--max-claims n] [--max-fee-rate r] [--prepare-coins n] [--accept-cap-risk] [--esplora url] [--relay url]`;
 // A self-paid claim pays headroomRate(next-block rate) up front (a bump can be blocked): the one
 // headroom of src/btc/funding.mjs (FEE_HEADROOM), as the web wallet. Every input carries its RBF_SEQUENCE.
 const MINE_RELAY_MODE = "fast"; // a relayed claim goes out at once: its 12-block window is short
 const CHANGE_FLOOR = 330n;
 
+/** --gpu: "all", or distinct device numbers 0 to 999 as a comma list. -> null | "all" | number[] */
+function gpuFlag(value) {
+  if (value === undefined) return null;
+  if (value === "all") return "all";
+  const parts = String(value).split(",");
+  if (!parts.every((p) => /^(0|[1-9]\d{0,2})$/.test(p))) {
+    throw new Error(`--gpu takes all, or device numbers 0 to 999 separated by commas (for example 0,1), not "${value}"\n${MINE_USAGE}`);
+  }
+  const numbers = parts.map(Number);
+  const twice = numbers.find((n, i) => numbers.indexOf(n) !== i);
+  if (twice !== undefined) throw new Error(`--gpu names device ${twice} twice\n${MINE_USAGE}`);
+  return numbers;
+}
+
 /**
- * Arguments of `mine`, strictly: <wallet> <TICKER>, then --threads, --pay key|relay (default key),
+ * Arguments of `mine`, strictly: <wallet> <TICKER>, then --gpu all|0,1,… (CUDA devices), --threads, --pay key|relay (default key),
  * --max-claims, --max-fee-rate (sat/vB), --prepare-coins (key only), --esplora (the Bitcoin backend
  * the reference re-check reads block hashes from; default MURKLE_ESPLORA) and --relay (the relayer
  * for --pay relay, default MURKLE_RELAY_URL, else localhost; with --pay key it is read only for the
  * claims in flight); --linkable (with --pay relay only) relays claims even while the relay pool is thin (L1);
  * --accept-cap-risk pays a claim even when the supply cap is close enough that it may land beyond it
  * (the warning is printed either way; without the flag a terminal asks, anything else stops).
- * -> { name, ticker, pay, threads, maxClaims, maxFeeRate, prepareCoins, esplora, relay, linkable, acceptCapRisk }
+ * -> { name, ticker, pay, threads, gpu, maxClaims, maxFeeRate, prepareCoins, esplora, relay, linkable, acceptCapRisk }
  * --threads is 1 … this machine's logical processors (each worker holds 4 MiB for Argon2 and
  * loads its own hash-wasm; thousands of them would exhaust memory before the self-test ends).
+ * gpu is null (no --gpu), "all" or the device numbers listed (never with --prepare-coins). With --gpu,
+ * --threads N counts CPU mining lanes (default 0): the pool then holds N + 1 workers, so one is always
+ * spare to verify what a GPU reports.
  */
 export function parseMineArgs(args, { read = env, processors = logicalProcessors() } = {}) {
   const [name, ticker, ...rest] = args.map(String);
   if (!name || name.startsWith("--") || !ticker || ticker.startsWith("--")) throw new Error(MINE_USAGE);
-  const f = parseStrictFlags(rest, { values: ["threads", "pay", "max-claims", "max-fee-rate", "prepare-coins", "esplora", "relay"], booleans: ["linkable", "accept-cap-risk"], usage: MINE_USAGE });
+  const f = parseStrictFlags(rest, { values: ["threads", "gpu", "pay", "max-claims", "max-fee-rate", "prepare-coins", "esplora", "relay"], booleans: ["linkable", "accept-cap-risk"], usage: MINE_USAGE });
   const count = (k) => {
     if (f[k] === undefined) return null;
     if (!/^[1-9]\d{0,5}$/.test(f[k])) throw new Error(`--${k} must be a whole number above 0\n${MINE_USAGE}`);
@@ -2039,12 +2056,13 @@ export function parseMineArgs(args, { read = env, processors = logicalProcessors
     throw new Error(`--threads must be 1 to ${maxThreads} (this machine's logical processors)\n${MINE_USAGE}`);
   }
   const out = {
-    name, ticker: ticker.toUpperCase(), pay, threads: count("threads"), maxClaims: count("max-claims"), maxFeeRate: count("max-fee-rate"),
+    name, ticker: ticker.toUpperCase(), pay, threads: count("threads"), gpu: gpuFlag(f.gpu), maxClaims: count("max-claims"), maxFeeRate: count("max-fee-rate"),
     prepareCoins: count("prepare-coins"), esplora: f.esplora === undefined ? null : checkRelayUrl(f.esplora, "--esplora"), relay: null,
     linkable: f.linkable === true, acceptCapRisk: f["accept-cap-risk"] === true,
   };
   if (out.linkable && pay !== "relay") throw new Error(`--linkable goes with --pay relay: a claim paid from the mining key shows that key's address anyway\n${MINE_USAGE}`);
   if (out.prepareCoins !== null && pay === "relay") throw new Error(`--prepare-coins splits the mining key's coins; it does not go with --pay relay\n${MINE_USAGE}`);
+  if (out.prepareCoins !== null && out.gpu !== null) throw new Error(`--prepare-coins splits the mining key's coins and mines nothing; it does not go with --gpu\n${MINE_USAGE}`);
   if (pay === "relay") out.relay = f.relay !== undefined ? checkRelayUrl(f.relay) : checkRelayUrl(read("RELAY_URL") || DEFAULT_RELAY, "MURKLE_RELAY_URL");
   else if (f.relay !== undefined) out.relay = checkRelayUrl(f.relay);
   return out;
@@ -2089,6 +2107,103 @@ const POW_RETRY = new Set(["POW_TIMEOUT", "POW_WORKER_FAILED", "POW_BUSY"]);
 const POW_RETRY_MAX = 10; // consecutive failed rounds before mining stops
 const SLICE_TARGET_MS = 2000; // an adaptive slice aims at about 2 s of hashing per thread
 const SLICE_MAX = 4096;
+const GPU_SLICE_FIRST = 4096; // a GPU lane's first slice: one batch of its slots is already thousands of hashes
+const GPU_SLICE_MAX = 2 ** 31;
+
+/** "GPU 0, GPU 1 and 2 CPU threads": the lanes of a round (a disabled GPU lane is left out). */
+function laneText(gpus, threads) {
+  const parts = [...gpus.filter((g) => !g.disabled).map((g) => g.label), ...(threads ? [`${threads} CPU thread${threads === 1 ? "" : "s"}`] : [])];
+  return parts.length > 1 ? `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}` : (parts[0] ?? "no lanes");
+}
+
+/** One line when the miner binary is not a release build listed in gpu/pins.json: the verify gate checks its results, but not what else the program does. */
+function pinNote(bin, print) {
+  let sha;
+  try {
+    sha = sha256File(bin);
+  } catch {
+    return; // unreadable here: the spawn reports it
+  }
+  let pinned = [];
+  try {
+    const pins = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "gpu", "pins.json"), "utf8"));
+    pinned = Object.values(pins.files ?? {}).map((p) => p.sha256);
+  } catch {
+    // no pin list: every binary is "self-built"
+  }
+  if (!pinned.includes(sha)) print(`GPU miner binary is not a pinned release build (sha256 ${sha}). Run only a binary you built yourself or fetched with npm run gpu:fetch: it runs with your account's rights and can read your wallet files.`);
+}
+
+/**
+ * Steps 1 to 3 of `mine --gpu` (before the chain is synced): the miner binary, the CUDA devices it
+ * lists, the ones asked for ("all" or a list; a number the binary does not list is refused).
+ * lib: src/gpu.mjs (a test passes a stand-in); spawn: child_process.spawn (a test passes a stand-in).
+ * -> { bin, devices: [{ index, name, cc, vramMiB }] }
+ */
+export async function planGpus(spec, { lib = null, spawn, env: environ = process.env, print = console.log } = {}) {
+  lib ??= await import("../src/gpu.mjs");
+  const bin = lib.gpuBinaryPath({ env: environ });
+  const listed = await lib.listGpus({ bin, spawn });
+  pinNote(bin, print);
+  if (spec === "all") return { bin, devices: listed };
+  const missing = spec.filter((i) => !listed.some((d) => d.index === i));
+  if (missing.length) {
+    throw new Error(`no CUDA device ${missing.join(", ")}: ${bin} lists ${listed.map((d) => d.index).join(", ")}; nothing was mined`);
+  }
+  return { bin, devices: spec.map((i) => listed.find((d) => d.index === i)) };
+}
+
+/** MURKLE_GPU_SLOTS and MURKLE_GPU_HASHES_PER_BLOCK as the binary's --slots / --hashes-per-block (leave VRAM free, or tune). */
+function gpuTuning(environ) {
+  const out = [];
+  for (const [name, flag, ok] of [["MURKLE_GPU_SLOTS", "--slots", (n) => n >= 1 && n <= 2 ** 20], ["MURKLE_GPU_HASHES_PER_BLOCK", "--hashes-per-block", (n) => [1, 2, 4, 8].includes(n)]]) {
+    const v = environ[name];
+    if (v === undefined || v === "") continue;
+    if (!/^[0-9]{1,7}$/.test(v) || !ok(Number(v))) throw new Error(`${name} must be ${flag === "--slots" ? "a whole number from 1 to 1048576" : "1, 2, 4 or 8"}, got "${v}"; nothing was mined`);
+    out.push(flag, v);
+  }
+  return out;
+}
+
+/**
+ * Steps 5 and 6: opens each planned device, runs its self-test against the Argon2 pool (which must be
+ * ready) and wraps it as a mining lane that can restart itself. A device that fails refuses the whole
+ * run before anything is drafted or paid. -> GpuLane[] (the caller closes them)
+ */
+export async function openGpuLanes({ plan, pool, lib = null, spawn, args: extra = [], print = console.log, env: environ = process.env }) {
+  lib ??= await import("../src/gpu.mjs");
+  const args = [...extra, ...gpuTuning(environ)];
+  const verifyMany = (passwords) => pool.hashMany(passwords);
+  const lanes = [];
+  try {
+    for (const d of plan.devices) {
+      const open = async () => {
+        const device = await lib.openGpu({ bin: plan.bin, device: d.index, spawn, args });
+        try {
+          await lib.gpuSelfTest(device, { verifyMany });
+        } catch (e) {
+          await device.close().catch(() => {});
+          throw e;
+        }
+        return device;
+      };
+      let device;
+      try {
+        device = await open();
+      } catch (e) {
+        if (String(e?.code ?? "").startsWith("GPU_")) throw new Error(`GPU ${d.index} failed its self-test (${e.message}); remove it from --gpu. Nothing was mined.`);
+        throw e;
+      }
+      lanes.push(new lib.GpuLane({ device, verifyMany, label: `GPU ${d.index}`, reopen: open }));
+      const i = device.info;
+      print(`GPU ${d.index} self-test passed: ${i.name} (${i.cc}, ${i.vramMiB} MiB, ${i.slots} slots)`);
+    }
+    return lanes;
+  } catch (e) {
+    await Promise.all(lanes.map((l) => l.close().catch(() => {})));
+    throw e;
+  }
+}
 
 /**
  * The wallet file's mining key (`mineKey`, 32 random bytes): it pays self-paid claims and never
@@ -2215,7 +2330,9 @@ export async function prepareCoinsCommand({
  *  1. builds a new claim draft on each new tip and after each solution (fresh commitments and
  *     nullifiers, `wallet.prepareClaim`), so no two claims share either;
  *  2. hands slices of nonces to the worker pool (`pool.grind`), one slice per thread, and polls the
- *     backend's tip between slices;
+ *     backend's tip between slices. `gpus` (GpuLane objects with grind and label, src/gpu.mjs) are further
+ *     lanes of each round; one that reports what the reference does not confirm disables itself and the
+ *     others carry on (no lane left: mining stops with nothing paid);
  *  3. on a solution: re-checks it with the reference Argon2 against the block hash its own backend
  *     (`esplora`) reports for the reference block (a fast path that disagrees stops mining), then
  *     claimRefusal against the synced index, counting claims in flight;
@@ -2234,7 +2351,7 @@ export async function prepareCoinsCommand({
 export async function runMiner({
   idx, wallet, file, save = () => {}, name = "<wallet>", ticker, lib, pool, esplora, resync = async () => {}, pay = "key", maxClaims = Infinity,
   maxFeeRate = null, mineKey = null, relay = null, linkable = false, acceptCapRisk = false, confirm = null, fee = params.MINE_FEE, fundingLib = funding, decode = decodeEnvelope, sign = signLocal,
-  print = console.log, warn = (s) => process.stderr.write(`${s}\n`), now = Date.now, sleep = delay, signal, slice = null, threads = pool.size ?? 1,
+  print = console.log, warn = (s) => process.stderr.write(`${s}\n`), now = Date.now, sleep = delay, signal, slice = null, threads = pool.size ?? 1, gpus = [],
   pollMs = 15_000, statsMs = 10_000, randomCounter = () => BigInt(`0x${randomBytes(8).toString("hex")}`),
 }) {
   if (pay !== "key" && pay !== "relay") throw new Error(`unknown route "${pay}"`);
@@ -2543,22 +2660,26 @@ export async function runMiner({
     return null;
   };
 
-  // Adaptive slices (slice === null): start small, then about SLICE_TARGET_MS per slice.
+  // Adaptive slices (slice === null): start small, then about SLICE_TARGET_MS per slice. Each lane has its own:
+  // a CPU thread is capped at SLICE_MAX nonces, a GPU lane at GPU_SLICE_MAX.
   const e2code = (e) => String(e?.code ?? "");
-  const sizing = {
-    count: 16,
+  const makeSizing = (first, max) => ({
+    count: first,
     msPerHash: null,
     failures: 0,
     measure(n, ms) {
       if (!(ms > 0) || !(n > 0)) return;
       this.msPerHash = ms / n;
-      this.count = Math.max(1, Math.min(SLICE_MAX, Math.round(SLICE_TARGET_MS / this.msPerHash)));
+      this.count = Math.max(1, Math.min(max, Math.round(SLICE_TARGET_MS / this.msPerHash)));
     },
     // Four times the expected time of the slice, never below the pool's 30 s default.
     timeoutMs(n) {
       return this.msPerHash === null ? undefined : Math.max(30_000, Math.ceil(n * this.msPerHash * 4));
     },
-  };
+  });
+  const sizing = makeSizing(16, SLICE_MAX);
+  const gpuSizing = new Map(gpus.map((g) => [g, makeSizing(GPU_SLICE_FIRST, GPU_SLICE_MAX)]));
+  const windowLane = new Map(); // hashes per lane ("cpu" or a GPU lane) since the last status line
 
   // The loop: one draft per tip and per solution.
   let lastStats = now();
@@ -2588,7 +2709,7 @@ export async function runMiner({
     }
     const dEff = lib.effectiveDifficulty(asset, ref, ref + 1);
     const target = lib.targetOf(dEff);
-    if (announced !== ref) print(`block ${ref}: reward ${reward} ${asset.ticker}, difficulty ${dEff}, ${threads} thread${threads === 1 ? "" : "s"}`);
+    if (announced !== ref) print(`block ${ref}: reward ${reward} ${asset.ticker}, difficulty ${dEff}, ${gpus.length ? laneText(gpus, threads) : `${threads} thread${threads === 1 ? "" : "s"}`}`);
     announced = ref;
     let found = null;
     let lastPoll = now();
@@ -2599,11 +2720,57 @@ export async function runMiner({
       // task timeout grows with it, so a slow machine never meets the pool's 30 s default.
       const count = slice ?? sizing.count;
       const t0 = now();
-      const settledRound = await Promise.allSettled(
-        Array.from({ length: threads }, () => pool.grind({ challenge: draft.challenge, target, nonceStart: randomCounter(), count, timeoutMs: sizing.timeoutMs(count) })),
+      // GPU lanes join the round; a solution on any lane (or Ctrl+C) cancels the GPU slices of the others
+      // (a CPU slice cannot be interrupted and ends by itself).
+      const live = gpus.filter((g) => !g.disabled);
+      if (!live.length && !threads) return quit("every GPU and CPU lane is disabled; nothing more was mined");
+      const stop = new AbortController();
+      const onAbort = () => stop.abort();
+      signal?.addEventListener("abort", onAbort, { once: true });
+      const onFound = (r) => {
+        if (r?.nonce) stop.abort();
+        return r;
+      };
+      const took = new Map(); // GPU lane -> ms its slice took
+      let cpuMs = null;
+      const cpuRound = Array.from({ length: threads }, () =>
+        Promise.resolve(pool.grind({ challenge: draft.challenge, target, nonceStart: randomCounter(), count, timeoutMs: sizing.timeoutMs(count) })).then(onFound),
       );
+      const cpuDone = Promise.allSettled(cpuRound).then((r) => {
+        if (gpus.length) cpuMs = now() - t0;
+        return r;
+      });
+      const gpuRound = live.map((g) => {
+        const gs = gpuSizing.get(g);
+        const n = slice ?? gs.count;
+        const t = now();
+        return Promise.resolve(g.grind({ challenge: draft.challenge, target, nonceStart: randomCounter(), count: n, timeoutMs: gs.timeoutMs(n), signal: stop.signal }))
+          .then(onFound)
+          .finally(() => took.set(g, now() - t));
+      });
+      let settledRound;
+      let gpuSettled;
+      try {
+        [settledRound, gpuSettled] = await Promise.all([cpuDone, Promise.allSettled(gpuRound)]);
+      } finally {
+        signal?.removeEventListener("abort", onAbort);
+      }
       const results = settledRound.filter((x) => x.status === "fulfilled").map((x) => x.value);
       const failed = settledRound.filter((x) => x.status === "rejected").map((x) => x.reason);
+      // A GPU_* rejection is not a verdict on the work: the lane has restarted itself or is out for the run (its
+      // sentence is printed once). Any other rejection of a GPU lane (the Argon2 pool failing) is handled below.
+      const gpuTried = new Map();
+      gpuSettled.forEach((x, i) => {
+        const g = live[i];
+        if (x.status === "fulfilled") {
+          results.push(x.value);
+          gpuTried.set(g, Number(x.value?.tried) || 0);
+          if (slice === null && x.value?.tried > 0) gpuSizing.get(g).measure(x.value.tried, took.get(g));
+        } else if (e2code(x.reason).startsWith("GPU_")) {
+          if (g.disabled) print(g.disabled);
+          else warn(`${g.label}: ${x.reason.message} (${e2code(x.reason)}); trying again`);
+        } else failed.push(x.reason);
+      });
       const fatal = failed.find((e) => !POW_RETRY.has(e?.code));
       if (fatal) {
         if (e2code(fatal) === "POW_CLOSED" || e2code(fatal) === "POW_SELF_TEST") return quit(`${fatal.message}; nothing more was mined`);
@@ -2616,16 +2783,30 @@ export async function runMiner({
         if (slice === null) sizing.count = Math.max(1, Math.floor(sizing.count / 2));
         if (sizing.failures >= POW_RETRY_MAX) return quit(`the Argon2 workers failed ${sizing.failures} rounds in a row (${failed[0].message}); nothing more was mined`);
       } else sizing.failures = 0;
-      if (slice === null && !failed.length) sizing.measure(count, now() - t0);
+      if (slice === null && !failed.length && (threads || !gpus.length)) sizing.measure(count, gpus.length ? cpuMs : now() - t0);
       const tried = results.reduce((s, r) => s + (Number(r?.tried) || 0), 0);
       stats.hashes += tried;
       windowHashes += tried;
+      if (gpus.length) {
+        let gpuTotal = 0;
+        for (const [g, n] of gpuTried) {
+          windowLane.set(g, (windowLane.get(g) ?? 0) + n);
+          gpuTotal += n;
+        }
+        windowLane.set("cpu", (windowLane.get("cpu") ?? 0) + tried - gpuTotal);
+      }
       found = results.find((r) => r?.nonce) ?? null;
       if (now() - lastStats >= statsMs) {
-        const hs = Math.round((windowHashes * 1000) / Math.max(1, now() - lastStats));
-        print(`${int(hs)} H/s  solutions ${stats.solutions}  claims sent ${stats.sent}  landed ${stats.landed}  fees spent ${int(stats.feesSats)} sats`);
+        const dt = Math.max(1, now() - lastStats);
+        const hs = Math.round((windowHashes * 1000) / dt);
+        const rate = (k) => int(Math.round(((windowLane.get(k) ?? 0) * 1000) / dt));
+        const lanes = gpus.length
+          ? `  [${[...gpus.filter((g) => !g.disabled).map((g) => `${g.label.toLowerCase().replace(/\s+/g, "")} ${rate(g)}`), ...(threads ? [`cpu ${rate("cpu")}`] : [])].join(" | ")}]`
+          : "";
+        print(`${int(hs)} H/s${lanes}  solutions ${stats.solutions}  claims sent ${stats.sent}  landed ${stats.landed}  fees spent ${int(stats.feesSats)} sats`);
         lastStats = now();
         windowHashes = 0;
+        windowLane.clear();
       }
       if (!found && now() - lastPoll >= pollMs) {
         lastPoll = now();
@@ -2688,7 +2869,7 @@ export const HELP = [
   "  relay topup <w> [--relay url] [--pay <sats> [--fee-rate n] [--dry-run]]   a fresh deposit address; --pay pays it from the BTC fee key",
   "  relay credit <w> [<txid:vout> [<n>]] [--older] [--relay url]   credits confirmed deposits to your relay balance",
   "  deploy-pow <w> --ticker T --reward N --max-supply N [--span 24] [--per-block 1] [--difficulty D | --hashrate H] [--min-difficulty D] [--halving n] [--start now | --start-after N] [--end h] [--fee-rate r] [--dry-run] [--reserved-ticker]",
-  "  mine <w> <TICKER> [--threads N] [--pay key|relay] [--linkable] [--max-claims n] [--max-fee-rate r] [--prepare-coins n] [--accept-cap-risk] [--esplora url] [--relay url]",
+  "  mine <w> <TICKER> [--gpu all|0,1,...] [--threads N] [--pay key|relay] [--linkable] [--max-claims n] [--max-fee-rate r] [--prepare-coins n] [--accept-cap-risk] [--esplora url] [--relay url]",
   `Mining (once the mining activation height is set): every claim pays a Bitcoin fee and a service fee of ${params.MINE_FEE ? int(params.MINE_FEE.platformSats) : "N"} sats to the ${BRAND} platform address. --pay key (the default) pays from the wallet's separate mining key, so the token, the reward and that address are public; --pay relay pays from the relay balance, and the relayer sees the token and the reward of every claim it carries for you.`,
   "  attest genesis <w> [--dry-run] [--force]",
   "  address-script <bitcoin address>   prints its scriptPubKey hex (this network's addresses only)",
@@ -2859,12 +3040,13 @@ const commands = {
   },
 
   /**
-   * Mines a token with worker threads and pays each claim from the mining key (--pay key) or the
-   * relay balance (--pay relay); --prepare-coins n splits the mining key's coins and exits.
+   * Mines a token with worker threads (and with CUDA devices when --gpu is given) and pays each claim from the
+   * mining key (--pay key) or the relay balance (--pay relay); --prepare-coins n splits the mining key's coins and exits.
    * Ctrl+C stops after the current slice; claims already sent stay locked (W-M).
    */
   async mine(args) {
     const f = parseMineArgs(args);
+    const gpuPlan = f.gpu === null ? null : await planGpus(f.gpu); // steps 1 to 3: before the chain is synced, so a missing binary fails fast
     const lib = await loadMineLib();
     const idx = await synced();
     const { wallet, file, save } = await openWallet(f.name, idx);
@@ -2885,7 +3067,8 @@ const commands = {
     }
     const mineKey = f.pay === "key" ? mineKeyOf(file, save) : null;
     const { createNodePowPool } = await import("../src/pow-pool.mjs");
-    const pool = await createNodePowPool(f.threads ? { size: f.threads } : {});
+    // With --gpu, --threads counts CPU mining lanes (default 0) and the pool keeps one more worker to verify what the GPUs report.
+    const pool = await createNodePowPool(gpuPlan ? { size: (f.threads ?? 0) + 1 } : f.threads ? { size: f.threads } : {});
     const ac = new AbortController();
     const onInt = () => ac.abort();
     process.on("SIGINT", onInt);
@@ -2898,11 +3081,17 @@ const commands = {
       }
       console.log(`Argon2id self-test passed: ${ready.impl}, ${ready.workers ?? pool.size} worker thread${(ready.workers ?? pool.size) === 1 ? "" : "s"}`);
       if (ready.impl === "noble") console.log(MINE_COPY.slow);
-      const out = await runMiner({
-        idx, wallet, file, save, name: f.name, ticker: f.ticker, lib, pool, esplora: own, resync: () => syncInPlace(idx), pay: f.pay,
-        maxClaims: f.maxClaims ?? Infinity, maxFeeRate: f.maxFeeRate, mineKey, relay, linkable: f.linkable, acceptCapRisk: f.acceptCapRisk, confirm: terminalConfirm({ signal: ac.signal }), signal: ac.signal, threads: ready.workers ?? pool.size,
-      });
-      process.exitCode = out.status === "error" ? 1 : 0;
+      const gpus = gpuPlan ? await openGpuLanes({ plan: gpuPlan, pool }) : [];
+      try {
+        const out = await runMiner({
+          idx, wallet, file, save, name: f.name, ticker: f.ticker, lib, pool, esplora: own, resync: () => syncInPlace(idx), pay: f.pay,
+          maxClaims: f.maxClaims ?? Infinity, maxFeeRate: f.maxFeeRate, mineKey, relay, linkable: f.linkable, acceptCapRisk: f.acceptCapRisk, confirm: terminalConfirm({ signal: ac.signal }), signal: ac.signal,
+          threads: gpuPlan ? (f.threads ?? 0) : (ready.workers ?? pool.size), gpus,
+        });
+        process.exitCode = out.status === "error" ? 1 : 0;
+      } finally {
+        await Promise.all(gpus.map((l) => l.close().catch(() => {})));
+      }
     } finally {
       process.off("SIGINT", onInt);
       await pool.close();

@@ -30,6 +30,7 @@ import { btcAccount, dustLimit } from "../src/btc/funding.mjs";
 import * as params from "../src/params.mjs";
 import { capRisk, capWarningText } from "../src/mine.mjs";
 import { auditFacts } from "../scripts/facts.mjs";
+import { DEFAULTS, coin, fakeChain, hashOf, makeRun, stubLib } from "./fixtures/fake-chain.mjs";
 
 const DIR = mkdtempSync(join(tmpdir(), "murkle-mine-cli-"));
 process.env.MURKLE_DATA_DIR = DIR;
@@ -57,53 +58,7 @@ const sha = (x) => sha256(typeof x === "string" ? te.encode(x) : x);
 const quiet = () => {};
 const hasCyrillic = (s) => [...s].some((c) => c.codePointAt(0) >= 0x400 && c.codePointAt(0) <= 0x4ff);
 
-/* ------------------------------------------------------------------ src/mine.mjs, or a contract stub */
-
-const DEFAULTS = Object.freeze({
-  span: 24, perBlock: 1, launchHashrate: 2000, floorDivisor: 16, browserThreadHs: 250, lowFloorRatio: 1000, halvingInterval: 0, claimFeeSats: 0n, start: "now", startAfter: 144,
-});
-
-/**
- * The parts of src/mine.mjs the CLI calls, as mining-contract.md §3 specifies them. The hash is a
- * stand-in (sha256, not Argon2): these tests check the CLI's flow, the vectors are the core track's.
- */
-function stubLib(over = {}) {
-  const lib = {
-    LAUNCH_DEFAULTS: DEFAULTS,
-    suggestInitialDifficulty: ({ hashrate, span, targetPerSpan }) => {
-      const d = BigInt(Math.floor((hashrate * 600 * span) / targetPerSpan));
-      return d < 256n ? 256n : d;
-    },
-    suggestFloor: (d) => (d / 16n < 256n ? 256n : d / 16n),
-    checkFeePolicy(claimFeeSats, treasury, fee) {
-      if (fee.deployerMinSats > 0n) return claimFeeSats < fee.deployerMinSats || claimFeeSats > fee.deployerMaxSats ? `malformed: claim fee ${claimFeeSats} outside ${fee.deployerMinSats}..${fee.deployerMaxSats}` : null;
-      if (claimFeeSats === 0n) return null;
-      if (fee.deployerMaxSats === 0n) return "malformed: deployer claim fee not allowed";
-      if (claimFeeSats < 546n) return "malformed: claim fee below 546 sats";
-      return claimFeeSats > fee.deployerMaxSats ? `malformed: claim fee ${claimFeeSats} outside 0..${fee.deployerMaxSats}` : null;
-    },
-    mineStartOf: (a) => Math.max(a.startHeight ?? 0, a.deployHeight),
-    startHeightFor: ({ start, after, tip }) => (start === "now" ? 0 : tip + 1 + after),
-    challengeOf: ({ asset, refHeight, refHash, reward, commitments }) => sha(JSON.stringify([String(asset), refHeight, refHash, String(reward), commitments.map(String)])),
-    passwordOf: (challenge, nonce) => concat(challenge, nonce),
-    powHashReference: (password) => sha(concat(te.encode("pow"), password)),
-    solutionIdOf: (challenge, nonce) => sha(concat(challenge, nonce)),
-    targetOf: (d) => ((1n << 256n) - 1n) / BigInt(d),
-    meetsTarget: () => true,
-    effectiveDifficulty: () => 1000n,
-    difficultyAt: () => 1000n,
-    rewardAt: (asset) => asset.reward,
-    mineStatus: (asset, tip) => (tip < asset.mineStart ? "mining-soon" : asset.issued + asset.reward > asset.maxSupply ? "mined-out" : "mining"),
-    requiredFeeOutputs: (asset, fee) => [{ script: unhex(fee.platformScript), sats: fee.platformSats, role: "platform" }],
-    capRisk,
-    capWarningText,
-    disabled: null,
-    disableFastPath(reason) {
-      lib.disabled = reason;
-    },
-  };
-  return Object.assign(lib, over);
-}
+// The contract stub of src/mine.mjs (stubLib) and the fake chain (fakeChain) are in test/fixtures/fake-chain.mjs, shared with test/gpu-lane.test.mjs.
 
 /* ------------------------------------------------------------------ deploy-pow */
 
@@ -308,158 +263,8 @@ test("deploy-pow builds the DEPLOY_POW envelope of the real encoder, and it deco
 });
 
 /* ------------------------------------------------------------------ the fake chain */
+const run = makeRun(runMiner);
 
-const hashOf = (h) => hex(sha(`block ${h}`));
-const coin = (value, i = 0) => ({ txid: randomBytes(32).toString("hex"), vout: i, value, status: { confirmed: true } });
-
-/**
- * A chain, an indexer view of it, a Bitcoin backend, a wallet and a worker pool, all fake, around one
- * mined token DIG. Claims broadcast (self-pay) or carried by the relayer land in the next block the
- * fake indexer applies. `onGrind(call)` runs before each slice (it may move the tip).
- */
-function fakeChain({ tip = 1000, reward = 50n, maxSupply = 10_000n, issued = 0n, mineStart = 990, findOn = 2, lib = stubLib(), onGrind = () => {}, pendingClaims = null } = {}) {
-  const asset = {
-    id: (846n << 32n) | 3n, kind: "pow", ticker: "DIG", reward, maxSupply, issued, claims: 0, mineStart, deployHeight: 846, startHeight: 0, endHeight: 0, claimsByHeight: [],
-    span: 24, targetPerSpan: 24, minDifficulty: 256n, initialDifficulty: 256n, halvingInterval: 0, dPts: [[mineStart, 256n]],
-  };
-  const events = [];
-  const chain = { tip, mempool: [] };
-  const byTxid = new Map(); // carrier txid -> the claim's draft and nonce (from the local check)
-  const idx = {
-    height: tip, hashes: new Map(), assets: new Map([[asset.id, asset]]), tickers: new Map([["DIG", asset.id]]), claimed: new Set(), nullifiers: new Set(), log: [], outputs: [],
-    miningHeight: 900,
-    miningActive: (h) => h >= 900,
-    checks: [],
-    async checkMine(env, tx, H) {
-      idx.checks.push({ env, tx, H });
-      byTxid.set(tx.txid, env);
-      return true;
-    },
-    mineStatic: (env, H) => (idx.checks.push({ env, H, part: "static" }), true),
-    mineState: () => true,
-    minePow: async () => true,
-    mineProof: async () => true,
-  };
-  for (let h = tip - 30; h <= tip; h++) idx.hashes.set(h, hashOf(h));
-  const land = (h) => {
-    for (const c of chain.mempool) {
-      idx.log.push({ txid: c.txid, ok: true, height: h, op: c.op, ticker: "DIG", amount: String(asset.reward) });
-      idx.claimed.add(c.solutionId);
-      asset.issued += asset.reward;
-      asset.claims += 1;
-      for (const n of c.spends ?? []) idx.nullifiers.add(n);
-    }
-    chain.mempool = [];
-  };
-  const resync = async () => {
-    events.push(`resync ${chain.tip}`);
-    while (idx.height < chain.tip) {
-      idx.height += 1;
-      idx.hashes.set(idx.height, hashOf(idx.height));
-      land(idx.height);
-    }
-  };
-
-  const mineKey = randomBytes(32);
-  const account = btcAccount(mineKey);
-  let utxos = [coin(40_000, 0), coin(9_000, 1)];
-  const esplora = {
-    broadcasts: [],
-    fees: [],
-    tipHeight: async () => chain.tip,
-    blockHash: async (h) => hashOf(h),
-    utxos: async (address) => (address === account.address ? utxos.map((u) => ({ ...u })) : []),
-    feeRate: async () => 2,
-    async broadcast(txHex) {
-      events.push("broadcast");
-      const tx = btc.Transaction.fromRaw(unhex(txHex), { allowUnknownOutputs: true });
-      esplora.broadcasts.push(tx);
-      const spent = new Set(Array.from({ length: tx.inputsLength }, (_, i) => `${hex(tx.getInput(i).txid)}:${tx.getInput(i).index}`));
-      const paid = utxos.filter((u) => spent.has(`${u.txid}:${u.vout}`)).reduce((t, u) => t + BigInt(u.value), 0n);
-      esplora.fees.push(Number(paid - Array.from({ length: tx.outputsLength }, (_, i) => tx.getOutput(i).amount).reduce((t, a) => t + a, 0n)));
-      utxos = utxos.filter((u) => !spent.has(`${u.txid}:${u.vout}`));
-      for (let i = 0; i < tx.outputsLength; i++) {
-        const o = tx.getOutput(i);
-        if (hex(o.script) === hex(account.script)) utxos.push({ txid: tx.id, vout: i, value: Number(o.amount), status: { confirmed: false } });
-      }
-      const env = byTxid.get(tx.id);
-      chain.mempool.push({ txid: tx.id, solutionId: env.solutionId, spends: env.spends, op: 7 });
-      return tx.id;
-    },
-  };
-
-  let drafts = 0;
-  const wallet = {
-    locked: new Set(),
-    notes: [],
-    drafts: [],
-    finals: [],
-    scans: 0,
-    scan() {
-      wallet.scans += 1;
-      return wallet;
-    },
-    prepareClaim(view, { asset: id, reward: r, refHeight, refHash }) {
-      drafts += 1;
-      const commitments = [BigInt(`0x${randomBytes(31).toString("hex")}`), BigInt(`0x${randomBytes(31).toString("hex")}`)];
-      const nullifiers = [BigInt(`0x${randomBytes(31).toString("hex")}`), BigInt(`0x${randomBytes(31).toString("hex")}`)];
-      const rolled = wallet.roll ? [String(nullifiers[0])] : [];
-      const draft = {
-        id: drafts, asset: id, reward: r, refHeight, refHash, rolled, rolledAmount: 0n, nullifiers, commitments, ciphertexts: [new Uint8Array(95), new Uint8Array(95)],
-        challenge: lib.challengeOf({ asset: id, refHeight, refHash, reward: r, commitments }),
-      };
-      wallet.drafts.push(draft);
-      events.push(`draft ${refHeight}`);
-      return draft;
-    },
-    async finalizeClaim(draft, bind, nonce) {
-      wallet.finals.push({ draft: draft.id, bind, nonce: hex(nonce) });
-      const envelope = new Uint8Array(bind.bindOutpoint ? 515 : 511);
-      envelope.set(te.encode(`mine ${draft.id}`));
-      byDraft.set(hex(envelope), { draft, nonce, bind });
-      return envelope;
-    },
-    lockClaim(draft) {
-      draft.rolled.forEach((n) => wallet.locked.add(n));
-    },
-  };
-  const byDraft = new Map();
-  const decode = (envelope) => {
-    const { draft, nonce, bind } = byDraft.get(hex(envelope));
-    return { op: bind.bindOutpoint ? 7 : 8, draft, nonce, bind, spends: draft.rolled, solutionId: hex(lib.solutionIdOf(draft.challenge, nonce)) };
-  };
-
-  const perChallenge = new Map();
-  const pool = {
-    size: 2,
-    calls: [],
-    async grind({ challenge, target, nonceStart, count }) {
-      const key = hex(challenge);
-      pool.calls.push({ challenge: key, target, nonceStart, count });
-      await onGrind(pool.calls.length, { chain, pool, key });
-      const n = (perChallenge.get(key) ?? 0) + 1;
-      perChallenge.set(key, n);
-      if (n !== findOn) return { nonce: null, powHash: null, tried: count };
-      const nonce = new Uint8Array(8);
-      new DataView(nonce.buffer).setBigUint64(0, BigInt(nonceStart), true);
-      return { nonce, powHash: (pool.wrong ? (b) => sha(b) : lib.powHashReference)(lib.passwordOf(challenge, nonce)), tried: 7 };
-    },
-  };
-  const file = { seed: randomBytes(32).toString("hex"), btcKey: randomBytes(32).toString("hex"), mineKey: hex(mineKey), pending: [] };
-  const save = () => events.push(`save ${file.pending.length}`);
-  const relay = pendingClaims === null ? null : { client: { mineAsset: async () => ({ pendingClaims }) }, url: "http://relay.test" };
-  return { lib, asset, chain, idx, resync, esplora, wallet, pool, file, save, mineKey, account, events, decode, relay };
-}
-
-const run = (fx, opts = {}) => {
-  const out = [];
-  const p = runMiner({
-    idx: fx.idx, wallet: fx.wallet, file: fx.file, save: fx.save, name: "erin", ticker: "dig", lib: fx.lib, pool: fx.pool, esplora: fx.esplora, resync: fx.resync,
-    mineKey: fx.mineKey, decode: fx.decode, relay: fx.relay, print: (s) => out.push(s), warn: (s) => out.push(`warn: ${s}`), pollMs: 0, statsMs: 1e9, slice: 64,
-    sleep: async () => {}, ...opts,
-  });
-  return p.then((r) => ({ ...r, out }));
-};
 
 /* ------------------------------------------------------------------ mine: self-pay, end to end */
 
@@ -925,7 +730,7 @@ test("the mining key: created once in the wallet file, 32 bytes, never the BTC f
 test("mine flags, strictly: defaults, routes, relayer URLs, --prepare-coins only with the mining key", () => {
   const none = () => undefined;
   assert.deepEqual(parseMineArgs(["erin", "dig"], { read: none }), {
-    name: "erin", ticker: "DIG", pay: "key", threads: null, maxClaims: null, maxFeeRate: null, prepareCoins: null, esplora: null, relay: null, linkable: false, acceptCapRisk: false,
+    name: "erin", ticker: "DIG", pay: "key", threads: null, gpu: null, maxClaims: null, maxFeeRate: null, prepareCoins: null, esplora: null, relay: null, linkable: false, acceptCapRisk: false,
   });
   const r = parseMineArgs(["erin", "DIG", "--pay", "relay", "--threads", "3", "--max-claims", "4", "--max-fee-rate=9"], { read: none });
   assert.deepEqual([r.pay, r.threads, r.maxClaims, r.maxFeeRate, r.relay], ["relay", 3, 4, 9, "http://localhost:8787"]);
@@ -1022,7 +827,7 @@ test("HELP lists deploy-pow and mine and says who sees what; the copy is the con
   const help = HELP.filter((l) => /deploy-pow|mine <w>|^Mining/.test(l)).join("\n");
   assert.equal(help.split("\n").length, 3);
   for (const s of [
-    "deploy-pow <w> --ticker T --reward N --max-supply N", "[--difficulty D | --hashrate H]", "mine <w> <TICKER> [--threads N] [--pay key|relay]", "--prepare-coins n", "--esplora url",
+    "deploy-pow <w> --ticker T --reward N --max-supply N", "[--difficulty D | --hashrate H]", "mine <w> <TICKER> [--gpu all|0,1,...] [--threads N] [--pay key|relay]", "--prepare-coins n", "--esplora url",
     "service fee of 500 sats to the Murkle platform address", "the token, the reward and that address are public", "the relayer sees the token and the reward of every claim it carries for you",
   ]) {
     assert.ok(help.includes(s), `help: ${s}`);

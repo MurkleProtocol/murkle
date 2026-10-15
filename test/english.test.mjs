@@ -7,7 +7,7 @@ import { join, relative } from "node:path";
 
 const ROOT = new URL("..", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1");
 const SKIP_DIRS = new Set(["node_modules", "build", "data", "dist", ".vite", ".git"]);
-const TEXT = /\.(mjs|js|json|md|circom|css|html|sh|svg|txt)$/;
+const TEXT = /\.(mjs|js|json|md|circom|css|html|sh|svg|txt|cu|cuh|ps1)$/;
 
 function files(dir, out = []) {
   for (const name of readdirSync(dir)) {

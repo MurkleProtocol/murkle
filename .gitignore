@@ -1,5 +1,8 @@
 node_modules/
 build/
+# The GPU miner's build outputs (gpu/README.md): compiled objects, the commit stamp, the binaries
+gpu/build/
+gpu/bin/
 data/
 *.tmp
 web/dist/

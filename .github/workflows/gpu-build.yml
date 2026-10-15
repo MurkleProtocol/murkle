@@ -1,0 +1,96 @@
+name: gpu-build
+
+# Builds the GPU miner (gpu/, docs/design/mining.md section 12.2) on Linux and Windows and uploads
+# the binaries with their sha256. Run by hand only: the owner downloads the artifacts, attaches them
+# to the release gpu-v1.0.0 and fills gpu/pins.json from SHA256SUMS (gpu/README.md). No GPU is
+# needed to compile, so a plain GitHub runner is enough.
+#
+# The CUDA Toolkit is NVIDIA's own redistributable archives (nvcc, cudart, cccl of 12.8.1,
+# https://developer.download.nvidia.com/compute/cuda/redist/redistrib_12.8.1.json), each checked
+# against the sha256 listed there. Actions are pinned to commit SHAs.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: build (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04 # an older glibc: the binary runs on more distributions
+            target: linux-x64
+          - os: windows-2022
+            target: win32-x64
+    env:
+      REDIST: https://developer.download.nvidia.com/compute/cuda/redist
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Install CUDA 12.8.1 (nvcc 12.8.93, cudart and cccl 12.8.90)
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/cuda"
+          mkdir -p "$root" "$RUNNER_TEMP/dl"
+          if [ "${{ matrix.target }}" = "linux-x64" ]; then
+            files=(
+              "cuda_nvcc/linux-x86_64/cuda_nvcc-linux-x86_64-12.8.93-archive.tar.xz 9961b3484b6b71314063709a4f9529654f96782ad39e72bf1e00f070db8210d3"
+              "cuda_cudart/linux-x86_64/cuda_cudart-linux-x86_64-12.8.90-archive.tar.xz 8d566b5fe745c46842dc16945cf36686227536decd2302c372be86da37faca68"
+              "cuda_cccl/linux-x86_64/cuda_cccl-linux-x86_64-12.8.90-archive.tar.xz 0740e9e01e4f15e17c5ab8d68bba4f8ec0eb6b84edccba4ac45112d2d2174e4b"
+            )
+          else
+            files=(
+              "cuda_nvcc/windows-x86_64/cuda_nvcc-windows-x86_64-12.8.93-archive.zip 9fdc70b4271ed9aad4d64cd7076a7d96ec36512d074b9995fe638de669197391"
+              "cuda_cudart/windows-x86_64/cuda_cudart-windows-x86_64-12.8.90-archive.zip 4a39058fd8519444a81cfc7ae055d136f48d1a31ffa41ae255b35b2edd61e13b"
+              "cuda_cccl/windows-x86_64/cuda_cccl-windows-x86_64-12.8.90-archive.zip bd8548fa1ae82f92910bebc3079e14bd58c5a92aa64596d46bd610a478cb39d7"
+            )
+          fi
+          for entry in "${files[@]}"; do
+            path="${entry% *}"; sum="${entry#* }"; file="$RUNNER_TEMP/dl/$(basename "$path")"
+            curl -fsSL --retry 3 -o "$file" "$REDIST/$path"
+            echo "$sum  $file" | sha256sum -c -
+            case "$file" in
+              *.tar.xz) tar -xJf "$file" -C "$root" --strip-components=1 ;;
+              *.zip) 7z x -y -o"$RUNNER_TEMP/dl/x" "$file" >/dev/null && cp -R "$RUNNER_TEMP"/dl/x/*/. "$root"/ && rm -rf "$RUNNER_TEMP/dl/x" ;;
+            esac
+          done
+          # nvcc.profile looks in lib64 on Linux; the archives ship lib.
+          if [ -d "$root/lib" ] && [ ! -e "$root/lib64" ]; then ln -s lib "$root/lib64"; fi
+          echo "NVCC=$root/bin/nvcc" >> "$GITHUB_ENV"
+          echo "$root/bin" >> "$GITHUB_PATH"
+
+      - name: Build murkle-gpu (Linux)
+        if: matrix.target == 'linux-x64'
+        run: bash gpu/build.sh
+
+      - name: Build murkle-gpu (Windows)
+        if: matrix.target == 'win32-x64'
+        shell: pwsh
+        env:
+          # The runner's Visual Studio can be newer than the newest one CUDA 12.8 lists.
+          NVCC_APPEND_FLAGS: -allow-unsupported-compiler
+        run: ./gpu/build.ps1
+
+      - name: Checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd gpu/bin
+          rm -f ./*.lib ./*.exp
+          sha256sum murkle-gpu-* | tee SHA256SUMS-${{ matrix.target }}
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: murkle-gpu-${{ matrix.target }}
+          path: |
+            gpu/bin/murkle-gpu-*
+            gpu/bin/SHA256SUMS-*
+          if-no-files-found: error

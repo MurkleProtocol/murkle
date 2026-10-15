@@ -58,6 +58,64 @@ No Reserved Font Name is declared. The font files are shipped unmodified.
 
 The snarkjs Node entry used by the indexer and the CLI loads further packages that never reach the browser; `npm ci` installs each with its own license file. Run `npx license-checker --production` for the exact list. At the time of writing: ejs, jake, filelist (Apache-2.0); bfj, bluebird, check-types, hoopy, tryer, jsonpath, static-eval, underscore, async, logplease, balanced-match, brace-expansion (MIT); escodegen, esprima, estraverse, esutils (BSD-2-Clause); source-map (BSD-3-Clause); minimatch, picocolors (ISC); and r1csfile's nested ffjavascript 0.3.0 (GPL-3.0). Build tools: vite, rollup, esbuild, postcss, nanoid, fdir, picomatch, tinyglobby (MIT); source-map-js (BSD-3-Clause). A container image or tarball that includes `node_modules` must carry their notices too.
 
+## GPU miner (`gpu/`, built separately; not in npm or the web app)
+
+The CUDA miner `murkle-gpu` (`gpu/src/`, GPL-3.0-or-later with the additional permission for the NVIDIA CUDA libraries stated in each file and in `gpu/README.md`) is compiled with nvcc into its own binary. The npm package, the web app and the Docker image of the indexer do not contain it; the GPU Docker image (`gpu/Dockerfile`) and the release binaries do.
+
+- **hashcat** (MIT, Copyright (c) 2015-2026 Jens Steube and hashcat contributors, https://github.com/hashcat/hashcat): its GPU Argon2 kernel (`OpenCL/inc_hash_argon2.cl`) uses the same warp-cooperative layout as `gpu/src/argon2.cuh` (a warp holds a 1 KiB block, four lanes share one 16-word permutation, the diagonal step goes through warp shuffles). `gpu/src/argon2.cuh` implements RFC 9106 independently for this one parameter set; no hashcat source code or text was read or copied. The license is listed as a courtesy. License text below.
+- **argon2-gpu** (MIT, Copyright (c) 2016 Ondrej Mosnacek, https://github.com/WOnder93/argon2-gpu): another GPU Argon2 implementation with a similar approach. Listed as a courtesy only: none of its code or text was read or copied. License text below.
+- **NVIDIA CUDA runtime** (`cudart_static`, statically linked into the binaries): NVIDIA proprietary, redistributed under the CUDA Toolkit End User License Agreement (https://docs.nvidia.com/cuda/eula/), which allows redistributing the CUDA runtime with an application that adds significant functionality. The NVIDIA driver (`libcuda`, `nvcuda`) is installed by the user and not redistributed.
+
+The MIT licenses of the two projects above, each with its own copyright line:
+
+```
+The MIT License (MIT)
+
+Copyright (c) 2015-2026 Jens Steube
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+```
+MIT License
+
+Copyright (c) 2016 Ondrej Mosnacek
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
 ---
 
 # License texts
