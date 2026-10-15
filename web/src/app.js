@@ -64,6 +64,7 @@ const rootCheckers = import.meta.glob("./verify/root-match.js");
 const ROUTES = [
   ["/", "landing", "public", null],
   ["/mints", "mints", "public", "Mints"],
+  ["/mine", "mine", "public", "Mine"],
   ["/t/:ticker", "token", "public", "Token"],
   ["/explorer", "explorer", "public", "Explorer"],
   ["/tx/:txid", "receipt", "public", "Proof receipt"],
@@ -99,6 +100,7 @@ route("*", views["./views/notfound.js"] ?? null, { name: "notfound", layout: "pu
 
 const NAV = [
   ["/mints", "Mints"],
+  ["/mine", "Mine"],
   ["/explorer", "Explorer"],
   ["/verify", "Verify"],
   ["/security", "Security"],
@@ -610,7 +612,7 @@ function footerMarkup() {
         <p class="small t-2">Private tokens on Bitcoin.</p>
         ${themeControl({ size: "sm" })}
       </div>
-      ${col("Product", [["/mints", "Mints"], ["/explorer", "Explorer"], ["/app", "Wallet"]])}
+      ${col("Product", [["/mints", "Mints"], ["/mine", "Mine"], ["/explorer", "Explorer"], ["/app", "Wallet"]])}
       ${col("Verify", [["/verify", "Verify"], ["/security", "Security"], ["/protocol", "Protocol"]])}
       ${col("Source", source)}
     </div>
@@ -675,7 +677,7 @@ function paintTabbar() {
   $(".tabbar").classList.toggle("mine-tabs6", inApp);
   $(".tabbar").innerHTML = inApp
     ? html`${tab("/app", "wallet", "Portfolio", true)}${tab("/app/send", "send", "Send")}${tab("/app/mint", "mint", "Mint")}${tab("/app/mine", "block", "Mine")}${tab("/app/activity", "activity", "Activity")}${more}`
-    : html`${tab("/mints", "coins", "Mints")}${tab("/explorer", "block", "Explorer")}${tab("/app", "wallet", "Wallet", false, true)}${tab("/verify", "proof", "Verify")}${more}`;
+    : html`${tab("/mints", "coins", "Mints")}${tab("/mine", "pick", "Mine")}${tab("/app", "wallet", "Wallet", false, true)}${tab("/explorer", "block", "Explorer")}${more}`;
 }
 
 function openMore() {
@@ -686,7 +688,7 @@ function openMore() {
       : html`<a href="${href}" data-link data-sheet-close>${icon(ic)}<span>${label}</span></a>`;
   const items = inApp
     ? [link("/app/receive", "receive", "Receive"), html`<button type="button" data-action="add-btc">${icon("plus")}<span>Add BTC</span></button>`, link("/app/launch", "launch", "Launch a token"), link("/app/settings", "settings", "Settings"), link("/", "arrow-left", "Back to site"), html`<button type="button" data-action="lock-now" data-sheet-close>${icon("lock")}<span>Lock now</span></button>`]
-    : [link("/security", "seal", "Security"), link("/protocol", "notes", "Protocol"), link("/verify#run", "server", "Run an indexer"), REPO_URL ? link(REPO_URL, "code", "Source") : ""];
+    : [link("/verify", "proof", "Verify"), link("/security", "seal", "Security"), link("/protocol", "notes", "Protocol"), link("/verify#run", "server", "Run an indexer"), REPO_URL ? link(REPO_URL, "code", "Source") : ""];
   let then = null;
   const s = openSheet({
     title: "More",

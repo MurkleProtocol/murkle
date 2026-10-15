@@ -13,7 +13,7 @@
 import "../share/public.css";
 import * as api from "../api.js";
 import facts from "../facts.json";
-import { html, on, reducedMotion } from "../ui/dom.js";
+import { html, on, reducedMotion, toNode } from "../ui/dom.js";
 import { icon, glyphSVG } from "../ui/icons.js";
 import { prov, provTip, upgrade, REBUILD_TIP } from "../ui/prov.js";
 import { int, units, sats, short, hash, heightText, height as heightHTML, relBlocks, ms as fmtMs, DASH } from "../ui/format.js";
@@ -36,6 +36,7 @@ import { BRAND, PRE_GENESIS, ARTIFACT_SHA256, MANIFEST_SHA256, GENESIS_TXID, IS_
 const LIVE_TEXT = IS_SIGNET ? "Live on Bitcoin signet" : NOT_LAUNCHED ? "Bitcoin mainnet · Not launched" : "On Bitcoin mainnet";
 import { heroMicro } from "./landing-micro.js";
 import { launchCard, boardGroups } from "../share/launch.js";
+import { featuredMined, fetchMined, isOpen, mineBlock, mineHref, minedClaims } from "../share/mined.js";
 import { crowdChart } from "../share/charts.js";
 import { logTail } from "../share/feed.js";
 import { wallEntries, verifierCandidates, pickDefault, candidateLabel, wallVerdict, wallSummary } from "../share/wall.js";
@@ -145,14 +146,16 @@ export function render(root) {
             ${PRE_GENESIS ? html`<span class="tag tag--warn" data-tip="No genesis attestation is pinned yet. A re-genesis will reset this pool.">PRE-GENESIS</span>` : ""}
           </div>
           <h1 class="display ld-h1" id="ld-h1">Private tokens on Bitcoin. <span class="ld-h1-2">Proven, <em>not promised</em>.</span></h1>
-          <p class="lead">Launch and mint tokens on Bitcoin L1 in public, then send them with the token, the amount and the recipient hidden by zero-knowledge proofs. Every proof is written into a Bitcoin transaction, so anyone can check it. This page does, in your browser, from raw Bitcoin data.</p>
+          <p class="lead">Launch, mint or mine tokens on Bitcoin L1 in public, then send them with the token, the amount and the recipient hidden by zero-knowledge proofs. Every proof is written into a Bitcoin transaction, so anyone can check it. This page does, in your browser, from raw Bitcoin data.</p>
           <div class="ld-ctas">
             ${button({ label: "Open wallet", href: "/app", kind: "neutral", size: "lg" })}
+            <span class="ld-cta-mine" data-hero-mine hidden></span>
             ${button({ label: "Verify a live proof", kind: "secondary", size: "lg", icon: "proof", action: "ld-goverify" })}
           </div>
           <a class="ld-sec-link" href="/security#status" data-link>Read the security status →</a>
           ${heroMicro(IS_SIGNET)}
         </div>
+        <section class="ld-hero-mine" aria-labelledby="ld-mine-h" data-mine hidden></section>
         ${verifierShell()}
       </div>
     </section>
@@ -343,6 +346,7 @@ npm run indexer</pre>
   let chain = null;
   let stats = null;
   let assets = null;
+  let mined = null; // GET /api/mine assets: null while loading, [] when none (or the list failed)
   let logItems = null;
   let btcTip = null;
   let boardWhich = "live";
@@ -351,13 +355,16 @@ npm run indexer</pre>
   const finalLattice = mountLattice($(".ld-final-lattice"), { depth: 5 });
 
   async function refresh() {
-    const [st, as, lg] = await Promise.allSettled([api.stats({ fresh: true }), api.assets({ fresh: true }), logTail(api, { count: 60 })]);
+    const [st, as, lg, mn] = await Promise.allSettled([api.stats({ fresh: true }), api.assets({ fresh: true }), logTail(api, { count: 60 }), fetchMined({ fresh: true })]);
     if (!alive) return;
     if (st.status === "fulfilled") stats = st.value;
     if (as.status === "fulfilled") assets = as.value;
+    if (mn.status === "fulfilled") mined = mn.value;
+    else if (mined === null) mined = [];
     const firstLog = logItems === null;
     if (lg.status === "fulfilled") logItems = lg.value.items;
     else if (logItems === null) logItems = [];
+    paintMine();
     paintStrip();
     paintCrowd();
     paintBoard();
@@ -384,6 +391,13 @@ npm run indexer</pre>
     el.textContent = chain?.height != null ? `${LIVE_TEXT} · Block ${heightText(chain.height)}` : LIVE_TEXT;
   }
 
+  let lastTile = "mined";
+  function setLastTile(k) {
+    if (k === lastTile) return;
+    $("[data-strip]")?.querySelector(`[data-k="${lastTile}"]`)?.replaceWith(toNode(statItem(...LAST_TILE[k])));
+    lastTile = k;
+  }
+
   let stripSeen = false;
   function paintStrip() {
     const box = $("[data-strip]");
@@ -396,7 +410,10 @@ npm run indexer</pre>
       proofs,
       tokens: n(stats?.tokens),
       mints: n(stats?.mints),
+      mined: mined?.length ? minedClaims(mined) : null,
     };
+    // The last tile counts mining claims while a mined token exists, and mints otherwise.
+    if (mined !== null) setLastTile(mined.length ? "mined" : "mints");
     const blockChip = box.querySelector('[data-k="block"] .prov');
     if (btcTip !== null && blockChip) upgrade(blockChip, "BTC");
     for (const [k, v] of Object.entries(values)) {
@@ -500,6 +517,28 @@ npm run indexer</pre>
     el.innerHTML = html`${list.slice(0, 3).map((a) => launchCard(a, { height: chain?.height ?? null, walletReady }))}`;
   }
   offs.push(onWalletStatus(() => alive && assets && paintBoard()));
+
+  /** The Mine block under the hero: the featured mined token, hidden when there is none on this network. */
+  let mineKey = null;
+  function paintMine() {
+    const el = $("[data-mine]");
+    if (!el) return;
+    const f = mined ? featuredMined(mined) : null;
+    const walletReady = getWalletStatus().state === "unlocked";
+    // Rebuild only when something shown changed, so a block that brings no news keeps keyboard focus where it is.
+    const key = JSON.stringify([f, walletReady]);
+    if (key === mineKey) return;
+    mineKey = key;
+    el.innerHTML = mineBlock(f, { walletReady });
+    el.hidden = !f;
+    // Phones: the card sits below the hero copy, so the hero buttons carry a Start mining link too.
+    const cta = $("[data-hero-mine]");
+    if (cta) {
+      cta.innerHTML = f && isOpen(f) ? button({ label: "Start mining", href: mineHref(f.ticker), kind: "secondary", size: "lg", icon: "pick" }) : "";
+      cta.hidden = !cta.innerHTML;
+    }
+  }
+  offs.push(onWalletStatus(() => alive && mined && paintMine()));
 
   function paintOffline() {
     const sum = $("[data-wall-sum]");
@@ -865,10 +904,16 @@ function rowsFor(plan) {
   return plan.map((s) => ({ id: s.id, label: s.label, prov: s.source, status: "pending", detail: "", ms: null }));
 }
 
+function statItem(k, label, chip, notes = false) {
+  return html`<div class="ld-stat" data-k="${k}"><span class="ld-stat-v${k === "block" ? " height" : ""}" data-v><span class="skel" style="width:5ch;height:.9em"></span></span><span class="ld-stat-l"${notes ? html` data-notes-chip` : ""}>${label} ${prov(chip)}</span></div>`;
+}
+
+// The strip's last tile: mining claims while a mined token exists (the default until the list loads), else mints.
+const LAST_TILE = { mined: ["mined", "Claims mined", "IDX"], mints: ["mints", "Mints", "IDX"] };
+
 function stripMarkup() {
-  const item = (k, label, chip, notes = false) =>
-    html`<div class="ld-stat" data-k="${k}"><span class="ld-stat-v${k === "block" ? " height" : ""}" data-v><span class="skel" style="width:5ch;height:.9em"></span></span><span class="ld-stat-l"${notes ? html` data-notes-chip` : ""}>${label} ${prov(chip)}</span></div>`;
-  return html`${item("block", "Block", "IDX")}${item("notes", "Notes in the pool", "IDX", true)}${item("proofs", "Proofs on Bitcoin", "IDX")}${item("tokens", "Tokens", "IDX")}${item("mints", "Mints", "IDX")}`;
+  const item = statItem;
+  return html`${item("block", "Block", "IDX")}${item("notes", "Notes in the pool", "IDX", true)}${item("proofs", "Proofs on Bitcoin", "IDX")}${item("tokens", "Tokens", "IDX")}${item(...LAST_TILE.mined)}`;
 }
 
 function seesCard(which) {

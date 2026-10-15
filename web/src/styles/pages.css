@@ -33,7 +33,7 @@
 .brand:hover { text-decoration: none; }
 @media (max-width: 359px) { .topbar .chip-signet { display: none; } }
 
-.nav { display: none; align-self: stretch; }
+.nav { display: none; align-self: stretch; flex: none; }
 .nav a {
   position: relative; display: flex; align-items: center; padding: 0 8px; color: var(--text-2);
   font: 500 14px/1 var(--font-ui); white-space: nowrap;
@@ -47,7 +47,8 @@
 .topbar-spacer { flex: 1; }
 .top-actions { display: flex; align-items: center; gap: 8px; flex: none; }
 .top-search { display: none; position: relative; width: 220px; }
-@media (min-width: 1024px) { .top-search { display: block; } .search-btn { display: none; } }
+/* Five nav items need the room: the search box waits until 1180px, and the icon button stands in below that. */
+@media (min-width: 1180px) { .top-search { display: block; } .search-btn { display: none; } }
 @media (min-width: 1280px) { .top-search { width: 280px; } }
 /* Phones get theme and streamer mode from the More sheet; the header has no room for them. */
 .theme-btn, .streamer-btn { display: none; }

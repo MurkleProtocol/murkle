@@ -256,7 +256,7 @@ The visual interest comes from real data turned into art, not from effects:
    - Phone: "SIGNET · TEST COINS · DEV KEYS →".
 2. **Top bar** (56px, sticky, solid --bg, 1px --line bottom, no blur).
    - Left: the glyph, the wordmark (sans 600 17px, -0.01em) and a "SIGNET" chip (mono 10, warn outline, radius 4, height 20).
-   - Nav (desktop and up): Mints · Explorer · Verify · Security, in sans 500 14 --text-2. The active item is --text with a 2px --text underline flush with the bar bottom.
+   - Nav (desktop and up): Mints · Mine · Explorer · Verify · Security, in sans 500 14 --text-2. The active item is --text with a 2px --text underline flush with the bar bottom.
    - Search, by width:
      - desktop: a 280px field, placeholder "Search txid, nullifier, ticker", with a `/` hint;
      - tablet: an icon that opens a sheet;
@@ -274,7 +274,7 @@ The visual interest comes from real data turned into art, not from effects:
 4. **Main.**
 5. **Footer** (see §10.12).
 6. **Phone bottom tab bar** (64px plus safe area, --surface-1, 1px --line top; icon 20 and label 11):
-   - Public pages: Mints · Explorer · Wallet (center) · Verify · More. More is a sheet with Security, Protocol, Theme and Source.
+   - Public pages: Mints · Mine · Wallet (center) · Explorer · More. More is a sheet with Verify, Security, Protocol, Theme and Source.
    - Inside /app: Portfolio · Send · Mint · Activity · More. More holds Receive, Launch, Notes, Settings and "Back to site".
 
 **Wallet layout by width:**
@@ -684,7 +684,8 @@ A two-column certified panel (stacks on phones).
 **1. Hero** (two columns on desktop: copy 6 columns, Live Verifier 6 columns; stacked on phones; lattice behind)
 - Eyebrow chip (live height): "LIVE ON BITCOIN SIGNET · BLOCK #263,104"
 - H1 (serif): "Private tokens on Bitcoin." / "Proven, *not promised*."
-- Lead: "Launch and mint tokens on Bitcoin L1 in public, then send them with the token, the amount and the recipient hidden by zero-knowledge proofs. Every proof is written into a Bitcoin transaction, so anyone can check it. This page does, in your browser, from raw Bitcoin data."
+- Lead: "Launch, mint or mine tokens on Bitcoin L1 in public, then send them with the token, the amount and the recipient hidden by zero-knowledge proofs. Every proof is written into a Bitcoin transaction, so anyone can check it. This page does, in your browser, from raw Bitcoin data."
+- Mine block (in the hero: above the live verifier on desktop, right under the hero copy on phones; hidden when no mined token exists on the network): the featured mined token (an open one, most claims first), "Mine $TICKER", claims mined of the total ("1 of 21,000"), a slim supply bar, the reward per claim, [Start mining] (to /app/mine?t=TICKER) and a "How mining works →" link to /mine.
 - CTAs: [Open wallet] (neutral primary) and [Verify a live proof] (secondary; on desktop it focuses the verifier, on phones it scrolls to it). Text link: "Read the security status →".
 - Microline (caption): "No sign-up. Keys never leave your device. Test coins only."
 
@@ -699,6 +700,7 @@ A two-column certified panel (stacks on phones).
 
 **3. Live stats strip** (mono, chips, one count-up)
 - "BLOCK #263,104 `BTC` · 1,284 NOTES IN THE POOL `YOU` · 312 PROOFS ON BITCOIN `IDX` · 7 TOKENS `IDX` · 4,120 MINTS `IDX`"
+- The last tile reads "1 CLAIMS MINED `IDX`" (accepted mining claims over all mined tokens) while a mined token exists on the network, and MINTS otherwise.
 
 **4. "What Bitcoin sees."**
 - Segmented control: Normal token transfer | Private · what everyone sees | Private · what you see. Explorer-style card rows: Token / Amount / From / To / Proof.
@@ -785,7 +787,7 @@ A two-column certified panel (stacks on phones).
 
 **Footer**
 - Wordmark plus "Private tokens on Bitcoin."
-- Link columns: Product (Mints, Explorer, Wallet) · Verify (Verify, Security, Protocol) · Source (Repository, Run an indexer).
+- Link columns: Product (Mints, Mine, Explorer, Wallet) · Verify (Verify, Security, Protocol) · Source (Repository, Run an indexer).
 - Mono line: "SIGNET · TEST COINS HAVE NO VALUE · DEVELOPMENT PROVING KEYS".
 - "Verifier key sha256 a3f1c09e…9c2e [copy]", with a `YOU` chip once the browser has hashed the downloaded key.
 - "Circuit {constraints} constraints · Groth16/BN254".

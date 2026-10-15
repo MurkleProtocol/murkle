@@ -221,6 +221,24 @@ export function wireStreamer(root, rerender) {
 /** Re-renders the current route in place (after unlock, lock or migration). */
 export const reroute = () => navigate(location.pathname + location.search + location.hash, { replace: true });
 
+/**
+ * The wallet page a visitor was stopped at by the gate ("/app/mine?t=MURK"), or null. Only same-site
+ * /app/... paths of plain characters pass, and never the create and restore pages themselves.
+ */
+export function returnPath(value) {
+  const v = typeof value === "string" ? value : "";
+  if (!/^\/app\/[A-Za-z0-9_\-./~%]+(\?[A-Za-z0-9_\-.~%=&]*)?$/.test(v) || v.includes("//") || v.includes("..")) return null;
+  const path = v.split("?")[0];
+  return path === "/app/create" || path === "/app/import" ? null : v;
+}
+
+/** The query that carries a return path to the create and restore pages: "" or "?next=%2Fapp%2Fmine%3Ft%3DMURK". */
+export const nextQuery = (next) => (next ? `?next=${encodeURIComponent(next)}` : "");
+
+const RETURN_NAMES = { "/app/mine": "Mine", "/app/mint": "Mint", "/app/send": "Send", "/app/receive": "Receive", "/app/launch": "Launch a token", "/app/activity": "Activity", "/app/settings": "Settings" };
+/** What the page a visitor returns to is called. */
+export const returnName = (next) => RETURN_NAMES[String(next ?? "").split("?")[0]] ?? "where you were";
+
 /* ---------- password fields ---------- */
 
 export function passwordFields({ confirm = true, label = "Password", autofocus = true } = {}) {
@@ -268,17 +286,21 @@ export function formError(form, message) {
 /* ---------- the gate: onboarding, lock screen, migration ---------- */
 
 function onboarding(root) {
+  // The wallet page that sent the visitor here (Start mining on /mine opens /app/mine?t=MURK): create and restore return to it.
+  const next = returnPath(location.pathname + location.search);
+  const q = nextQuery(next);
   root.innerHTML = html`<div class="wl">
     ${pageHead({ eyebrow: "WALLET · KEYS STAY ON THIS DEVICE", title: `Your ${BRAND} wallet`, lead: "Private balances on Bitcoin. Your keys are made in this browser and encrypted with your password. No sign-up, no email, no server account.", streamer: false })}
     <div class="onboard">
       ${panel({
         certified: true,
-        body: html`${icon("plus")}<h2 class="h3">Create a new wallet</h2><p class="small">24 recovery words, made in this browser and encrypted with a password you choose. About a minute.</p>${button({ label: "Create new wallet", href: "/app/create", kind: "neutral", iconRight: "arrow-right" })}`,
+        body: html`${icon("plus")}<h2 class="h3">Create a new wallet</h2><p class="small">24 recovery words, made in this browser and encrypted with a password you choose. About a minute.</p>${button({ label: "Create new wallet", href: `/app/create${q}`, kind: "neutral", iconRight: "arrow-right" })}`,
       })}
       ${panel({
-        body: html`${icon("unlock")}<h2 class="h3">I have a phrase</h2><p class="small">Restore a wallet from its 24 words. Your notes are found again by scanning the pool in this browser.</p>${button({ label: "Restore from 24 words", href: "/app/import", kind: "secondary" })}`,
+        body: html`${icon("unlock")}<h2 class="h3">I have a phrase</h2><p class="small">Restore a wallet from its 24 words. Your notes are found again by scanning the pool in this browser.</p>${button({ label: "Restore from 24 words", href: `/app/import${q}`, kind: "secondary" })}`,
       })}
     </div>
+    ${next ? html`<p class="caption t-3" data-return>When your wallet is ready you go straight on to ${returnName(next)}.</p>` : ""}
     ${IS_SIGNET
       ? callout(html`Signet test network: tokens here have no value. The wallet never sends your keys, balance or notes anywhere. It downloads the whole public pool and finds your notes locally.`, "info")
       : callout(html`${NOT_LAUNCHED ? `${MAINNET_NOT_LAUNCHED_TEXT} ` : ""}Bitcoin mainnet: experimental software, and tokens can be lost to bugs. The wallet never sends your keys, balance or notes anywhere. It downloads the whole public pool and finds your notes locally.`, NOT_LAUNCHED ? "warn" : "info")}

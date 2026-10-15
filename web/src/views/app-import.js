@@ -6,13 +6,15 @@ import { button, field } from "../ui/components.js";
 import { toast } from "../ui/toast.js";
 import { navigate } from "../router.js";
 import { phraseCheck, createWallet, hasVault, hasLegacy } from "../session.js";
-import { ensureStyles, pageHead, passwordFields, wirePasswordFields, KDF_COPY, callout, formError } from "./app-shared.js";
+import { ensureStyles, pageHead, passwordFields, wirePasswordFields, KDF_COPY, callout, formError, returnPath } from "./app-shared.js";
 import { existingWallet, legacyWallet } from "./app-create.js";
 
-export function render(root) {
+export function render(root, params, query) {
   ensureStyles();
   if (hasVault()) return existingWallet(root, "restore a different wallet");
   if (hasLegacy()) return legacyWallet(root);
+  // ?next=/app/mine?t=MURK: the page that sent the visitor here (the wallet gate); a restored wallet goes on to it.
+  const next = returnPath(query?.get?.("next"));
   root.innerHTML = html`<div class="wl"><form class="wl-form" novalidate data-f>
     ${pageHead({ eyebrow: "RESTORE", title: "Restore from 24 words", lead: "Your notes are found again by scanning the whole public pool in this browser. Nothing about them is sent to any server.", streamer: false })}
     <div class="stack stack--s">
@@ -54,7 +56,7 @@ export function render(root) {
       await createWallet(ta.value, pw);
       ta.value = "";
       toast({ kind: "success", title: "Wallet restored and encrypted on this device.", body: "Scanning the pool for your notes now." });
-      navigate("/app");
+      navigate(next ?? "/app");
     } catch (err) {
       btn.disabled = false;
       btn.innerHTML = html`${icon("unlock", { size: 16 })}<span>Restore wallet</span>`;

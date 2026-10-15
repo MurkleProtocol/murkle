@@ -2,6 +2,10 @@
  * /mints: the mint board (visual.md section 9). Tokens only, never people:
  * no holder counts, no minter addresses, no "top buyers". Filters and sort live in the query
  * string (?f=open&s=trending&q=ABC), so a filtered board is a shareable link.
+ *
+ * Mined tokens (kind "pow", /api/mine) are listed above the paid mints under the same filters: Open shows
+ * the ones being mined now, Upcoming the ones opening soon, Minted out the mined-out ones. Each row links to
+ * /t/:ticker and has a Mine button, so the board never says "No open mints" while a token is being mined.
  */
 import "../share/public.css";
 import * as api from "../api.js";
@@ -13,9 +17,21 @@ import { button, segmented, empty } from "../ui/components.js";
 import { getWalletStatus, onWalletStatus } from "../ui/status.js";
 import { setTitle } from "../router.js";
 import { FILTERS, SORTS, filterAssets, sortAssets, launchCard } from "../share/launch.js";
+import { fetchMined, minedCard, rankMined } from "../share/mined.js";
 
 const FILTER_VALUES = new Set(FILTERS.map((f) => f.value));
 const SORT_VALUES = new Set(SORTS.map((s) => s.value));
+
+// Which mined statuses each filter shows (null: all of them).
+const MINED_FILTER = { open: ["mining"], upcoming: ["mining-soon"], soldout: ["mined-out"], all: null };
+const MINED_HEAD = { open: "Mining now", upcoming: "Mining soon", soldout: "Mined out", all: "Mined tokens" };
+
+/** The mined tokens a filter and a ticker query show, best first. */
+export function filterMined(list, { filter = "all", query = "" } = {}) {
+  const q = String(query ?? "").trim().replace(/^\$/, "").toUpperCase();
+  const allowed = MINED_FILTER[filter] ?? null;
+  return rankMined((list ?? []).filter((a) => (!allowed || allowed.includes(a.status)) && (!q || String(a.ticker).toUpperCase().includes(q))));
+}
 
 const EMPTY = {
   open: { text: "No open mints right now. Be first: write a token to Bitcoin.", action: { label: "Launch a token", href: "/app/launch" } },
@@ -32,6 +48,8 @@ export function render(root, params, query) {
     q: String(query?.get("q") ?? "").slice(0, 16),
   };
   let assets = null;
+  let mined = []; // GET /api/mine assets (empty while loading or when the list failed)
+  let minedFailed = false; // the last GET /api/mine failed: say so instead of "No open mints"
   let height = null;
   let failed = null;
   let alive = true;
@@ -41,9 +59,9 @@ export function render(root, params, query) {
       <div>
         <div class="eyebrow">LAUNCHPAD</div>
         <h1 class="h1-app">Mints</h1>
-        <p class="lead">Open-mint tokens on Bitcoin. Terms are public; holders are not.</p>
+        <p class="lead">Open-mint tokens on Bitcoin, and tokens you mine in your browser. Terms are public; holders are not.</p>
       </div>
-      ${button({ label: "Launch a token", href: "/app/launch", kind: "secondary", icon: "launch" })}
+      <span class="cluster">${button({ label: "Mine tokens", href: "/mine", kind: "ghost", icon: "pick" })}${button({ label: "Launch a token", href: "/app/launch", kind: "secondary", icon: "launch" })}</span>
     </header>
     <div class="mn-tools">
       ${segmented(FILTERS, { value: state.filter, name: "mn-filter", label: "Filter tokens" })}
@@ -51,6 +69,11 @@ export function render(root, params, query) {
       <div class="mn-q"><span class="mn-q-ic">${icon("search", { size: 16 })}</span><input class="input" type="search" data-q value="${state.q}" placeholder="Ticker" maxlength="16" spellcheck="false" autocapitalize="characters" autocomplete="off" aria-label="Filter by ticker"></div>
     </div>
     <p class="mn-count" data-count aria-live="polite"></p>
+    <section class="mn-mining" data-mining aria-labelledby="mn-mining-h" hidden>
+      <h2 class="eyebrow" id="mn-mining-h" data-mining-head>MINING NOW</h2>
+      <p class="caption t-3 mn-mining-note" data-mining-note hidden>The mined tokens didn't load. ${button({ label: "Try again", action: "mn-retry", kind: "ghost", size: "sm" })}</p>
+      <div class="lp-grid" data-mining-grid></div>
+    </section>
     <div class="lp-grid" data-grid>${Array.from({ length: 6 }, () => html`<div class="panel lp-card"><span class="skel" style="width:60%;height:24px"></span><span class="skel" style="width:40%;height:12px"></span><span class="skel" style="width:100%;height:4px"></span><span class="skel" style="width:100%;height:40px"></span><span class="skel" style="width:100%;height:40px"></span></div>`)}</div>
     <p class="mn-note">${icon("info", { size: 14 })}<span>Progress, prices and schedules are reported by our indexer ${prov("IDX")}; open a token to check its terms against the DEPLOY transaction on Bitcoin. "Trending" counts mints in the last 144 blocks. There are no holder counts anywhere, by design.</span></p>
   </div>`;
@@ -77,8 +100,19 @@ export function render(root, params, query) {
     if (!assets) return;
     const list = sortAssets(filterAssets(assets, { filter: state.filter, query: state.q }), state.sort, height);
     const walletReady = getWalletStatus().state === "unlocked";
-    count.textContent = `${int(list.length)} ${list.length === 1 ? "token" : "tokens"}${state.q ? ` matching "${state.q.toUpperCase()}"` : ""} · ${int(assets.length)} on this pool`;
+    const minedList = filterMined(mined, { filter: state.filter, query: state.q });
+    const total = list.length + minedList.length;
+    count.textContent = `${int(total)} ${total === 1 ? "token" : "tokens"}${state.q ? ` matching "${state.q.toUpperCase()}"` : ""} · ${int(assets.length + mined.length)} on this pool`;
+    $("[data-mining]").hidden = !minedList.length && !minedFailed;
+    $("[data-mining-note]").hidden = !minedFailed;
+    $("[data-mining-head]").textContent = (MINED_HEAD[state.filter] ?? MINED_HEAD.all).toUpperCase();
+    $("[data-mining-grid]").innerHTML = html`${minedList.map((a) => minedCard(a, { walletReady }))}`;
     if (!list.length) {
+      // Mined tokens above already answer the question: paid mints are only one of the two kinds.
+      if (minedList.length || minedFailed) {
+        grid.innerHTML = "";
+        return;
+      }
       const e = state.q ? { text: `No token matches "${state.q.toUpperCase()}" here. Check the spelling, or look in All.`, action: { label: "Show all", href: "/mints?f=all" } } : EMPTY[state.filter] ?? EMPTY.all;
       grid.innerHTML = html`<div class="panel" style="grid-column:1/-1">${empty(e)}</div>`;
       return;
@@ -88,10 +122,12 @@ export function render(root, params, query) {
 
   async function load(fresh = false) {
     try {
-      const [s, list] = await Promise.all([api.state().catch(() => null), api.assets({ fresh })]);
+      const [s, list, minedList] = await Promise.all([api.state().catch(() => null), api.assets({ fresh }), fetchMined({ fresh }).catch(() => null)]);
       if (!alive) return;
       height = s?.height ?? height;
       assets = list;
+      mined = minedList ?? mined;
+      minedFailed = minedList === null;
       failed = null;
     } catch (e) {
       if (!alive) return;

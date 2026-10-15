@@ -13,10 +13,11 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { register } from "node:module";
 
-// Public pages import their CSS; under node it is an empty module.
+// Public pages import their CSS; under node it is an empty module. The landing imports facts.json without
+// an import attribute (Vite allows it): served as a module here, for web/src files only.
 register(
   "data:text/javascript," +
-    encodeURIComponent(`export async function load(url, ctx, next) { if (url.endsWith(".css")) return { format: "module", source: "", shortCircuit: true }; return next(url, ctx); }`),
+    encodeURIComponent(`import { readFileSync } from "node:fs"; import { fileURLToPath } from "node:url"; export async function load(url, ctx, next) { if (url.endsWith(".css")) return { format: "module", source: "", shortCircuit: true }; if (url.endsWith(".json") && url.includes("/web/src/") && ctx.importAttributes?.type !== "json") return { format: "module", source: "export default " + readFileSync(fileURLToPath(url), "utf8"), shortCircuit: true }; return next(url, ctx); }`),
 );
 
 /* ---------- a minimal DOM ---------- */
@@ -1378,4 +1379,530 @@ test("mined token page: the privacy line discloses that self-paid claims show th
   const page = String(TOKEN.minedPageHTML(minedView(), { height: 330_000, feed: [] }));
   assert.ok(has(page, TOKEN.MINED_PRIVACY_TEXT));
   assert.doesNotMatch(page, /nobody can see who received it/);
+});
+
+/* ======================================================================================= */
+/* public mining pages: /mine, the landing's Mine block, /mints, the wallet gate           */
+/* ======================================================================================= */
+
+// A FakeEl whose children are FakeEls with closest() and replaceWith(): enough for the landing, the create and restore pages.
+class DeepEl extends FakeEl {
+  querySelector(s) {
+    if (!this.sel.has(s)) this.sel.set(s, new DeepEl());
+    return this.sel.get(s);
+  }
+  closest() {
+    return new DeepEl();
+  }
+  replaceWith(node) {
+    this.replacedWith = String(node?.markup ?? "");
+  }
+}
+
+const int_ = (n) => BigInt(n).toLocaleString("en-US");
+
+/** MURK as /api/mine reports it on mainnet: 1,000 per claim, 21,000,000 in all, one claim so far. */
+const murk = (over = {}) =>
+  minedView({
+    asset: "4171813403754743", ticker: "MURK", divisibility: 8, status: "mining", deployHeight: 971_326, mineStart: 971_326, reward: "100000000000", baseReward: "100000000000",
+    difficulty: "3600000", initialDifficulty: "3600000", minDifficulty: "3600000", issued: "100000000000", maxSupply: "2100000000000000", claims: 1, rejectedClaims: 0, claims144: 0,
+    ...over,
+  });
+const mineRoutes = (assets, { rate = 3, fail = false } = {}) => {
+  net.routes.clear();
+  net.routes.set(/^\/api\/mine$/, () => (fail ? reply(500, { error: { code: "internal", message: "boom" } }) : reply(200, { activation: { height: 971_317, active: true }, tip: { height: 971_582, hash: "00".repeat(32) }, assets })));
+  net.routes.set(/^\/api\/assets$/, () => reply(200, []));
+  net.routes.set(/^\/api\/state$/, () => reply(200, { height: 971_582, startHeight: 971_317, root: "0", outputs: 0, nullifiers: 0 }));
+  net.routes.set(/\/v1\/fees\/recommended$/, () => reply(200, { fastestFee: rate, halfHourFee: rate }));
+};
+/** The indexer client caches /api/mine for 15 s: ask fresh once so the page under test reads these routes. */
+const freshMine = () => api.mine({ fresh: true });
+const withUrl = async (pathname, search, fn) => {
+  const before = [url.pathname, url.search];
+  url.pathname = pathname;
+  url.search = search;
+  try {
+    return await fn();
+  } finally {
+    [url.pathname, url.search] = before;
+  }
+};
+
+test("public mined-token helpers: claims of the total, the featured token, the cost of a claim, the speed note", async () => {
+  const M = await import("../web/src/share/mined.js");
+  const m = murk();
+  assert.equal(M.claimsTotal(m), 21_000);
+  assert.equal(M.claimsText(m), "1 of 21,000");
+  assert.equal(M.claimsText({ ...m, halvingInterval: 100, claims: 3 }), "3", "with halvings the total moves: only the count is shown");
+  assert.equal(M.rewardText(m), "1,000 MURK");
+  assert.equal(M.supplyText(m), "1,000 of 21,000,000 MURK");
+  assert.equal(M.issuedShareText(m), "under 0.1%");
+  assert.equal(M.issuedShareText({ ...m, issued: "1050000000000000" }), "50%");
+  assert.equal(M.mineHref("MURK"), "/app/mine?t=MURK");
+  assert.equal(M.mineHref("A B"), "/app/mine?t=A%20B");
+  // Featured: an open token over one opening soon, then the most claims, then the newest.
+  const a = murk({ ticker: "AAA", asset: "1", claims: 5, deployHeight: 10 });
+  const b = murk({ ticker: "BBB", asset: "2", claims: 9, deployHeight: 20 });
+  const c = murk({ ticker: "CCC", asset: "3", claims: 99, status: "mining-soon" });
+  const d = murk({ ticker: "DDD", asset: "4", claims: 500, status: "mined-out" });
+  assert.equal(M.featuredMined([a, b, c, d]).ticker, "BBB");
+  assert.equal(M.featuredMined([murk({ ticker: "NEW", asset: "5", claims: 9, deployHeight: 30 }), b]).ticker, "NEW", "the newest wins a tie on claims");
+  assert.equal(M.featuredMined([c, d]).ticker, "CCC", "a token opening soon is featured when none is open");
+  assert.equal(M.featuredMined([d]), null, "a mined-out token is not put forward");
+  assert.equal(M.featuredMined([]), null);
+  assert.deepEqual(M.rankMined([d, c, a, b]).map((x) => x.ticker), ["BBB", "AAA", "CCC", "DDD"]);
+  assert.equal(M.minedClaims([a, b, d]), 514);
+  // The cost of a claim: 684 vB at the rate, plus the service fee from the app's own params.
+  assert.equal(M.CLAIM_VSIZE, S.MINE_EST_VSIZE, "the page prices a claim with the wallet's size");
+  assert.equal(M.serviceSats(), MINE_FEE.platformSats);
+  const est = M.feeEstimate({ rate: 5 });
+  assert.equal(est.networkSats, 684n * 5n);
+  assert.equal(est.serviceSats, MINE_FEE.platformSats);
+  assert.equal(est.totalSats, 684n * 5n + MINE_FEE.platformSats);
+  assert.equal(M.feeEstimate({ rate: 4.2 }).rate, 5, "a fractional rate rounds up");
+  assert.equal(M.feeEstimate({ rate: null }), null);
+  assert.equal(M.feeEstimate({ rate: 0 }), null);
+  // Speed: difficulty / hash rate, a desktop tab at about 1,000 H/s; no word about limits.
+  assert.equal(M.durationText(3600), "about 1 hour");
+  assert.equal(M.durationText(7200), "about 2 hours");
+  assert.equal(M.durationText(600), "about 10 minutes");
+  assert.equal(M.durationText(20), "about 20 seconds");
+  const note = M.speedNote(m);
+  assert.match(note, /Expected time per solution = difficulty \/ hash rate\./);
+  assert.match(note, /difficulty 3,600,000, a desktop browser tab \(about 1,000 hashes per second\) needs about 1 hour per solution/);
+  assert.match(note, /GPUs and servers are faster/);
+  assert.match(note, /difficulty adjusts to the work/);
+  assert.doesNotMatch(note, /limit|per day|per block/i);
+  assert.match(M.speedNote(null), /^Expected time per solution/);
+});
+
+test("fetchMined reads /api/mine; mined rows keep the paid-mint card layout with a Mine button", async () => {
+  const M = await import("../web/src/share/mined.js");
+  mineRoutes([murk(), { ...murk(), ticker: "" }]);
+  const list = await M.fetchMined({ fresh: true });
+  assert.deepEqual(list.map((x) => x.ticker), ["MURK"], "a row without a ticker is dropped");
+  const card = String(M.minedCard(murk(), { walletReady: false }));
+  for (const text of ["MURK", "MINING", "Reward", "Difficulty", "Claims", "1 of 21,000", "Mine MURK", "1,000 of 21,000,000 MURK"]) assert.ok(has(card, text), text);
+  assert.match(card, /href="\/t\/MURK"/);
+  assert.match(card, /href="\/app\/mine\?t=MURK"/);
+  const soon = String(M.minedCard(murk({ status: "mining-soon", mineStart: 971_999 }), {}));
+  assert.ok(!soon.includes("/app/mine"), "no Mine button before the token opens");
+  assert.ok(has(soon, "Mining opens at #971,999."));
+  assert.ok(has(String(M.minedCard(murk({ status: "mined-out" }), {})), "Every reward under the cap is claimed."));
+});
+
+test("/mine is routed and in the top nav between Mints and Explorer, in the phone tab bar and the footer", () => {
+  const app = src("web/src/app.js");
+  assert.match(app, /\["\/mints", "mints", "public", "Mints"\],\n {2}\["\/mine", "mine", "public", "Mine"\],\n {2}\["\/t\/:ticker", "token", "public", "Token"\],/);
+  assert.match(app, /const NAV = \[\n {2}\["\/mints", "Mints"\],\n {2}\["\/mine", "Mine"\],\n {2}\["\/explorer", "Explorer"\],/);
+  // Phone, public bar: Mints, Mine, Wallet (centre), Explorer, More: five tabs, two each side of the centre. Verify moves into More.
+  assert.match(app, /tab\("\/mints", "coins", "Mints"\)\}\$\{tab\("\/mine", "pick", "Mine"\)\}\$\{tab\("\/app", "wallet", "Wallet", false, true\)\}\$\{tab\("\/explorer", "block", "Explorer"\)\}\$\{more\}/);
+  assert.match(app, /\[link\("\/verify", "proof", "Verify"\), link\("\/security", "seal", "Security"\)/);
+  assert.match(app, /\["\/mine", "Mine"\], \["\/explorer", "Explorer"\], \["\/app", "Wallet"\]/);
+  // The wallet's own bar and rail are unchanged: Mine stays next to Mint there.
+  assert.match(app, /tab\("\/app\/mint", "mint", "Mint"\)\}\$\{tab\("\/app\/mine", "block", "Mine"\)\}/);
+  assert.deepEqual(matchPath("/mine", "/mine"), {});
+  assert.equal(matchPath("/mine", "/app/mine"), null);
+  assert.match(src("web/src/ui/icons.js"), /\n {2}pick: `/, "the pickaxe icon exists");
+});
+
+test("/mine page: hero, the featured token with live numbers, the other tokens, four steps, the cost of a claim and the speed note", async () => {
+  const MINE = await import("../web/src/views/mine.js");
+  const other = murk({ ticker: "ORE", asset: "7", claims: 0, issued: "0", maxSupply: "1000", divisibility: 0, reward: "50", baseReward: "50", difficulty: "1200000", deployHeight: 900_000 });
+  mineRoutes([other, murk()], { rate: 4 });
+  await freshMine();
+  const root = new FakeEl();
+  const off = MINE.render(root, {}, new URLSearchParams());
+  try {
+    await settle(30);
+    const page = String(root.innerHTML);
+    for (const text of ["Mine tokens", "in your browser.", "Start mining", "How it works", "Four steps", "COST OF ONE CLAIM", "Bitcoin network fee", "Service fee to the platform", "HOW FAST"]) assert.ok(has(page, text), text);
+    for (const [, title, text] of MINE.HOW_STEPS) assert.ok(has(page, title) && has(page, text), title);
+    assert.deepEqual(MINE.HOW_STEPS.map((x) => x[1]), ["Open a wallet", "Fund the mining address", "Press Mine and leave the tab open", "Each solution is a claim"]);
+    assert.ok(has(page, "A claim is a Bitcoin transaction you pay. The token's reward lands in your wallet as a private note."));
+    // The featured token: MURK (the most claims among the open ones), with its live numbers.
+    const card = String(root.querySelector("[data-featured-slot]").innerHTML);
+    assert.match(card, /data-ticker="MURK"/);
+    for (const text of ["MURK", "1 of 21,000", "claims mined", "1,000 of 21,000,000 MURK issued", "Reward per claim", "1,000 MURK", "Difficulty", "3,600,000", "Status", "Mining now", "Deployed at block", "#971,326", "MINING", "Start mining"]) assert.ok(has(card, text), text);
+    assert.match(card, /href="\/app\/mine\?t=MURK"/, "Start mining preselects the ticker");
+    assert.match(card, /role="progressbar"[^>]*aria-valuemax="21000000"[^>]*aria-valuenow="1000"/);
+    // The other mined token is listed with its own Mine button.
+    const others = String(root.querySelector("[data-others-grid]").innerHTML);
+    assert.match(others, /data-ticker="ORE"/);
+    assert.match(others, /href="\/app\/mine\?t=ORE"/);
+    assert.equal(root.querySelector("[data-others]").hidden, false);
+    // The cost: about 680 vB at the page's rate (684 x 4), plus the service fee read from the params.
+    const cost = String(root.querySelector("[data-cost]").innerHTML);
+    assert.ok(has(cost, `~${int_(684 * 4)} sats`), "network fee at the fetched rate");
+    assert.ok(has(cost, `${int_(MINE_FEE.platformSats)} sats`), "the service fee comes from MINE_FEE");
+    assert.ok(has(cost, `~${int_(684n * 4n + MINE_FEE.platformSats)} sats`), "the total");
+    assert.ok(has(cost, "about 680 vB at 4 sat/vB"));
+    const speed = String(root.querySelector("[data-speed-slot]").innerHTML);
+    assert.ok(has(speed, "Expected time per solution = difficulty / hash rate."));
+    assert.ok(has(speed, "needs about 1 hour per solution"));
+    assert.ok(net.calls.includes("GET /api/mine"));
+  } finally {
+    off?.();
+  }
+  // No wallet bundle is needed to read the page.
+  const imports = src("web/src/views/mine.js").split("\n").filter((l) => l.startsWith("import") || l.startsWith("} from")).join("\n");
+  assert.ok(!/session\.js|app-shared\.js|app-mine\.js/.test(imports), imports);
+});
+
+test("/mine page: empty state without a mined token, a soon token is not mineable, and a list that fails says so", async () => {
+  const MINE = await import("../web/src/views/mine.js");
+  mineRoutes([]);
+  await freshMine();
+  let root = new FakeEl();
+  let off = MINE.render(root, {}, new URLSearchParams());
+  try {
+    await settle(30);
+    const slot = String(root.querySelector("[data-featured-slot]").innerHTML);
+    assert.ok(has(slot, "No token is being mined on this network right now."));
+    assert.match(slot, /href="\/app\/launch\?kind=pow"/);
+    assert.equal(root.querySelector("[data-others]").hidden, true);
+    assert.ok(!slot.includes("Start mining"));
+  } finally {
+    off?.();
+  }
+  mineRoutes([murk({ status: "mining-soon", mineStart: 972_500 })]);
+  await freshMine();
+  root = new FakeEl();
+  off = MINE.render(root, {}, new URLSearchParams());
+  try {
+    await settle(30);
+    const slot = String(root.querySelector("[data-featured-slot]").innerHTML);
+    assert.ok(has(slot, "Mining opens soon") && has(slot, "Mining opens at #972,500."));
+    assert.ok(!slot.includes('href="/app/mine?t=MURK"'), "no Start mining link before it opens");
+  } finally {
+    off?.();
+  }
+  // A failing list (the client's 15 s cache aged out first).
+  mineRoutes([murk()], { fail: true });
+  const realNow = Date.now;
+  Date.now = () => realNow() + 60_000;
+  root = new FakeEl();
+  off = MINE.render(root, {}, new URLSearchParams());
+  try {
+    await settle(60);
+    const slot = String(root.querySelector("[data-featured-slot]").innerHTML);
+    assert.ok(has(slot, "The mining list didn't load: boom") && has(slot, "Try again"), slot.slice(0, 200));
+  } finally {
+    Date.now = realNow;
+    off?.();
+  }
+});
+
+test("/mints lists mined tokens (Mining now) with a Mine button each, so it never says No open mints while one is mined", async () => {
+  const MINTS = await import("../web/src/views/mints.js");
+  const soon = murk({ ticker: "SOON", asset: "8", status: "mining-soon", claims: 0, mineStart: 972_000 });
+  const done = murk({ ticker: "DONE", asset: "9", status: "mined-out" });
+  const all = [murk(), soon, done];
+  // The pure filter: each filter shows its own statuses, best first; a ticker query narrows.
+  assert.deepEqual(MINTS.filterMined(all, { filter: "open" }).map((x) => x.ticker), ["MURK"]);
+  assert.deepEqual(MINTS.filterMined(all, { filter: "upcoming" }).map((x) => x.ticker), ["SOON"]);
+  assert.deepEqual(MINTS.filterMined(all, { filter: "soldout" }).map((x) => x.ticker), ["DONE"]);
+  assert.deepEqual(MINTS.filterMined(all, { filter: "all" }).map((x) => x.ticker), ["MURK", "SOON", "DONE"]);
+  assert.deepEqual(MINTS.filterMined(all, { filter: "all", query: "$mu" }).map((x) => x.ticker), ["MURK"]);
+  mineRoutes(all);
+  await freshMine();
+  await api.assets({ fresh: true });
+  const root = new FakeEl();
+  const off = MINTS.render(root, {}, new URLSearchParams());
+  try {
+    await settle(30);
+    const mining = String(root.querySelector("[data-mining-grid]").innerHTML);
+    assert.match(mining, /data-ticker="MURK"/);
+    assert.ok(!mining.includes('data-ticker="SOON"') && !mining.includes('data-ticker="DONE"'), "Open shows only the tokens being mined");
+    assert.match(mining, /href="\/t\/MURK"/);
+    assert.match(mining, /href="\/app\/mine\?t=MURK"/);
+    assert.ok(has(mining, "Mine MURK"));
+    assert.equal(root.querySelector("[data-mining]").hidden, false);
+    assert.equal(root.querySelector("[data-mining-head]").textContent, "MINING NOW");
+    assert.ok(!String(root.querySelector("[data-grid]").innerHTML).includes("No open mints"), "paid mints are only one of the two kinds");
+    assert.match(String(root.querySelector("[data-count]").textContent), /^1 token · 3 on this pool$/);
+  } finally {
+    off?.();
+  }
+  // With nothing mined and nothing paid, the old empty line stays.
+  mineRoutes([]);
+  await freshMine();
+  const root2 = new FakeEl();
+  const off2 = MINTS.render(root2, {}, new URLSearchParams());
+  try {
+    await settle(30);
+    assert.ok(has(String(root2.querySelector("[data-grid]").innerHTML), "No open mints right now."));
+    assert.equal(root2.querySelector("[data-mining]").hidden, true);
+  } finally {
+    off2?.();
+  }
+  assert.ok(src("web/src/views/mints.js").includes('href: "/mine"'), "the page links to /mine");
+});
+
+test("landing: the Mine block shows the featured mined token and is hidden without one; the strip counts claims; the hero says mine", async () => {
+  globalThis.IntersectionObserver ??= class { observe() {} unobserve() {} disconnect() {} };
+  const M = await import("../web/src/share/mined.js");
+  // The block's markup: ticker, claims of the total, a slim bar, the reward, Start mining and How mining works.
+  const block = String(M.mineBlock(murk(), { walletReady: false }));
+  for (const text of ["MINE IN YOUR BROWSER", "$MURK", "1 of 21,000", "claims mined", "Reward per claim", "1,000 MURK", "Start mining", "How mining works →"]) assert.ok(has(block, text), text);
+  assert.match(block, /href="\/app\/mine\?t=MURK"/);
+  assert.match(block, /href="\/mine" data-link/);
+  assert.match(block, /role="progressbar"/);
+  assert.equal(String(M.mineBlock(null)), "", "no mined token: no block");
+  const soon = String(M.mineBlock(murk({ status: "mining-soon", mineStart: 972_500 })));
+  assert.ok(!soon.includes("/app/mine?t=") && has(soon, "Mining opens at #972,500."));
+  // Rendered on the page.
+  const LANDING = await import("../web/src/views/landing.js");
+  for (const [assets, shown] of [[[murk()], true], [[], false]]) {
+    mineRoutes(assets);
+    await freshMine();
+    const root = new DeepEl();
+    const off = LANDING.render(root);
+    try {
+      await settle(40);
+      const slot = root.querySelector("[data-mine]");
+      assert.equal(slot.hidden, !shown, shown ? "the block is visible with a mined token" : "the block is hidden without one");
+      if (shown) {
+        assert.ok(has(String(slot.innerHTML), "1 of 21,000"));
+        assert.match(String(slot.innerHTML), /href="\/app\/mine\?t=MURK"/);
+      } else assert.equal(String(slot.innerHTML), "");
+      const page = String(root.innerHTML);
+      assert.ok(has(page, "Launch, mint or mine tokens on Bitcoin L1 in public"), "the hero says mine");
+      assert.ok(page.indexOf("data-mine") < page.indexOf("data-strip"), "the block sits right under the hero, above the stats strip");
+      // The strip's last tile counts mining claims while a mined token exists, and mints otherwise.
+      const strip = root.querySelector("[data-strip]");
+      const tile = strip.querySelector('[data-k="mined"]');
+      if (shown) {
+        assert.equal(tile.replacedWith, undefined, "the claims tile stays");
+        assert.equal(strip.querySelector('[data-k="mined"] [data-v]').dataset.to, "1");
+      } else {
+        assert.match(String(tile.replacedWith), /data-k="mints"/, "no mined token: the tile goes back to mints");
+      }
+      assert.ok(has(page, "Claims mined"));
+      // Phones: the hero buttons carry a Start mining link too, only while a token is open.
+      const cta = root.querySelector("[data-hero-mine]");
+      assert.ok(page.includes("data-hero-mine"));
+      assert.ok(page.indexOf("data-hero-mine") > page.indexOf("Open wallet") && page.indexOf("data-hero-mine") < page.indexOf("Verify a live proof"));
+      if (shown) {
+        assert.equal(cta.hidden, false);
+        assert.match(String(cta.innerHTML), /href="\/app\/mine\?t=MURK"/);
+        assert.ok(has(String(cta.innerHTML), "Start mining"));
+      } else {
+        assert.equal(cta.hidden, true);
+        assert.equal(String(cta.innerHTML), "");
+      }
+    } finally {
+      off?.();
+    }
+  }
+  const landing = src("web/src/views/landing.js");
+  assert.match(landing, /fetchMined\(\{ fresh: true \}\)/);
+  assert.match(landing, /const LAST_TILE = \{ mined: \["mined", "Claims mined", "IDX"\], mints: \["mints", "Mints", "IDX"\] \};/);
+  assert.match(landing, /el\.hidden = !f;/);
+});
+
+test("/mints: a failing /api/mine says so instead of No open mints; /mine and the landing rebuild only when something shown changed; the nav keeps its room", async () => {
+  const MINTS = await import("../web/src/views/mints.js");
+  const MINE = await import("../web/src/views/mine.js");
+  const STATUS = await import("../web/src/ui/status.js");
+  // /mints: the mined list fails while paid mints load (the client's 15 s cache aged out first).
+  mineRoutes([murk()], { fail: true });
+  const realNow = Date.now;
+  Date.now = () => realNow() + 60_000;
+  const root = new FakeEl();
+  const off = MINTS.render(root, {}, new URLSearchParams());
+  try {
+    await settle(60);
+    assert.equal(root.querySelector("[data-mining]").hidden, false, "the Mining section stays to carry the note");
+    assert.equal(root.querySelector("[data-mining-note]").hidden, false);
+    assert.ok(!String(root.querySelector("[data-grid]").innerHTML).includes("No open mints"), "no No open mints line while the mined list is unknown");
+  } finally {
+    Date.now = realNow;
+    off?.();
+  }
+  const mints = src("web/src/views/mints.js");
+  assert.ok(mints.includes("The mined tokens didn't load.") && mints.includes('action: "mn-retry"'));
+  // /mine: a wallet status event that changes nothing shown does not rebuild the card (keyboard focus stays); one that does, does.
+  mineRoutes([murk()]);
+  await freshMine();
+  let sets = 0;
+  const page = new FakeEl();
+  const slot = page.querySelector("[data-featured-slot]");
+  let inner = "";
+  Object.defineProperty(slot, "innerHTML", { get: () => inner, set: (v) => ((inner = String(v)), sets++) });
+  const off2 = MINE.render(page, {}, new URLSearchParams());
+  try {
+    await settle(40);
+    assert.ok(has(inner, "1 of 21,000"));
+    const n = sets;
+    STATUS.setWalletStatus({ state: "locked" });
+    STATUS.setWalletStatus({ state: "locked" });
+    assert.equal(sets, n, "nothing shown changed: no rebuild");
+    STATUS.setWalletStatus({ state: "unlocked" });
+    assert.equal(sets, n + 1, "the button kind follows the wallet: one rebuild");
+  } finally {
+    STATUS.setWalletStatus({ state: "none" });
+    off2?.();
+  }
+  assert.match(src("web/src/views/landing.js"), /const key = JSON\.stringify\(\[f, walletReady\]\);\n\s+if \(key === mineKey\) return;/);
+  // The top bar: the nav never shrinks, and the search box waits for 1180 px (an icon button stands in) so five items fit from 768 px.
+  const pages = src("web/src/styles/pages.css");
+  assert.match(pages, /\.nav \{ display: none; align-self: stretch; flex: none; \}/);
+  assert.match(pages, /@media \(min-width: 1180px\) \{ \.top-search \{ display: block; \} \.search-btn \{ display: none; \} \}/);
+});
+
+test("wallet gate: returnPath keeps only same-site wallet pages; a visitor without a wallet gets create and restore links that carry the page", async () => {
+  assert.equal(SHARED.returnPath("/app/mine?t=MURK"), "/app/mine?t=MURK");
+  assert.equal(SHARED.returnPath("/app/mint?t=ABC"), "/app/mint?t=ABC");
+  assert.equal(SHARED.returnPath("/app/settings"), "/app/settings");
+  for (const bad of [null, undefined, "", "/", "/app", "/mine", "//evil.example/app/x", "https://evil.example/app/x", "/app//evil", "/app/../x", "/app/mine?t=<script>", "/app/create", "/app/import?next=x", "javascript:alert(1)", "/app\\evil", "app/mine"]) {
+    assert.equal(SHARED.returnPath(bad), null, String(bad));
+  }
+  assert.equal(SHARED.nextQuery("/app/mine?t=MURK"), "?next=%2Fapp%2Fmine%3Ft%3DMURK");
+  assert.equal(SHARED.nextQuery(null), "");
+  assert.equal(SHARED.returnName("/app/mine?t=MURK"), "Mine");
+  assert.equal(SHARED.returnName("/app/unknown"), "where you were");
+  S.forgetWallet();
+  globalThis.document.head ??= new FakeEl(); // the wallet views add their styles to <head> on first use
+  const gate = (pathname, search) =>
+    withUrl(pathname, search, async () => {
+      const root = new FakeEl();
+      await SHARED.withWallet(root, () => assert.fail("no wallet is open"));
+      return String(root.innerHTML);
+    });
+  const mine = await gate("/app/mine", "?t=MURK");
+  assert.match(mine, /href="\/app\/create\?next=%2Fapp%2Fmine%3Ft%3DMURK"/, "Start mining without a wallet: create returns to Mine");
+  assert.match(mine, /href="\/app\/import\?next=%2Fapp%2Fmine%3Ft%3DMURK"/, "and so does restore");
+  assert.ok(has(mine, "When your wallet is ready you go straight on to Mine."));
+  const plain = await gate("/app", "");
+  assert.match(plain, /href="\/app\/create"/);
+  assert.match(plain, /href="\/app\/import"/);
+  assert.ok(!plain.includes("next="));
+  assert.ok(!has(plain, "you go straight on to"));
+  const hostile = await gate("/app/mine", "?t=%3Cscript%3E");
+  assert.ok(!hostile.includes("<script>"), "nothing from the query reaches the page unescaped");
+});
+
+test("wallet gate: after Create wallet the last step continues to the page that sent the visitor (and not without one)", async (t) => {
+  const CREATE = await import("../web/src/views/app-create.js");
+  const run = async (query) => {
+    S.forgetWallet();
+    const root = new DeepEl();
+    const off = CREATE.render(root, {}, query);
+    t.after(() => {
+      off?.();
+      S.forgetWallet();
+    });
+    const form = root.querySelector("[data-f]");
+    const pw = "correct horse battery staple 1";
+    form.querySelector("[name=password]").value = pw;
+    form.querySelector("[name=confirm]").value = pw;
+    form.ls.submit.at(-1)({ preventDefault() {} });
+    const words = [...String(root.innerHTML).matchAll(/<li class="pw"><i>\d+<\/i><b>([a-z]+)<\/b>/g)].map((m) => m[1]);
+    assert.equal(words.length, 24, "the 24 words are shown");
+    root.querySelector("[data-saved]").checked = true;
+    root.querySelector("[data-action=next]").ls.click.at(-1)();
+    const asked = [...String(root.innerHTML).matchAll(/Word (\d+)<\/label>/g)].map((m) => Number(m[1]) - 1);
+    assert.equal(asked.length, 3);
+    for (const i of asked) form.querySelector(`[name=w${i}]`).value = words[i];
+    form.ls.submit.at(-1)({ preventDefault() {} });
+    await settle(60);
+    return String(root.innerHTML);
+  };
+  const withNext = await run(new URLSearchParams({ next: "/app/mine?t=MURK" }));
+  assert.ok(has(withNext, "Continue to Mine"), withNext.slice(0, 300));
+  assert.match(withNext, /href="\/app\/mine\?t=MURK"/);
+  assert.match(withNext, /href="\/app"/, "the portfolio stays one tap away");
+  const without = await run(new URLSearchParams());
+  assert.ok(!without.includes("Continue to"));
+  assert.ok(has(without, "Open portfolio"));
+  // A hostile next is ignored.
+  const hostile = await run(new URLSearchParams({ next: "https://evil.example/app/x" }));
+  assert.ok(!hostile.includes("evil.example") && !hostile.includes("Continue to"));
+});
+
+test("wallet gate: Restore from 24 words goes on to the page that sent the visitor, else to the portfolio", async (t) => {
+  const IMPORT = await import("../web/src/views/app-import.js");
+  const pushed = [];
+  const pushState = history.pushState;
+  history.pushState = (st, title, u) => {
+    const x = new URL(String(u), "https://murkle.example");
+    pushed.push(x.pathname + x.search);
+  };
+  t.after(() => {
+    history.pushState = pushState;
+    S.forgetWallet();
+  });
+  const run = async (query) => {
+    S.forgetWallet();
+    const root = new DeepEl();
+    const off = IMPORT.render(root, {}, query);
+    const form = root.querySelector("[data-f]");
+    form.querySelector("[name=phrase]").value = S.newPhrase();
+    const pw = "correct horse battery staple 1";
+    form.querySelector("[name=password]").value = pw;
+    form.querySelector("[name=confirm]").value = pw;
+    form.ls.submit.at(-1)({ preventDefault() {} });
+    await settle(60);
+    off?.();
+  };
+  await run(new URLSearchParams({ next: "/app/mine?t=MURK" }));
+  assert.equal(pushed.at(-1), "/app/mine?t=MURK");
+  await run(new URLSearchParams());
+  assert.equal(pushed.at(-1), "/app");
+  await run(new URLSearchParams({ next: "//evil.example/app/x" }));
+  assert.equal(pushed.at(-1), "/app", "a hostile next is ignored");
+});
+
+test("/app/mine preselects the ticker from ?t= (what every Start mining link carries), and falls back to an open token for an unknown one", async (t) => {
+  const MV = await import("../web/src/views/app-mine.js");
+  S.forgetWallet();
+  const s = await S.createWallet(S.newPhrase(), "correct horse battery staple 1");
+  t.after(() => S.forgetWallet());
+  const second = murk({ ticker: "ORE", asset: "7", claims: 0 });
+  for (const [query, want] of [["t=ORE", "ORE"], ["t=ore", "ORE"], ["t=NOPE", "MURK"], ["", "MURK"]]) {
+    mineRoutes([murk(), second]);
+    net.routes.set(/^\/api\/mine\/(\w+)$/, ({ m }) => reply(200, { ...(m[1] === "ORE" ? second : murk()), tip: { height: 971_582, hash: "00".repeat(32) }, series: { difficulty: [], claims: [] } }));
+    await freshMine();
+    net.calls.length = 0;
+    const root = new FakeEl();
+    const off = MV.mineView(root, s, new URLSearchParams(query), { spawn: () => ({ postMessage() {}, terminate() {} }) });
+    try {
+      await settle(40);
+      const asked = net.calls.filter((c) => /^GET \/api\/mine\/\w+$/.test(c));
+      assert.ok(asked.length > 0 && asked.every((c) => c === `GET /api/mine/${want}`), `?${query} asks for ${want}: ${asked}`);
+    } finally {
+      off?.();
+    }
+  }
+  // The links that lead there all use ?t=.
+  assert.match(src("web/src/views/token.js"), /href: `\/app\/mine\?t=\$\{encodeURIComponent\(m\.ticker\)\}`/);
+  assert.match(src("web/src/share/mined.js"), /`\/app\/mine\?t=\$\{encodeURIComponent\(ticker\)\}`/);
+});
+
+test("copy of the public mining pages: no banned words, no limit framing, no proving-key warning", async () => {
+  const M = await import("../web/src/share/mined.js");
+  const MINE = await import("../web/src/views/mine.js");
+  const code = (f) => src(f).replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:"'`])\/\/.*$/gm, "$1");
+  const texts = [
+    code("web/src/views/mine.js"), code("web/src/share/mined.js"),
+    M.speedNote(murk()), String(M.mineBlock(murk())), String(M.minedCard(murk())), String(MINE.featuredCard(murk())), String(MINE.costPanel({ rate: 3 })), String(MINE.speedPanel(murk())),
+    ...MINE.HOW_STEPS.flat(),
+  ].join("\n");
+  for (const re of [/anonymous/i, /trustless/i, /untraceable/i, /audited/i, /mixer/i, /\bsecure/i, /invisible/i, /\blimit/i, /per day/i, /per block/i, /proving key/i, /single-party/i, new RegExp(String.fromCharCode(91, 0x400, 45, 0x4ff, 93))]) {
+    assert.doesNotMatch(texts, re, String(re));
+  }
+});
+
+test("line endings: the public mining pages' files keep theirs (CRLF stays CRLF), the new files are LF", () => {
+  const raw = (p) => readFileSync(new URL(`../${p}`, import.meta.url), "latin1");
+  for (const f of ["web/src/views/landing.js", "web/src/share/public.css", "web/src/ui/icons.js", "web/src/views/app-create.js", "web/src/views/app-import.js"]) {
+    const s = raw(f);
+    assert.equal((s.match(/\r\n/g) ?? []).length, (s.match(/\n/g) ?? []).length, `${f} stays CRLF`);
+  }
+  for (const f of ["web/src/views/mints.js", "web/src/views/mine.js", "web/src/share/mined.js"]) {
+    const s = raw(f);
+    assert.ok(!s.includes("\r"), `${f} is LF`);
+    assert.ok(s.endsWith("\n"), `${f} ends with a newline`);
+  }
 });

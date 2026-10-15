@@ -10,7 +10,7 @@ import { copyText } from "../ui/behaviors.js";
 import { navigate } from "../router.js";
 import { BRAND } from "../config.js";
 import { newPhrase, createWallet, hasVault, hasLegacy, currentSession, normalizePhrase } from "../session.js";
-import { ensureStyles, pageHead, passwordFields, wirePasswordFields, KDF_COPY, callout, formError } from "./app-shared.js";
+import { ensureStyles, pageHead, passwordFields, wirePasswordFields, KDF_COPY, callout, formError, returnPath, returnName } from "./app-shared.js";
 
 let clipboardTimer = null;
 const STEP_NAMES = ["Password", "Recovery words", "Confirm", "Done"];
@@ -44,10 +44,12 @@ export function legacyWallet(root) {
   </div>`;
 }
 
-export function render(root) {
+export function render(root, params, query) {
   ensureStyles();
   if (hasVault()) return existingWallet(root, "create a new one");
   if (hasLegacy()) return legacyWallet(root);
+  // ?next=/app/mine?t=MURK: the page that sent the visitor here (the wallet gate); the last step goes on to it.
+  const next = returnPath(query?.get?.("next"));
   let password = null;
   let phrase = null;
   let picks = null;
@@ -187,7 +189,7 @@ export function render(root) {
         body: html`<span class="ok-mark">${icon("check", { size: 20 })}<span class="eyebrow" style="color:inherit">Encrypted on this device</span></span>
           <h2 class="h2-app">Wallet encrypted on this device</h2>
           <p class="t-2">Your ${BRAND} wallet is ready. It locks itself after 15 minutes idle (change it in Settings). Your first private note arrives when you mint from an open token or someone pays you.</p>
-          <div class="inline-actions">${button({ label: "Open portfolio", href: "/app", kind: "neutral" })}${button({ label: "Browse mints", href: "/app/mint", kind: "secondary" })}${button({ label: "Receive", href: "/app/receive", kind: "ghost" })}</div>`,
+          <div class="inline-actions">${next ? button({ label: `Continue to ${returnName(next)}`, href: next, kind: "btc", iconRight: "arrow-right" }) : ""}${button({ label: "Open portfolio", href: "/app", kind: next ? "secondary" : "neutral" })}${next ? "" : button({ label: "Browse mints", href: "/app/mint", kind: "secondary" })}${button({ label: "Receive", href: "/app/receive", kind: "ghost" })}</div>`,
       })}`,
     );
   }
