@@ -1691,6 +1691,13 @@ test("landing: the Mine block shows the featured mined token and is hidden witho
         assert.equal(cta.hidden, true);
         assert.equal(String(cta.innerHTML), "");
       }
+      // The launch board below: with no paid mint open, it points at the mined token instead of "No open mints".
+      const board = String(root.querySelector("[data-board]")?.innerHTML ?? "");
+      if (shown) {
+        assert.ok(has(board, "No paid mints are open right now. MURK is open for mining in your browser."), "the launch board points at the mined token");
+        assert.ok(!has(board, "No open mints right now."));
+        assert.match(board, /href="\/app\/mine\?t=MURK"/);
+      } else assert.ok(has(board, "No open mints right now."), "nothing mined: the board keeps its empty state");
     } finally {
       off?.();
     }

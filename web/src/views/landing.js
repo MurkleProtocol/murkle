@@ -506,6 +506,12 @@ npm run indexer</pre>
     const list = groups[boardWhich] ?? [];
     const walletReady = getWalletStatus().state === "unlocked";
     if (!list.length) {
+      // No paid mint is open, but a mined token may be: point at it instead of saying nothing is open.
+      const f = boardWhich === "live" && mined ? featuredMined(mined) : null;
+      if (f) {
+        el.innerHTML = html`<div class="panel" style="grid-column:1/-1">${empty({ text: `No paid mints are open right now. ${f.ticker} is open for mining in your browser.`, action: { label: `Mine ${f.ticker}`, href: mineHref(f.ticker) } })}</div>`;
+        return;
+      }
       const text = {
         live: "No open mints right now. Be first: write a token to Bitcoin.",
         upcoming: "No launches are scheduled. A launch can open at any future block.",
