@@ -8,13 +8,13 @@ rules and must get the same result. Bitcoin itself does not verify the proofs; e
 The design is close to the "Shielded Bitcoin" design by [[alloc] init] (2026-09-24), but without a BTC bridge:
 tokens are created inside the protocol.
 
-Status: **signet only**, test coins with no value. Phase 1 of the Groth16 setup is the public
-Perpetual Powers of Tau transcript; phase 2 is a **DEV single-party contribution** (audit A-8):
-whoever made it could forge proofs.
-
-Mainnet is **not launched**: no mainnet genesis is pinned (`src/pins.mainnet.json`), and the mainnet
-phase-2 key is not made yet. It is made once by the Murkle operator with `npm run key:mainnet`
-(docs/MAINNET.md).
+Status: **running on Bitcoin mainnet** since block 971316. The mainnet genesis ATTEST is
+`7d345f2222bd3c4501c4c344d9707d488935fe31f4d255ec4b673c7de2cf8eab` (`src/pins.mainnet.json`;
+launch record in docs/MAINNET.md). Signet stays the test network (test coins with no value) and the default
+of `MURKLE_NETWORK`. Phase 1 of the Groth16 setup is the public Perpetual Powers of Tau transcript. Phase 2
+on signet is a **DEV single-party contribution** (audit A-8): whoever made it could forge proofs. Phase 2 on
+mainnet is the single-party key of the Murkle operator, made with `npm run key:mainnet` and checkable with
+`npm run key:verify`.
 
 All names and pinned constants live in `src/params.mjs` and the network's pins file (`src/pins.json` for
 signet, `src/pins.mainnet.json` for mainnet). The table below is signet; section 1.1 lists what differs on mainnet.

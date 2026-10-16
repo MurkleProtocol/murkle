@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "network": "mainnet",
-  "testCount": 1277,
+  "testCount": 1280,
   "circuit": {
     "constraints": 18411,
     "proofSystem": "Groth16",

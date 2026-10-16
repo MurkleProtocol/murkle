@@ -86,6 +86,32 @@ function networkFacts() {
   };
 }
 
+/**
+ * The link-preview card (/og.png). web/public/og.png is the signet card; a mainnet build writes
+ * web/og/og-mainnet.png over it in the output, and the dev server serves that one on mainnet.
+ */
+function networkOgImage() {
+  const mainnetCard = here("og/og-mainnet.png");
+  let outDir = null;
+  return {
+    name: "murkle-network-og-image",
+    configResolved(config) {
+      outDir = resolve(config.root, config.build.outDir);
+    },
+    configureServer(server) {
+      if (NETWORK !== "mainnet") return;
+      server.middlewares.use("/og.png", (_req, res) => {
+        res.setHeader("Content-Type", "image/png");
+        res.end(readFileSync(mainnetCard));
+      });
+    },
+    closeBundle() {
+      if (NETWORK !== "mainnet" || !outDir) return;
+      writeFileSync(join(outDir, "og.png"), readFileSync(mainnetCard));
+    },
+  };
+}
+
 // Fonts used above the fold: preload them so text doesn't reflow (visual.md section 4).
 const PRELOAD_FONTS = [
   "instrument-serif-latin-400-normal",
@@ -122,7 +148,7 @@ export default defineConfig({
   root: fileURLToPath(new URL(".", import.meta.url)),
   // History-API routing: unknown paths fall back to index.html in dev and preview.
   appType: "spa",
-  plugins: [networkFacts(), preloadFonts(PRELOAD_FONTS), networkHtml(), buildMarker(), murkleLab(LAB)],
+  plugins: [networkFacts(), preloadFonts(PRELOAD_FONTS), networkHtml(), networkOgImage(), buildMarker(), murkleLab(LAB)],
   define: DEFINE,
   server: {
     port: 5173,

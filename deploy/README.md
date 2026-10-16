@@ -2,8 +2,8 @@
 
 Files for running a Murkle node. The procedures (install, upgrade, backups, the restore drill,
 alerts, incidents) are in [docs/OPERATIONS.md](../docs/OPERATIONS.md); the launch sequence is in
-`docs/MAINNET.md`. Mainnet has not launched; signet is the
-default network. The default setup, on mainnet too, needs no Bitcoin Core: the indexer reads chain data
+`docs/MAINNET.md`. Mainnet is launched; signet is the
+default network and the test network. The default setup, on mainnet too, needs no Bitcoin Core: the indexer reads chain data
 from mempool.space (`MURKLE_BTC_SOURCE=esplora`) on a small VPS; an own node is the optional upgrade.
 
 | File | What it is for |

@@ -1,12 +1,16 @@
 # Mainnet launch checklist
 
-Status: **Murkle has not launched on Bitcoin mainnet.** No mainnet genesis is pinned
-(`src/pins.mainnet.json` has `genesisTxid: null`), the mainnet proving key does not exist until the operator
-makes it (`npm run key:mainnet`), and mining on mainnet starts only once a mining height is pinned (G5). Signet stays the
-default network and keeps running unchanged.
+Status: **Murkle launched on Bitcoin mainnet.** The genesis ATTEST is
+`7d345f2222bd3c4501c4c344d9707d488935fe31f4d255ec4b673c7de2cf8eab`, activation height 971316
+(`src/pins.mainnet.json`, `src/btc/checkpoints.json`). The proving key is the single-party key of the Murkle
+operator, made with `npm run key:mainnet` and checkable with `npm run key:verify`. Mining is active from block 971317;
+the MURK token was deployed at block 971326 (txid `56313672937803be4847fdb264259ba2b838d2dccc9a9737da4eb1d0b3a79f26`).
+The site is https://murklebtc.com. The relayer is off on mainnet (wallets pay their own fees). Signet stays the
+test network and the default of `MURKLE_NETWORK`.
 
-This file is the exact order of the launch, with the command and the evidence for each step, what only the
-owner can provide, and the go/no-go list. Design and interfaces: `docs/design/mainnet-readiness.md`. Running
+The sections below are kept as the record of how the launch was done: the exact order, with the command and the
+evidence for each step, what only the owner provides, and the go/no-go list. Wording such as "before genesis" and
+"not launched" describes the state at that step, not today. Design and interfaces: `docs/design/mainnet-readiness.md`. Running
 the servers: `docs/OPERATIONS.md`.
 
 Owner decisions of 2026-10-13: the mainnet node runs on a small VPS with chain data from mempool.space (no own
@@ -27,7 +31,7 @@ Contents: 1. How the network is selected · 2. What the owner must provide · 3.
 - Mainnet uses `src/pins.mainnet.json`, the artifacts in `build/mainnet/`, the data directory `data/mainnet/`,
   shielded addresses `murk1…`, Bitcoin addresses `bc1…`, network-separated wallet keys
   (`murkle/mainnet/<name>`), and the strict ticker rule (V2-02) from genesis. See SPEC.md section 1.1.
-- Before genesis on mainnet: the server refuses to start (except `MURKLE_ALLOW_PRE_GENESIS=1` for a staging
+- Before genesis on mainnet (not the live state): the server refuses to start (except `MURKLE_ALLOW_PRE_GENESIS=1` for a staging
   run, and never with an unpinned verification key); the CLI runs only `new`, `address`, `address-script`,
   `attest genesis` and read-only commands; the web app shows `MAINNET · NOT LAUNCHED` and disables every
   action that would move funds (creating or importing a wallet still works).

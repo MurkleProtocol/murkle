@@ -178,7 +178,7 @@ test("docs: deposit wording, frame policy, rebuild provenance and explorer 404s 
   for (const f of ["README.md", "docs/design/relay-balance.md", "docs/design/relay-balance-contract.md"]) {
     assert.doesNotMatch(read(f), /exchange included/, f);
   }
-  assert.match(read("README.md"), /Pay it from any signet wallet/);
+  assert.match(read("README.md"), /Pay it from any wallet on the selected network: a plain payment\. On signet, never send real bitcoin to it\./);
   assert.doesNotMatch(read("README.md"), /from all published commitments/);
   assert.match(read("README.md"), /`cli-state\.json`/);
   const visual = read("docs/design/visual.md");

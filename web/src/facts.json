@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "testCount": 1277,
+  "testCount": 1280,
   "circuit": {
     "constraints": 18411,
     "proofSystem": "Groth16",

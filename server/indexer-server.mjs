@@ -1068,6 +1068,27 @@ export function createApp({
     return res.end(res.req?.method === "HEAD" ? undefined : message);
   }
 
+  // GET /robots.txt and /sitemap.xml: crawlers may read the public pages and the token pages, not the wallet,
+  // the API or the circuit files. The sitemap needs absolute URLs, so it exists only with MURKLE_PUBLIC_URL.
+  const PUBLIC_PAGES = ["/", "/mine", "/mints", "/explorer", "/verify", "/security", "/protocol"];
+  const escXml = (v) => String(v).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  function robotsTxt() {
+    const lines = ["User-agent: *", "Allow: /", "Disallow: /app/", "Disallow: /api/", "Disallow: /artifacts/"];
+    if (origin) lines.push(`Sitemap: ${origin}/sitemap.xml`);
+    return `${lines.join("\n")}\n`;
+  }
+  function sitemapXml() {
+    const tickers = [...view.mined, ...view.assets].map((x) => x.ticker).filter((t) => TICKER.test(t)).slice(0, 1000);
+    const urls = [...PUBLIC_PAGES, ...tickers.map((t) => `/t/${t}`)];
+    const entries = urls.map((u) => `  <url><loc>${escXml(origin + u)}</loc></url>`).join("\n");
+    return `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${entries}\n</urlset>\n`;
+  }
+  function sendText(res, status, type, text) {
+    const body = Buffer.from(text, "utf8");
+    res.writeHead(status, { ...BASE_HEADERS, "content-type": type, "content-length": body.length, "cache-control": "public, max-age=3600" });
+    res.end(res.req?.method === "HEAD" ? undefined : body);
+  }
+
   function handleStatic(res, path) {
     const build = webBuildCheck();
     if (!build.ok) return refuseBuild(res, build.message);
@@ -1102,6 +1123,11 @@ export function createApp({
       if (path === "/api" || path.startsWith("/api/")) return await handleApi(req, res, path, url.searchParams);
       if (req.method !== "GET" && req.method !== "HEAD") return fail(res, 405, "method_not_allowed", "Only GET is served here.", { allow: "GET, HEAD" });
       if (path.startsWith("/artifacts/")) return handleArtifact(res, path.slice("/artifacts/".length));
+      if (path === "/robots.txt") return sendText(res, 200, "text/plain; charset=utf-8", robotsTxt());
+      if (path === "/sitemap.xml") {
+        if (!origin) return sendText(res, 404, "text/plain; charset=utf-8", "No sitemap: MURKLE_PUBLIC_URL is not set.\n");
+        return sendText(res, 200, "application/xml; charset=utf-8", sitemapXml());
+      }
       return handleStatic(res, path);
     } catch (e) {
       if (e instanceof HttpError) return fail(res, e.status, e.code, e.message);

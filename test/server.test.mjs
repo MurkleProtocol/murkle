@@ -292,6 +292,15 @@ test("/t/:ticker gets escaped OG and Twitter meta; unknown or invalid tickers ge
   assert.equal(formatUnits(7n, 0), "7");
 });
 
+test("sitemap.xml lists every token page next to the public pages", async () => {
+  const res = await get("/sitemap.xml");
+  assert.equal(res.status, 200);
+  const locs = [...(await res.text()).matchAll(/<loc>([^<]+)<\/loc>/g)].map((m) => m[1]);
+  assert.ok(locs.includes("https://murkle.example/t/HEX"), "the deployed token has its page in the sitemap");
+  assert.ok(locs.includes("https://murkle.example/mine"));
+  assert.equal(new Set(locs).size, locs.length, "no URL twice");
+});
+
 test("relay over HTTP: info, OPTIONS, malformed, too large, a real signed submit, status and ledger", async () => {
   const info = await getJSON("/api/relay/info");
   assert.equal(info.enabled, true);

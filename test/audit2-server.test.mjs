@@ -111,6 +111,33 @@ test("V2-12: /api/roots?height= (empty) is a 400 bad_request, not a 404 for bloc
   assert.equal((await get("/api/roots?height=5")).status, 404);
 });
 
+/* ---------------------------------------------------------------- robots.txt and sitemap.xml */
+
+test("robots.txt keeps crawlers off the wallet, the API and the circuit files; sitemap.xml lists the public pages and every token page", async () => {
+  const { idx } = await threeBlocks();
+  const plain = await serve(createApp({ idx, webDist: DIST, log: silent }));
+  let res = await plain.get("/robots.txt");
+  assert.equal(res.status, 200);
+  assert.match(res.headers.get("content-type"), /^text\/plain/);
+  let text = await res.text();
+  for (const line of ["User-agent: *", "Allow: /", "Disallow: /app/", "Disallow: /api/", "Disallow: /artifacts/"]) assert.ok(text.split("\n").includes(line), line);
+  assert.doesNotMatch(text, /Sitemap:/, "no absolute origin, no sitemap line");
+  assert.equal((await plain.get("/sitemap.xml")).status, 404, "a sitemap needs MURKLE_PUBLIC_URL");
+
+  const site = await serve(createApp({ idx, webDist: DIST, publicUrl: "https://murkle.example/", log: silent }));
+  text = await (await site.get("/robots.txt")).text();
+  assert.ok(text.split("\n").includes("Sitemap: https://murkle.example/sitemap.xml"));
+  res = await site.get("/sitemap.xml");
+  assert.equal(res.status, 200);
+  assert.match(res.headers.get("content-type"), /^application\/xml/);
+  const xml = await res.text();
+  assert.match(xml, /^<\?xml version="1.0" encoding="UTF-8"\?>\n<urlset xmlns="http:\/\/www.sitemaps.org\/schemas\/sitemap\/0.9">/);
+  const locs = [...xml.matchAll(/<loc>([^<]+)<\/loc>/g)].map((m) => m[1]);
+  for (const page of ["/", "/mine", "/mints", "/explorer", "/verify", "/security", "/protocol"]) assert.ok(locs.includes(`https://murkle.example${page}`), page);
+  // This chain has no token yet; test/server.test.mjs checks a token page (/t/HEX) in the sitemap.
+  assert.ok(!locs.some((l) => /\/app|\/api\//.test(l)), "no wallet or API URL in the sitemap");
+});
+
 /* ---------------------------------------------------------------- V2-13 preview images */
 
 const metas = (html) => Object.fromEntries([...html.matchAll(/<meta (?:property|name)="((?:og|twitter):[^"]+)" content="([^"]*)"/g)].map((m) => [m[1], m[2]]));

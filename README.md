@@ -2,20 +2,23 @@
 
 **Private tokens on Bitcoin L1.** Launch and mint tokens in public, then send them privately: zero-knowledge proofs hide the token, the amount and the recipient of each transfer, and which notes it spends. Whether anyone can tell who sent it depends on who pays its fee and how many others use the pool. Every proof is written into a Bitcoin transaction, and any browser can re-check it from raw Bitcoin data.
 
-> **Status: signet test network, test coins with no value.**
-> - The phase-2 trusted setup is a single-party **development** setup (audit A-8): whoever ran it could forge proofs.
+> **Status: running on Bitcoin mainnet since block 971,316. Signet remains the test network (test coins with no value).**
+> - **Try it: https://murklebtc.com**
+> - Mainnet genesis ATTEST: `7d345f2222bd3c4501c4c344d9707d488935fe31f4d255ec4b673c7de2cf8eab` (activation height 971,316). The launch record: [docs/MAINNET.md](docs/MAINNET.md).
+> - **MURK**, the flagship mined token, was deployed at block 971,326: 1,000 MURK per claim, 21,000,000 max supply, no halving, difficulty retargets every 12 blocks. Each claim pays a 500-sat platform fee plus its Bitcoin fee. Mine in the browser (`/mine`) or with the CLI, including the GPU miner (`gpu/`, release `gpu-v1.0.0`; see `docs/design/mining.md`).
+> - The mainnet phase-2 trusted setup is a single-party key made by the Murkle operator (`npm run key:mainnet`, checkable with `npm run key:verify`). The signet setup is a single-party **development** setup (audit A-8).
 > - The protocol has had an internal review (circomspect, Picus, manual) but **no external audit**.
 > - Chain data is read from mempool.space by default, or from your own Bitcoin Core (`MURKLE_BTC_SOURCE=bitcoind`). Block headers are checked from a pinned checkpoint (linkage, proof of work, the difficulty rules, timestamps, most work among what the source serves); a data source can still hide or delay blocks, and the signet block signature is not checked (A-9).
-> - **Mainnet is not launched.** The code can run on Bitcoin mainnet (`MURKLE_NETWORK=mainnet`), but no mainnet genesis is pinned and its proving key is not made yet. The launch checklist: [docs/MAINNET.md](docs/MAINNET.md).
+> - The relayer is off on mainnet: wallets pay their own fees.
+> - Experimental software: mainnet tokens may be worth money and can be lost to bugs.
 > - Launches and mints are public (token, amount and the paying Bitcoin address); only transfers are private. The anonymity set is small while the pool is early.
-> - Mining (tokens issued by proof of work, `docs/design/mining.md`) is built but off: its activation height is not set in this release.
 
 - Protocol specification: [SPEC.md](SPEC.md)
 - Internal audit: [audit/REPORT.md](audit/REPORT.md)
 - HTTP API of the indexer: [docs/API.md](docs/API.md)
 - Design notes: [docs/design/](docs/design/) (index and status of each file: [docs/design/README.md](docs/design/README.md))
 - Copy rules (what the project may and may not claim): [docs/CLAIMS.md](docs/CLAIMS.md)
-- Mainnet launch checklist: [docs/MAINNET.md](docs/MAINNET.md) · Operations: [docs/OPERATIONS.md](docs/OPERATIONS.md)
+- Mainnet launch record and checklist: [docs/MAINNET.md](docs/MAINNET.md) · Operations: [docs/OPERATIONS.md](docs/OPERATIONS.md)
 - Contributing: [CONTRIBUTING.md](CONTRIBUTING.md) · Security reports: [SECURITY.md](SECURITY.md) · License: [below](#license)
 
 ## What "verified on-chain" means here
@@ -50,7 +53,7 @@ npm run dev             # indexer API on :8787 + web app on http://localhost:517
 |---|---|---|
 | Circuit | `circuits/` | Circom 2.2.2, Groth16/BN254, 2-in/2-out, depth-32 Poseidon note tree, multi-asset pool; 18,411 constraints |
 | Protocol core | `src/` | envelopes (`mrk` magic), keys and `mrk1…` addresses, notes, indexer replay rules, digest v1, raw block/tx parsing |
-| Indexer + API | `server/indexer-server.mjs` | syncs signet via mempool.space and serves the API in [docs/API.md](docs/API.md), the SPA, OG meta for `/t/:ticker` and security headers |
+| Indexer + API | `server/indexer-server.mjs` | syncs the selected network (signet by default, mainnet with `MURKLE_NETWORK=mainnet`) via mempool.space and serves the API in [docs/API.md](docs/API.md), the SPA, OG meta for `/t/:ticker` and security headers |
 | Relay | `server/relayer.mjs`, `server/relay-books.mjs`, `server/retired-relay.mjs`, `src/relay-account.mjs` | optional paid relayer: users prepay a relay balance and each relayed send is charged its fee plus a margin; off unless configured (see below) |
 | Web app | `web/` | Vite + framework-free JS: landing, mints, token pages, explorer, proof receipts, verify, security, protocol, wallet |
 | CLI | `bin/murkle.mjs` | wallets, deploy/mint/send, `relay account` / `topup` / `credit`, relayed sends (`--relay`), mining (`deploy-pow`, `mine`), `attest genesis`, `audit`, `relayer retire-free`, `relayer evacuate` / `rotate` / `refund-pool` / `sweep-retired` / `status` |
@@ -58,7 +61,7 @@ npm run dev             # indexer API on :8787 + web app on http://localhost:517
 ### Relaying: prepaid relay balances
 Paying the fee yourself (the built-in key or Unisat) and "Copy envelope" are the default and need no relayer. A relayer is an option on top: it carries your transfer in its own Bitcoin transaction, so your BTC address is not on it, and it is paid from a **relay balance** you top up in advance (`docs/design/relay-balance.md`; interfaces in `docs/design/relay-balance-contract.md`). The operator never pays any part of a user's transaction: there is no free mode, no daily subsidy and no command that adds money to the relayer.
 
-- **Top up.** The wallet derives a relay account from its seed and shows a fresh deposit address for each top-up. Pay it from any signet wallet: a plain payment. Never send real bitcoin to it. After 1 confirmation on signet (3 on mainnet) the wallet asks the relayer to credit it. The minimum deposit is 2,000 sats; a smaller payment is not credited and is not returned. 288 sats of each top-up (at the 5 sat/vB cap) pay for the relayer to spend that coin later. The suggested top-up covers about 10 sends.
+- **Top up.** The wallet derives a relay account from its seed and shows a fresh deposit address for each top-up. Pay it from any wallet on the selected network: a plain payment. On signet, never send real bitcoin to it. After 1 confirmation on signet (3 on mainnet) the wallet asks the relayer to credit it. The minimum deposit is 2,000 sats; a smaller payment is not credited and is not returned. 288 sats of each top-up (at the 5 sat/vB cap) pay for the relayer to spend that coin later. The suggested top-up covers about 10 sends.
 - **Send.** Each relayed send is charged its exact carrier fee plus a margin (by default 10%, at least 50 sats; the relayer publishes its settings) from your balance before the carrier is signed. A batch send reserves twice that by default until its batch goes out, and the difference comes back. With too little balance the send is refused before anything is handed over (`balance_low`); you can top up or pay the fee yourself.
 - **No forced waits.** Fast goes out at once, Next block at the next block; the Hourly and 10-hour batches wait only because you chose them. Above the relayer's fee cap, Fast and Next block are refused (`fee_high`), never held. A batch item that its balance or the cap cannot pay when it is due becomes `missed`: nothing is charged, the rest of the batch goes out, and the item is never sent later on its own. Retry it in the next batch, at the next block, or pay the fee yourself.
 - **Once broadcast, the fee is spent.** The relayer never bumps a carrier. If one is stuck, pay the fee yourself with the same envelope; if the relayer's carrier is also mined, its fee stays spent.
@@ -77,14 +80,14 @@ Paying the fee yourself (the built-in key or Unisat) and "Copy envelope" are the
 
 | | signet (default) | mainnet |
 |---|---|---|
-| Status | test coins, no value | **not launched**: no genesis pinned |
+| Status | test coins, no value | **launched**: genesis ATTEST `7d345f22…cf8eab`, activation height 971,316 |
 | Shielded addresses | `mrk1…` | `murk1…` (a wallet refuses the other network's addresses) |
 | Bitcoin addresses | `tb1…` | `bc1…` |
 | Pins | `src/pins.json` | `src/pins.mainnet.json` |
-| Proving key | DEV single-party phase 2 (`build/dev`) | single-party key of the Murkle operator (`build/mainnet`, made once at launch by `npm run key:mainnet`) |
+| Proving key | DEV single-party phase 2 (`build/dev`) | single-party key of the Murkle operator (`build/mainnet`, made once by `npm run key:mainnet`) |
 | Data directory | `data/signet` | `data/mainnet` |
 | Tickers | historical rule | strict raw bytes (V2-02) |
-| Mining | on from block 325,138 | service-fee rule set (500 sats to the owner's platform address, 2026-10-13); starts at the mining height once one is pinned |
+| Mining | on from block 325,138 | service-fee rule set (500 sats to the owner's platform address, 2026-10-13); on from block 971,317 (MURK deployed at block 971,326) |
 | Relayer defaults | fee cap 5 sat/vB, min deposit 2,000 sats | fee cap 50 sat/vB, min deposit 20,000 sats (`server/relayer.mjs` `NETWORK_DEFAULTS`) |
 
 The same recovery phrase gives different keys on each network (network-separated key labels, SPEC.md §2), so signet and mainnet activity are never linked by a shared key. On mainnet the server refuses to start before genesis (`MURKLE_ALLOW_PRE_GENESIS=1` for a staging run), with an unpinned verification key, or without header verification; the CLI runs only `new`, `address`, `address-script`, `attest genesis` and read-only commands before genesis. Everything else: [docs/MAINNET.md](docs/MAINNET.md).
@@ -157,7 +160,7 @@ Keys and relayer state (`MURKLE_DATA_DIR`, `MURKLE_RELAY_DIR`, `MURKLE_RELAY_KEY
 Defaults are in `server/relayer.mjs`. The free relayer's `MURKLE_DAILY_BUDGET_SATS`, `MURKLE_HOT_FLOOR_SATS`, `MURKLE_POW_BASE_BITS`, `MURKLE_POW_MAX_EXTRA`, `MURKLE_POW_BUDGET_EXTRA`, `MURKLE_ACCEPT_PER_HOUR`, `MURKLE_ACCEPT_PER_DAY` and `MURKLE_REJECT_PER_HOUR` are no longer read.
 
 ## Wallet storage (browser)
-- `murkle.signet.vault` is the vault: the recovery phrase and the activity history, sealed with XChaCha20-Poly1305 under a key derived from the password with scrypt (N = 65,536, r = 8, p = 1). The key exists only in memory while the wallet is unlocked; auto-lock defaults to 15 minutes.
+- Storage keys are `murkle.<network>.*` (`murkle.signet.*` on signet, `murkle.mainnet.*` on mainnet). `murkle.signet.vault` is the vault: the recovery phrase and the activity history, sealed with XChaCha20-Poly1305 under a key derived from the password with scrypt (N = 65,536, r = 8, p = 1). The key exists only in memory while the wallet is unlocked; auto-lock defaults to 15 minutes.
 - `murkle.signet.payer`, `.route`, `.streamer`, `.relayMode` and `.selfMode` hold non-secret preferences. `.route` is `self` (pay the fee yourself, the default), `copy` (copy the envelope) or `relay` (relay from my balance); a saved `relay` reads as `self` while no relayer with relay balances runs. `.relayMode` is the relay timing for payments (Next block or Fast; a batch pick for a payment is not kept). `.selfMode` is the timing for note merges and refreshes (Hourly batch by default; a `batch12` saved by an older version, the retired 12-hour batch, reads as the 10-hour batch).
 - Legacy `zkpool.signet.*` keys from before the rename are migrated into a vault once and then deleted.
 
@@ -267,7 +270,7 @@ sha256sum "$OUT/vkey.json"      # equals artifacts.vkey in src/pins.json
   - It is accepted only if its sha256 and the blake2b-512 published in the snarkjs README both match.
   - It is verified once with `snarkjs powersoftau verify`.
 - **Phase 2** on signet is a DEV single-party contribution. The resulting `transaction.zkey` cannot be reproduced; it is a published artifact pinned by hash in `src/pins.json`.
-- **Phase 2** on mainnet is one contribution by the Murkle operator (`npm run key:mainnet`, `scripts/mainnet-key.mjs`), named "Murkle mainnet key (single party)", made once at launch. The key files and `manifest.json` are published in a release and pinned by hash in `src/pins.mainnet.json`; the genesis ATTEST pins the manifest.
+- **Phase 2** on mainnet is one contribution by the Murkle operator (`npm run key:mainnet`, `scripts/mainnet-key.mjs`), named "Murkle mainnet key (single party)", made once. The key files and `manifest.json` are published in a release and pinned by hash in `src/pins.mainnet.json`; the genesis ATTEST pins the manifest.
 - Circom compiles source line numbers into the wasm, so even a comment line added to `circuits/` changes the wasm hash.
 
 ## Run an indexer with Docker
@@ -287,14 +290,13 @@ docker run -d --name murkle -p 8787:8787 -v murkle-data:/app/data \
 npm run audit:picus     # formal under-constraint check (Docker image picus:v0)
 ```
 
-## Roadmap before a mainnet launch
-The full checklist with commands and the go/no-go list: [docs/MAINNET.md](docs/MAINNET.md).
+## Roadmap
+The mainnet launch checklist, kept as the record of how it was done: [docs/MAINNET.md](docs/MAINNET.md).
 1. External audit of the circuit, indexer and wallet.
-2. Make the single-party mainnet key (`npm run key:mainnet`), publish it and pin its hashes.
-3. Header-chain checks (A-9): built (SPEC.md §16); open: a single data source can still withhold blocks.
-4. Relay balance stage 2: withdrawing what is left of a balance, and spending a balance with blind tokens so the operator cannot link transfers to the top-up address (`docs/design/relay-balance.md` §5).
-5. Gift links.
-6. Independent indexer operators.
+2. Header-chain checks (A-9): built (SPEC.md §16); open: a single data source can still withhold blocks.
+3. Relay balance stage 2: withdrawing what is left of a balance, and spending a balance with blind tokens so the operator cannot link transfers to the top-up address (`docs/design/relay-balance.md` §5).
+4. Gift links.
+5. Independent indexer operators.
 
 ## Source and security
 - Source: this repository. `REPO_URL` in `src/params.mjs` is the one place that names it; the site shows the clone command, a Source link and the advisory link once it is set.

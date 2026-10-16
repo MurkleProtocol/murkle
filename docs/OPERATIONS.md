@@ -5,8 +5,8 @@ process, which also runs the paid relayer when it is switched on). The files ref
 `deploy/` (`deploy/README.md` lists them). The launch sequence and the go/no-go list are in
 `docs/MAINNET.md`; the design and the build contract are in `docs/design/mainnet-readiness.md`.
 
-Mainnet has not launched. A mainnet build refuses to start until the mainnet pins hold the
-verification key of the mainnet key (`npm run key:mainnet`) and a genesis (`docs/MAINNET.md`). Signet stays the default network.
+Mainnet is launched and the mainnet pins are set (`docs/MAINNET.md`). A mainnet build refuses to start without a
+pinned genesis and verification key. Signet stays the default network.
 
 Contents
 

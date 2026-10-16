@@ -945,3 +945,18 @@ test("mainnet pages do not render signet-only words: the hero small print, the p
   const vf = readFileSync("web/src/views/verify.js", "utf8");
   assert.ok(vf.includes("${PINS_FILE}</span> in your copy") && !vf.includes("against <span class=\"mono\">src/pins.json"), "verify.js: the network's pins file");
 });
+
+test("link preview card per network: signet keeps web/public/og.png, a mainnet build writes web/og/og-mainnet.png over it", () => {
+  const size = (file) => {
+    const b = readFileSync(file);
+    assert.equal(b.subarray(1, 4).toString("latin1"), "PNG", file);
+    return [b.readUInt32BE(16), b.readUInt32BE(20)];
+  };
+  assert.deepEqual(size("web/public/og.png"), [1200, 630]);
+  assert.deepEqual(size("web/og/og-mainnet.png"), [1200, 630]);
+  assert.notEqual(createHash("sha256").update(readFileSync("web/public/og.png")).digest("hex"), createHash("sha256").update(readFileSync("web/og/og-mainnet.png")).digest("hex"));
+  const cfg = readFileSync("web/vite.config.mjs", "utf8");
+  assert.match(cfg, /function networkOgImage\(\)/);
+  assert.match(cfg, /if \(NETWORK !== "mainnet" \|\| !outDir\) return;\s*writeFileSync\(join\(outDir, "og\.png"\), readFileSync\(mainnetCard\)\);/);
+  assert.match(cfg, /plugins: \[[^\]]*networkOgImage\(\)/);
+});
