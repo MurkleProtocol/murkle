@@ -195,10 +195,14 @@ test("V2-41: two processes saving the same state file never clash on a temp file
   const path = join(DIR, "state.json");
   const store = pathToFileURL(join(process.cwd(), "src", "store-node.mjs")).href;
   // Each writer saves a snapshot of a different size, as a CLI and a server at different heights do.
-  // Both start saving at the same instant and keep at it for 800 ms. Module loading takes a while,
-  // and longer on a loaded machine, so each writer waits at a barrier (a ready file per writer)
-  // until the other has loaded too, instead of at a fixed clock time.
+  // Module loading takes a while, and longer on a loaded machine, so each writer waits at a barrier
+  // (a ready file per writer) until the other has loaded too, instead of at a fixed clock time.
+  // Then both save in a loop. A writer that has saved MIN times says so (a done file) but keeps
+  // saving until the other has said so too, so each one's first MIN saves overlap the other's
+  // saving however slow the machine is (a fixed 800 ms window gave a slow CI runner only 9 saves).
+  const MIN = 20;
   const ready = (pad) => `${path}.ready-${pad}`;
+  const done = (pad) => `${path}.done-${pad}`;
   const writer = (pad, other) => `
     const { existsSync, writeFileSync } = await import("node:fs");
     const { saveIndexer } = await import(${JSON.stringify(store)});
@@ -206,17 +210,21 @@ test("V2-41: two processes saving the same state file never clash on a temp file
     writeFileSync(${JSON.stringify(ready(pad))}, "");
     const giveUp = Date.now() + 60000;
     while (!existsSync(${JSON.stringify(ready(other))}) && Date.now() < giveUp);
-    const end = Date.now() + 800;
     let saves = 0;
-    while (Date.now() < end) { saveIndexer(${JSON.stringify(path)}, idx); saves++; }
+    while (Date.now() < giveUp) {
+      saveIndexer(${JSON.stringify(path)}, idx);
+      saves++;
+      if (saves === ${MIN}) writeFileSync(${JSON.stringify(done(pad))}, "");
+      if (saves >= ${MIN} && existsSync(${JSON.stringify(done(other))})) break;
+    }
     console.log(saves);
   `;
   const run = (pad, other) => new Promise((resolve) => {
     execFile(process.execPath, ["--input-type=module", "-e", writer(pad, other)], (err, stdout, stderr) => resolve({ err, stdout, stderr }));
   });
   const results = await Promise.all([run(150_000, 20_000), run(20_000, 150_000)]);
-  for (const pad of [150_000, 20_000]) rmSync(ready(pad), { force: true }); // the barrier files are the test's, not the store's
-  for (const r of results) assert.ok(Number(r.stdout) > 20, `each writer saved many times while the other did: ${r.stdout} ${r.stderr}`);
+  for (const pad of [150_000, 20_000]) for (const f of [ready(pad), done(pad)]) rmSync(f, { force: true }); // the barrier files are the test's, not the store's
+  for (const r of results) assert.ok(Number(r.stdout) >= MIN, `each writer saved many times while the other did: ${r.stdout} ${r.stderr}`);
   for (const r of results) assert.equal(r.err, null, r.stderr);
   const final = JSON.parse(readFileSync(path, "utf8"));
   assert.ok(final.who === 150_000 || final.who === 20_000);
