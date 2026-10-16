@@ -1,4 +1,13 @@
 {
   "version": "1.0.0",
-  "files": {}
+  "files": {
+    "linux-x64": {
+      "sha256": "bd52fc3a3bcbfa57d6146fc2ec852bc4b70fedc83f47ba8c167818606a56834c",
+      "url": "https://github.com/MurkleProtocol/murkle/releases/download/gpu-v1.0.0/murkle-gpu-linux-x64"
+    },
+    "win32-x64": {
+      "sha256": "d50a11e0af6588f38d55ffa32ccf2975e7526a127820968a639690fa99e13d0f",
+      "url": "https://github.com/MurkleProtocol/murkle/releases/download/gpu-v1.0.0/murkle-gpu-win32-x64.exe"
+    }
+  }
 }

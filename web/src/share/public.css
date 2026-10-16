@@ -482,6 +482,20 @@
 .ld-cta-mine[hidden] { display: none; }
 @media (min-width: 1024px) { .ld-cta-mine { display: none; } }
 .mi-panel .panel-head { margin-bottom: 0; }
+/* Mine on a GPU: the command-line steps, with copyable command blocks as on /verify. */
+.mi-gpu { display: flex; flex-direction: column; gap: 16px; max-width: 860px; }
+.mi-gpu .lead { margin: 0; }
+.mi-gpu p { margin: 0; }
+.mi-gpu-steps { counter-reset: gpu; list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 20px; }
+.mi-gpu-steps > li { counter-increment: gpu; position: relative; display: flex; flex-direction: column; gap: 10px; padding: 0 0 0 40px; min-width: 0; }
+.mi-gpu-steps > li::before { content: counter(gpu, decimal-leading-zero); position: absolute; left: 0; top: 2px; font: 500 13px/1 var(--font-mono); color: var(--btc-text); }
+.mi-gpu h3 { font: 600 16px/22px var(--font-ui); }
+.mi-cmd { position: relative; min-width: 0; }
+.mi-cmd pre { margin: 0; padding: 12px 44px 12px 12px; background: var(--surface-inset); border: 1px solid var(--line); border-radius: var(--radius-btn); overflow-x: auto; white-space: pre; font: 400 13px/20px var(--font-mono); color: var(--text); }
+.mi-cmd-copy { position: absolute; top: 8px; right: 8px; }
+.mi-gpu-reward { display: flex; flex-direction: column; gap: 10px; min-width: 0; padding-left: 40px; }
+.mi-gpu-links { margin-top: 4px; padding-left: 40px; }
+.mi-gpu-win { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
 .ld-mine-card { display: flex; flex-direction: column; gap: 16px; }
 .ld-mine-id { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 14px; min-width: 0; }
 .ld-mine-id .sigil { flex: none; }

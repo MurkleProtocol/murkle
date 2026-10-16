@@ -24,6 +24,7 @@
  *   feeEstimate({ rate }) -> { vsize, rate, networkSats, serviceSats, totalSats } | null
  *   publicFeeRate(esplora?) -> Promise<number>     next-block sat/vB, as the wallet reads it
  *   durationText(seconds), speedNote(a) -> string  expected time per solution = difficulty / hash rate
+ *   GPU_HASHRATE, gpuSpeedNote(a), gpuCommands({ network, ticker }) -> { clone, fetch, create, mine, ... }   the GPU section
  *   minedPill(a), minedCard(a, { walletReady }), mineBlock(a, { walletReady })
  */
 import { html } from "../ui/dom.js";
@@ -31,7 +32,7 @@ import { int, units, heightText, short, DASH } from "../ui/format.js";
 import { button, progress, statusPill } from "../ui/components.js";
 import { prov } from "../ui/prov.js";
 import { sigil } from "../ui/sigil.js";
-import { MINE_FEE, mineFeeReady } from "../../../src/params.mjs";
+import { MINE_FEE, mineFeeReady, REPO_URL } from "../../../src/params.mjs";
 import * as api from "../api.js";
 
 /** A mining claim's Bitcoin transaction is about 684 vB (the wallet prices claims with the same figure). */
@@ -161,6 +162,41 @@ export function speedNote(a) {
   const tail = "GPUs and servers are faster, and difficulty adjusts to the work, so more miners make each solution harder to find.";
   if (!(d > 0)) return `${base} ${tail}`;
   return `${base} At difficulty ${int(a.difficulty)}, a desktop browser tab (about ${int(TAB_HASHRATE)} hashes per second) needs ${durationText(d / TAB_HASHRATE)} per solution. ${tail}`;
+}
+
+/** One RTX 4090 measured about 113,000 hashes per second with the GPU miner (gpu/README.md section 7, docs/design/mining.md 4.4). */
+export const GPU_HASHRATE = 113_000;
+export const GPU_RELEASE_URL = `${REPO_URL}/releases/tag/gpu-v1.0.0`;
+export const GPU_README_URL = `${REPO_URL}/blob/main/gpu/README.md`;
+export const GPU_SOURCE_URL = `${REPO_URL}/tree/main/gpu`;
+/** The drivers gpu/README.md names (CUDA minor-version compatibility). */
+export const GPU_DRIVERS = "525.60 or newer on Linux, 527.41 or newer on Windows";
+
+/** The GPU speed note: difficulty / 113,000 seconds for the token's live difficulty (the bare formula without one). */
+export function gpuSpeedNote(a) {
+  const d = Number(a?.difficulty);
+  if (!(d > 0)) return `Expected time per solution = difficulty / ${int(GPU_HASHRATE)} seconds.`;
+  return `At difficulty ${int(a.difficulty)} that is ${durationText(d / GPU_HASHRATE)} per solution on that card (difficulty / ${int(GPU_HASHRATE)} seconds).`;
+}
+
+/**
+ * The commands of the GPU section for a network. On mainnet each command that reads the network carries
+ * MURKLE_NETWORK=mainnet and Windows (PowerShell) sets the variable once; on signet (the CLI's default) there is none.
+ * The flags are the CLI's own (MINE_USAGE in bin/murkle.mjs): mine <wallet> <TICKER> --gpu all.
+ */
+export function gpuCommands({ network = "signet", ticker = "MURK", wallet = "miner", hrp = "mrk" } = {}) {
+  const main = network === "mainnet";
+  const pre = main ? "MURKLE_NETWORK=mainnet " : "";
+  return {
+    network,
+    windowsEnv: main ? '$env:MURKLE_NETWORK = "mainnet"' : null,
+    clone: `git clone ${REPO_URL}\ncd murkle\nnpm ci`,
+    fetch: `${pre}npm run artifacts:fetch\nnpm run gpu:fetch`,
+    create: `${pre}node bin/murkle.mjs new ${wallet}`,
+    mine: `${pre}node bin/murkle.mjs mine ${wallet} ${ticker} --gpu all`,
+    address: `${pre}node bin/murkle.mjs address ${wallet}`,
+    send: `${pre}node bin/murkle.mjs send ${wallet} ${ticker} <amount> <your-${hrp}1-address>`,
+  };
 }
 
 const PILL = {

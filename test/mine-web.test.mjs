@@ -11,6 +11,9 @@
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { register } from "node:module";
 
 // Public pages import their CSS; under node it is an empty module. The landing imports facts.json without
@@ -1894,6 +1897,7 @@ test("copy of the public mining pages: no banned words, no limit framing, no pro
   const texts = [
     code("web/src/views/mine.js"), code("web/src/share/mined.js"),
     M.speedNote(murk()), String(M.mineBlock(murk())), String(M.minedCard(murk())), String(MINE.featuredCard(murk())), String(MINE.costPanel({ rate: 3 })), String(MINE.speedPanel(murk())),
+    M.gpuSpeedNote(murk()), String(MINE.gpuPanel(murk(), { network: "mainnet", hrp: "murk" })), String(MINE.gpuPanel(murk(), { network: "signet", hrp: "mrk" })),
     ...MINE.HOW_STEPS.flat(),
   ].join("\n");
   for (const re of [/anonymous/i, /trustless/i, /untraceable/i, /audited/i, /mixer/i, /\bsecure/i, /invisible/i, /\blimit/i, /per day/i, /per block/i, /proving key/i, /single-party/i, new RegExp(String.fromCharCode(91, 0x400, 45, 0x4ff, 93))]) {
@@ -1912,4 +1916,121 @@ test("line endings: the public mining pages' files keep theirs (CRLF stays CRLF)
     assert.ok(!s.includes("\r"), `${f} is LF`);
     assert.ok(s.endsWith("\n"), `${f} ends with a newline`);
   }
+});
+
+test("/mine: the Mine on a GPU section sits below the panels with the intro, the live time per solution, the requirements, the steps, the reward line and the links", async () => {
+  const MINE = await import("../web/src/views/mine.js");
+  const M = await import("../web/src/share/mined.js");
+  const C = await import("../web/src/config.js");
+  mineRoutes([murk()], { rate: 4 });
+  await freshMine();
+  const root = new FakeEl();
+  const off = MINE.render(root, {}, new URLSearchParams());
+  try {
+    const first = String(root.innerHTML);
+    assert.ok(has(first, "GPU MINING"), "the section is in the page");
+    assert.ok(first.indexOf("data-speed-slot") < first.indexOf("data-gpu-slot"), "below the cost and speed panels");
+    assert.ok(first.indexOf('id="how"') < first.indexOf("data-gpu-slot"), "below How it works");
+    await settle(30);
+    const gpu = String(root.querySelector("[data-gpu-slot]").innerHTML);
+    assert.ok(has(gpu, "An NVIDIA graphics card mines MURK with the Murkle command-line miner."));
+    assert.ok(has(gpu, "On one RTX 4090 we measured about 113,000 hashes per second, as much as about a hundred browser tabs."));
+    assert.ok(has(gpu, "That is a measurement on one card; other cards are not measured yet."));
+    // Difficulty 3,600,000 / 113,000 = 31.9 s.
+    assert.ok(has(gpu, "At difficulty 3,600,000 that is about 32 seconds per solution on that card (difficulty / 113,000 seconds)."));
+    assert.equal(M.gpuSpeedNote(murk({ difficulty: "1130000000" })), "At difficulty 1,130,000,000 that is about 2.8 hours per solution on that card (difficulty / 113,000 seconds).");
+    assert.match(M.gpuSpeedNote(null), /^Expected time per solution = difficulty \/ 113,000 seconds\.$/);
+    assert.ok(has(gpu, "You need:"));
+    assert.ok(has(gpu, "an NVIDIA GPU (Pascal or newer), Linux or Windows on x64, an NVIDIA driver 525.60 or newer on Linux, 527.41 or newer on Windows, and Node.js 22 or newer."));
+    for (const h of ["Get the code", "Download the pinned files", "Create a mining wallet", "Fund its mining fee address", "Mine", "Where the reward goes"]) assert.ok(has(gpu, h), h);
+    assert.equal((gpu.match(/<ol class="mi-gpu-steps">/g) ?? []).length, 1);
+    assert.equal((gpu.match(/<li>/g) ?? []).length, 5, "five numbered steps");
+    assert.ok(has(gpu, "private note, not in your browser wallet"));
+    assert.ok(has(gpu, "send it to your browser wallet"));
+    assert.ok(has(gpu, "send command"));
+    // Every command has the page's copy button, and the copy handler reads the block's text.
+    assert.ok((gpu.match(/data-action="mi-copy-cmd"/g) ?? []).length >= 6);
+    assert.match(src("web/src/views/mine.js"), /\[data-action=mi-copy-cmd\][\s\S]{0,200}copyText\(b\.closest\("\.mi-cmd"\)\.querySelector\("code"\)\.textContent\)/);
+    // The links: the release page, gpu/README.md on GitHub and the source.
+    const links = [...gpu.matchAll(/<a class="[^"]*" href="([^"]+)"/g)].map((m) => m[1]);
+    assert.deepEqual(links, [
+      "https://github.com/MurkleProtocol/murkle/releases/tag/gpu-v1.0.0",
+      "https://github.com/MurkleProtocol/murkle/blob/main/gpu/README.md",
+      "https://github.com/MurkleProtocol/murkle/tree/main/gpu",
+    ]);
+    assert.equal(M.GPU_RELEASE_URL, `${C.REPO_URL}/releases/tag/gpu-v1.0.0`);
+    assert.equal(C.REPO_URL, "https://github.com/MurkleProtocol/murkle");
+    assert.equal((gpu.match(/target="_blank" rel="noopener noreferrer"/g) ?? []).length, 3, "external links open safely");
+    // The section follows the build's network.
+    assert.match(gpu, new RegExp(`data-network="${C.NETWORK}"`));
+  } finally {
+    off?.();
+  }
+});
+
+test("/mine GPU section: the commands are the CLI's real ones, the same steps on mainnet (MURKLE_NETWORK=mainnet, PowerShell form) and on signet (no variable)", async () => {
+  const MINE = await import("../web/src/views/mine.js");
+  const M = await import("../web/src/share/mined.js");
+  const bin = src("bin/murkle.mjs");
+  const pkg = JSON.parse(src("package.json"));
+  const usage = bin.match(/export const MINE_USAGE =\s*`([^`]+)`/)[1];
+  const main = M.gpuCommands({ network: "mainnet", ticker: "MURK", hrp: "murk" });
+  const sig = M.gpuCommands({ network: "signet", ticker: "MURK", hrp: "mrk" });
+  assert.deepEqual(main, {
+    network: "mainnet",
+    windowsEnv: '$env:MURKLE_NETWORK = "mainnet"',
+    clone: "git clone https://github.com/MurkleProtocol/murkle\ncd murkle\nnpm ci",
+    fetch: "MURKLE_NETWORK=mainnet npm run artifacts:fetch\nnpm run gpu:fetch",
+    create: "MURKLE_NETWORK=mainnet node bin/murkle.mjs new miner",
+    mine: "MURKLE_NETWORK=mainnet node bin/murkle.mjs mine miner MURK --gpu all",
+    address: "MURKLE_NETWORK=mainnet node bin/murkle.mjs address miner",
+    send: "MURKLE_NETWORK=mainnet node bin/murkle.mjs send miner MURK <amount> <your-murk1-address>",
+  });
+  assert.equal(sig.windowsEnv, null);
+  for (const [k, v] of Object.entries(sig)) if (k !== "network" && v) assert.doesNotMatch(v, /MURKLE_NETWORK/, `signet ${k} has no variable`);
+  assert.equal(sig.mine, "node bin/murkle.mjs mine miner MURK --gpu all");
+  assert.equal(sig.fetch, "npm run artifacts:fetch\nnpm run gpu:fetch");
+  assert.equal(sig.send, "node bin/murkle.mjs send miner MURK <amount> <your-mrk1-address>");
+  // The CLI's own words: mine <wallet> <TICKER> [--gpu all|0,1,...], the npm scripts, the commands and send's argument order.
+  assert.match(usage, /mine <wallet> <TICKER> \[--gpu all\|0,1,\.\.\.\]/);
+  assert.equal(pkg.scripts["artifacts:fetch"], "node scripts/fetch-artifacts.mjs");
+  assert.equal(pkg.scripts["gpu:fetch"], "node scripts/gpu-fetch.mjs");
+  for (const cmd of ["new", "address", "send", "mine"]) assert.match(bin, new RegExp(`async ${cmd}\\(`), `the CLI has ${cmd}`);
+  assert.match(bin, /const SEND_USAGE = `usage: \$\{CLI\} send <wallet> <ticker> <amount> </);
+  // The page's mine command really parses with the CLI's parser (a child process: the CLI is a real program, not loaded into this fake DOM).
+  const code = "const c = await import(process.argv[1]); console.log(JSON.stringify(c.parseMineArgs(process.argv.slice(2), { processors: 8 })));";
+  const words = main.mine.replace(/^MURKLE_NETWORK=mainnet node bin\/murkle\.mjs mine /, "").split(" ");
+  const r = spawnSync(process.execPath, ["--input-type=module", "-e", code, pathToFileURL(join(process.cwd(), "bin/murkle.mjs")).href, ...words], {
+    env: { ...process.env, MURKLE_NETWORK: "" }, encoding: "utf8", windowsHide: true,
+  });
+  assert.equal(r.status, 0, r.stderr);
+  const parsed = JSON.parse(r.stdout.trim().split("\n").pop());
+  assert.deepEqual([parsed.name, parsed.ticker, parsed.gpu, parsed.pay], ["miner", "MURK", "all", "key"]);
+  // The rendered section shows the commands of each network, the Windows line only on mainnet.
+  const mainPanel = String(MINE.gpuPanel(murk(), { network: "mainnet", hrp: "murk" }));
+  for (const text of [main.clone, main.fetch, main.create, main.mine, main.send, main.windowsEnv, "open PowerShell and set the network once in that window", "prefix from every command in this list"]) assert.ok(has(mainPanel, text), text);
+  assert.equal((mainPanel.match(/node bin\/murkle\.mjs mine miner MURK --gpu all/g) ?? []).length, 2, "the mine command is copyable at the funding step and the mining step");
+  assert.ok(has(mainPanel, "Send enough bitcoin for the claims you want."));
+  assert.ok(has(mainPanel, "each claim spends one coin from that address and costs about 2,000 to 4,000 sats"), "without a fee rate the page gives a range");
+  assert.ok(has(mainPanel, "--prepare-coins n") && has(mainPanel, "--max-claims n"));
+  assert.ok(mainPanel.indexOf("data-gpu-win") < mainPanel.indexOf("mi-gpu-steps"), "the Windows line comes before the steps");
+  const rated = String(MINE.gpuPanel(murk(), { network: "mainnet", hrp: "murk", rate: 4 }));
+  assert.match(rated, /costs about <span class="mono t-btc">[^<]*<\/span> at 4 sat\/vB/);
+  assert.ok(has(mainPanel, "whole number of base units"));
+  const sigPanel = String(MINE.gpuPanel(murk({ ticker: "DIG" }), { network: "signet", hrp: "mrk" }));
+  for (const text of [sig.clone, sig.fetch, "node bin/murkle.mjs new miner", "node bin/murkle.mjs mine miner DIG --gpu all", "node bin/murkle.mjs send miner DIG <amount> <your-mrk1-address>", "Send enough signet coins for the claims you want.", "An NVIDIA graphics card mines DIG"]) assert.ok(has(sigPanel, text), text);
+  assert.doesNotMatch(sigPanel, /MURKLE_NETWORK|\$env:|open PowerShell/);
+  assert.equal((sigPanel.match(/<li>/g) ?? []).length, (mainPanel.match(/<li>/g) ?? []).length, "the same structure on both networks");
+  // The funding step says what the first run does, as the CLI does.
+  assert.ok(has(mainPanel, "after the GPU self-test it prints"));
+  assert.ok(has(mainPanel, "The first run syncs the chain"));
+  assert.match(bin, /mining fee address \$\{account\.address\} \(separate from the BTC fee key; it pays only claims\)/);
+  assert.match(bin, /no coins at the mining fee address \$\{account\.address\}; fund it with/);
+});
+
+test("/mine GPU section release gate: once gpu/pins.json pins builds it pins both platforms the page names; until then the page must not ship", () => {
+  const pins = JSON.parse(src("gpu/pins.json"));
+  const files = Object.keys(pins.files ?? {});
+  if (!files.length) return; // gpu-v1.0.0 is not published and pinned yet: deploy of the GPU section waits for it (npm run gpu:fetch fails until then)
+  for (const platform of ["linux-x64", "win32-x64"]) assert.ok(files.some((f) => f.includes(platform)), `gpu/pins.json pins a ${platform} build`);
 });

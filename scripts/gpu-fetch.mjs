@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // Downloads the prebuilt GPU miner (murkle-gpu) for this platform into gpu/bin/ and refuses it
 // unless its sha256 equals the pin in gpu/pins.json. Nothing is written on a mismatch, so the
-// download source never has to be trusted. The pins stay empty until the owner publishes the
-// release (gpu/README.md); until then build the binary yourself (npm run gpu:build).
+// download source never has to be trusted. The pins name the release gpu-v1.0.0 (gpu/README.md);
+// to run a build of your own instead, see npm run gpu:build.
 //
 // Usage: node scripts/gpu-fetch.mjs [--pins <file>] [--dest <dir>] [--platform p] [--arch a] [--force] [--check]
 //   (npm run gpu:fetch)
@@ -109,11 +109,11 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1
     } else {
       const pins = JSON.parse(readFileSync(opts.pins, "utf8"));
       if (opts.check) {
-        const r = checkGpuBinary({ pins, ...opts });
+        const r = checkGpuBinary({ ...opts, pins });
         console.log(r.matches ? `${r.path} matches its pin` : r.sha256 ? `${r.path} does NOT match its pin (sha256 ${r.sha256})` : `${r.path} is missing`);
         process.exitCode = r.matches ? 0 : 1;
       } else {
-        const r = await fetchGpuBinary({ pins, ...opts });
+        const r = await fetchGpuBinary({ ...opts, pins });
         console.log(r.status === "present" ? `${r.path} already matches its pin` : `downloaded ${r.path} (sha256 ${r.sha256})`);
       }
     }

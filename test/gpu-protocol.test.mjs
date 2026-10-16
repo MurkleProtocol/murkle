@@ -5,10 +5,11 @@
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { argon2id as nobleArgon2id } from "@noble/hashes/argon2";
 import { argon2id as wasmArgon2id } from "hash-wasm";
 import { equal, hex, unhex } from "../src/bytes.mjs";
@@ -363,6 +364,23 @@ test("gpu:fetch refuses an unpinned platform and a sha256 mismatch, and installs
     assert.match(p.sha256, /^[0-9a-f]{64}$/);
     assert.match(p.url, /^https:\/\//);
   }
+});
+
+test("gpu:fetch from the command line reads the pins file it is given (the --check path, no network)", () => {
+  const bytes = new Uint8Array([7, 7, 7]);
+  const dir = join(TMP, "fetch-cli");
+  mkdirSync(dir, { recursive: true });
+  const pinsFile = join(dir, "pins.json");
+  const pins = { version: "1.0.0", files: { "linux-x64": { sha256: createHash("sha256").update(bytes).digest("hex"), url: "https://example.org/x" } } };
+  writeFileSync(pinsFile, JSON.stringify(pins));
+  const run = () => spawnSync(process.execPath, [fileURLToPath(new URL("../scripts/gpu-fetch.mjs", import.meta.url)), "--pins", pinsFile, "--dest", dir, "--platform", "linux", "--arch", "x64", "--check"], { encoding: "utf8" });
+  let r = run();
+  assert.equal(r.status, 1, r.stderr);
+  assert.match(r.stdout, /murkle-gpu-linux-x64 is missing/);
+  writeFileSync(join(dir, binaryName("linux", "x64")), bytes);
+  r = run();
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /matches its pin/);
 });
 
 /* ------------------------------------------------------------------ gpu:bench */

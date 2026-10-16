@@ -15,7 +15,7 @@ Design and measurements: `docs/design/mining.md` sections 4.4 and 12.2. Licenses
 
 Three ways, in order of effort.
 
-1. **Download the release build:** `npm run gpu:fetch` downloads `murkle-gpu` for this platform into `gpu/bin/` and refuses it unless its sha256 equals the pin in `gpu/pins.json`. The pins are filled when the release `gpu-v1.0.0` is published; until then the command says so and you build it yourself.
+1. **Download the release build:** `npm run gpu:fetch` downloads `murkle-gpu` for this platform into `gpu/bin/` and refuses it unless its sha256 equals the pin in `gpu/pins.json`. The pins point at the release [`gpu-v1.0.0`](https://github.com/MurkleProtocol/murkle/releases/tag/gpu-v1.0.0) (built from commit `2610b26` by `.github/workflows/gpu-build.yml`); `npm run gpu:fetch -- --check` re-checks the file on disk without the network.
 2. **Build it** (no GPU is needed to compile): install the CUDA Toolkit 12.8.1 (nvcc 12.8, `V12.8.93`) and a host compiler it supports (g++ on Linux; Visual Studio 2019 or 2022 with the C++ tools on Windows), then
    ```bash
    npm run gpu:build         # gpu/build.sh on Linux, gpu/build.ps1 on Windows
@@ -122,7 +122,7 @@ Steps: build; correctness (the 32 vectors, the boundary searches, 100,000 seeded
 | Start-up (allocation plus self-test) | at most 15 s |
 | VRAM | within total minus the reserve |
 
-Measured on one RTX 4090 (Vast, driver 575.57, CUDA 12.8.93, 2026-10): 114,635 H/s best cell (112.6k - 114.6k across the whole sweep, so the slot count and hashes per block barely matter), 95.2% utilisation in the worst cell and 99.3% at the default, host CPU 2.2% of one core, cancel latency 14 ms, start-up 0.5 s, 0 mismatches over 100,000 random passwords, and 0 `GPU_WRONG` in a 10-minute lane run (104,409 H/s with the pool verifying on the same box). They are in `docs/design/mining.md` sections 4.4 and 8.6 and the root `README.md`. The RTX 3060, the RTX 5090 (sm_120) and the minimum driver (525.60 / 527.41) are not measured yet and stay estimates.
+Measured on one RTX 4090 (Vast, driver 575.57, CUDA 12.8.93, 2026-10): 114,635 H/s best cell (112.6k - 114.6k across the whole sweep, so the slot count and hashes per block barely matter), 95.2% utilisation in the worst cell and 99.3% at the default, host CPU 2.2% of one core, cancel latency 14 ms, start-up 0.5 s, 0 mismatches over 100,000 random passwords, and 0 `GPU_WRONG` in a 10-minute lane run (104,409 H/s with the pool verifying on the same box). They are in `docs/design/mining.md` sections 4.4 and 8.6 and the root `README.md`. The release Linux build on one RTX 3090 (Vast, 2026-10): about 91,000 H/s, 0 mismatches over 20,000 random passwords, and the device tests pass. The RTX 3060, the RTX 5090 (sm_120) and the minimum driver (525.60 / 527.41) are not measured yet and stay estimates.
 
 ## 8. License
 
