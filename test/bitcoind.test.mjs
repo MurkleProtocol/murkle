@@ -296,7 +296,7 @@ test("chainInfo and openChainSource: network mismatch, missing or unsynced txind
     const src = await openChainSource({ network: "signet", read: env(node), startHeight: 324592, log: null });
     assert.equal(src.kind, "bitcoind");
     assert.equal(src.headers.base.height, 324592);
-    assert.equal(src.describe(), `bitcoind ${node.url} (txindex on), headers from checkpoint 324592 (signet block signatures not checked)`);
+    assert.equal(src.describe(), `bitcoind ${node.url} (txindex on), headers from checkpoint 324592 (signet block signatures not checked), 4 block downloads at a time`);
     await assert.rejects(openChainSource({ network: "mainnet", read: env(node), log: null }), /serves chain "signet", but this is mainnet/);
   } finally {
     await node.close();

@@ -24,6 +24,8 @@ import * as api from "../api.js";
 import { mineFeeOutputs, mineQuote, mineWindowLeft, nextBlockRate, MINE_PENDING } from "../session.js";
 import { mixState, poolMix, relayOpen } from "../relay.js";
 import { UNISAT_SIGNET_NOTICE } from "../payers.js";
+// A stub (null) in every build but a lab build (web/lab-plugin.mjs): the GPU option below does not exist without it.
+import { labGpu } from "virtual:murkle-lab";
 import {
   withWallet, pageHead, wireStreamer, liveSession, amountHTML, amountText, btcHTML, satsHTML, callout, statusChip, MINE_TEXT, mineCopy, RELAY_TEXT,
 } from "./app-shared.js";
@@ -152,13 +154,18 @@ const randomNonceHex = () => hex(globalThis.crypto.getRandomValues(new Uint8Arra
  *   spawn()            -> a worker-like object { postMessage, terminate, onmessage }
  *   prepare()          -> Promise<{ draft, challenge: hex64, target: hex64 }>: a FRESH challenge
  *                         (session.prepareMine); a throw pauses mining with that message
- *   onFound({ draft, nonce, powHash, hashes })   after every worker was told to stop
- *   onChange(type)     "ready" | "progress" | "state" | "error"
+ *   onFound({ draft, nonce, powHash, hashes, lane? })   after every worker was told to stop; lane is "gpu" for a GPU solution
+ *   onChange(type)     "ready" | "progress" | "state" | "error" | "gpu"
+ *   gpuSpawn()         optional, lab builds only: a worker for the GPU lane (null: no GPU lane, today's behaviour)
  * restart() builds a new challenge and restarts every worker (a new tip, after a solution).
+ * The GPU worker is never in `workers` (the thread count and verify() are CPU only), and its messages
+ * never touch `ready` or `note`: a GPU failure never stops the CPU lanes.
  */
 export class MineController {
-  constructor({ spawn, prepare, onFound = () => {}, onChange = () => {}, now = () => Date.now(), random = randomNonceHex } = {}) {
-    Object.assign(this, { spawn, prepare, onFound, onChange, now, random });
+  constructor({ spawn, prepare, onFound = () => {}, onChange = () => {}, now = () => Date.now(), random = randomNonceHex, gpuSpawn = null } = {}) {
+    Object.assign(this, { spawn, prepare, onFound, onChange, now, random, gpuSpawn });
+    this.gpuBanned = false; // set by a wrong GPU answer: the lane stays off for the life of the page
+    this.gpu = null; // { w, state: "opening" | "ready" | "off", name, note }
     this.workers = [];
     this.running = false;
     this.job = null; // { id, draft, challenge, target }
@@ -198,25 +205,9 @@ export class MineController {
         return this.onChange("ready");
       }
       case "progress":
-        // Hashes of an earlier challenge of this controller count too (a worker reports the
-        // last part of a search when it is stopped or restarted): this tab computed them.
-        if (m.id != null && !(Number.isSafeInteger(m.id) && m.id >= 1 && m.id <= this.seq)) return;
-        this.samples.push([this.now(), Number(m.hashes) || 0, Number(m.ms) || 0]);
-        this.total += Number(m.hashes) || 0;
-        return this.onChange("progress");
-      case "found": {
-        const job = this.job;
-        if (!job || (m.id != null && m.id !== job.id)) return; // a solution of an older challenge: ignored
-        // One solution per challenge: every worker stops, the solution is handed over, then a new challenge.
-        this.job = null;
-        for (const x of this.workers) x.postMessage({ type: "stop" });
-        try {
-          this.onFound({ draft: job.draft, nonce: m.nonce, powHash: m.powHash, hashes: m.hashes });
-        } finally {
-          if (this.running) this.restart();
-        }
-        return;
-      }
+        return this.#progress(m, "cpu");
+      case "found":
+        return this.#found(m, "cpu");
       case "verified": {
         const p = this.verifies.get(m.id);
         if (!p) return;
@@ -227,6 +218,95 @@ export class MineController {
         this.note = m.message;
         return this.onChange("error");
     }
+  }
+
+  #progress(m, lane) {
+    // Hashes of an earlier challenge of this controller count too (a worker reports the
+    // last part of a search when it is stopped or restarted): this tab computed them.
+    if (m.id != null && !(Number.isSafeInteger(m.id) && m.id >= 1 && m.id <= this.seq)) return;
+    this.samples.push([this.now(), Number(m.hashes) || 0, Number(m.ms) || 0, lane]);
+    this.total += Number(m.hashes) || 0;
+    return this.onChange("progress");
+  }
+
+  #found(m, lane) {
+    const job = this.job;
+    if (!job || (m.id != null && m.id !== job.id)) return; // a solution of an older challenge: ignored
+    // One solution per challenge: every worker stops, the solution is handed over, then a new challenge.
+    this.job = null;
+    for (const x of this.workers) x.postMessage({ type: "stop" });
+    if (this.gpu?.w) this.gpu.w.postMessage({ type: "stop" });
+    try {
+      this.onFound({ draft: job.draft, nonce: m.nonce, powHash: m.powHash, hashes: m.hashes, ...(lane === "gpu" ? { lane } : {}) });
+    } finally {
+      if (this.running) this.restart();
+    }
+  }
+
+  /** The GPU worker's messages. They never reach `ready` or `note`. A message of an earlier GPU worker is ignored. */
+  #gpuMessage(w, m) {
+    const g = this.gpu;
+    if (!g || g.w !== w) return;
+    switch (m?.type) {
+      case "gpu-info":
+        g.name = m.info?.name ?? g.name;
+        return this.onChange("gpu");
+      case "ready":
+        if (!m.ok) {
+          g.state = "off";
+          g.note = "The GPU lane did not start.";
+          return this.onChange("gpu");
+        }
+        g.state = "ready";
+        g.name = m.name ?? g.name;
+        g.note = null;
+        // Mining is already on: the GPU joins the challenge in progress.
+        if (this.running && this.job) this.#startGpu(this.job.id, this.job);
+        return this.onChange("gpu");
+      case "lane-off":
+        g.state = "off";
+        g.note = String(m.reason ?? "The GPU lane is off.");
+        if (m.wrong === true) this.gpuBanned = true;
+        return this.onChange("gpu");
+      case "progress":
+        return this.#progress(m, "gpu");
+      case "found":
+        return this.#found(m, "gpu");
+      case "error":
+        g.note = String(m.message ?? "The GPU lane reported an error.");
+        return this.onChange("gpu");
+    }
+  }
+
+  #startGpu(id, job) {
+    if (this.gpu?.state === "ready") this.gpu.w.postMessage({ type: "start", id, challenge: job.challenge, target: job.target, nonceStart: this.random(), step: 1, progressMs: 1000 });
+  }
+
+  /**
+   * Switches the GPU lane on or off (lab builds: gpuSpawn is set). On: spawn the worker, tell it to open
+   * the GPU, and give it the current job once it is ready. Off: stop and terminate it; `note` stays
+   * as the caption (for example when the reference re-check disagreed with a GPU solution).
+   */
+  enableGpu(on, note = null, { ban = false } = {}) {
+    if (ban) this.gpuBanned = true;
+    if (on) {
+      if (!this.gpuSpawn || this.gpu?.w || this.gpuBanned) return;
+      const w = this.gpuSpawn();
+      this.gpu = { w, state: "opening", name: null, note: null };
+      w.onmessage = (e) => this.#gpuMessage(w, e?.data ?? e);
+      w.postMessage({ type: "open" });
+      return this.onChange("gpu");
+    }
+    const g = this.gpu;
+    if (!g && !(this.gpuBanned && note)) return;
+    if (g?.w) {
+      g.w.postMessage({ type: "stop" });
+      g.w.terminate?.();
+    }
+    // a banned lane keeps its caption, so the page still says why the box cannot be ticked
+    const why = note ?? (this.gpuBanned ? g?.note : null);
+    this.gpu = why ? { w: null, state: "off", name: g?.name ?? null, note: why } : null;
+    this.onChange("gpu");
   }
 
   async start(threads = this.threads) {
@@ -245,6 +325,7 @@ export class MineController {
     this.running = false;
     this.job = null;
     for (const w of this.workers) w.postMessage({ type: "stop" });
+    this.gpu?.w?.postMessage({ type: "stop" });
     this.onChange("state");
   }
 
@@ -254,6 +335,7 @@ export class MineController {
     const id = ++this.seq;
     this.job = null;
     for (const w of this.workers) w.postMessage({ type: "stop" });
+    this.gpu?.w?.postMessage({ type: "stop" });
     let next;
     try {
       next = await this.prepare();
@@ -269,6 +351,7 @@ export class MineController {
     this.job = { id, draft: next.draft, challenge: next.challenge, target: next.target };
     // Each worker starts at its own random 8-byte nonce.
     for (const w of this.workers) w.postMessage({ type: "start", id, challenge: next.challenge, target: next.target, nonceStart: this.random(), step: 1, progressMs: 1000 });
+    this.#startGpu(id, this.job);
     this.onChange("state");
   }
 
@@ -287,11 +370,21 @@ export class MineController {
    * that is 10 s, or less right after Start (never less than the longest report, at least 1 s).
    */
   hashrate() {
+    return this.#rate(null);
+  }
+
+  /** The same figure per lane: { cpu, gpu } (hashrate() stays the total of both). */
+  hashrateByLane() {
+    return { cpu: this.#rate("cpu"), gpu: this.#rate("gpu") };
+  }
+
+  #rate(lane) {
     const t = this.now();
     this.samples = this.samples.filter(([at]) => t - at <= RATE_WINDOW_MS);
-    const sum = this.samples.reduce((s, [, n]) => s + n, 0);
+    const mine = lane ? this.samples.filter(([, , , l]) => (l ?? "cpu") === lane) : this.samples;
+    const sum = mine.reduce((s, [, n]) => s + n, 0);
     if (!sum) return 0;
-    const longest = this.samples.reduce((m, [, , ms]) => Math.max(m, ms), 0);
+    const longest = mine.reduce((m, [, , ms]) => Math.max(m, ms), 0);
     const since = this.startedAt === null ? RATE_WINDOW_MS : t - this.startedAt;
     const span = Math.min(RATE_WINDOW_MS, Math.max(since, longest, 1000));
     return sum / (span / 1000);
@@ -323,6 +416,11 @@ export class MineController {
       w.terminate?.();
     }
     this.workers = [];
+    if (this.gpu?.w) {
+      this.gpu.w.postMessage({ type: "stop" });
+      this.gpu.w.terminate?.();
+    }
+    this.gpu = null;
     for (const p of this.verifies.values()) p.reject(new Error("Mining stopped."));
     this.verifies.clear();
   }
@@ -334,14 +432,22 @@ export class MineController {
  */
 export const FINAL_CLAIM_CODES = new Set(["pow_mismatch", "stale_work", "insufficient", "cap_reached", "closed", "solution_taken", "expired", "ended"]);
 
+/** The caption after a GPU solution failed the reference re-check (lab builds). */
+export const GPU_OFF_NOTE = "GPU lane off: its verifier disagreed with the reference";
+
 /**
- * A claim failure, as the page handles it: a fast path that disagreed is disabled at once. A
+ * A claim failure, as the page handles it: a fast path that disagreed is disabled at once (and the
+ * GPU lane too, when the solution came from it). A
  * refusal before anything left the browser (no W-M entry) that is not final leaves the solution
  * "found", so the Claim button retries it, by the same or another route, until its window
  * closes (a stale relay balance, Unisat not connected, no unbound coin, a network error).
  */
-export function onClaimError(err, ctl) {
-  if (err?.code === "pow_mismatch") ctl?.disableFast("the reference re-check disagreed");
+export function onClaimError(err, ctl, sol = null) {
+  if (err?.code === "pow_mismatch") {
+    ctl?.disableFast("the reference re-check disagreed");
+    // A solution that came from the GPU lane and failed the re-check: that lane is off for this page.
+    if (sol?.lane === "gpu") ctl?.enableGpu?.(false, GPU_OFF_NOTE, { ban: true });
+  }
   if (err?.code === "stale_work") return { status: "stale", message: MINE_TEXT.surge };
   const message = err?.message ?? String(err);
   if (!err?.entry && !FINAL_CLAIM_CODES.has(err?.code)) return { status: "found", message: `${message.replace(/[.\s]+$/, "")}. Nothing was paid: claim again, or pick another route.` };
@@ -377,7 +483,7 @@ const SOL_TEXT = {
   failed: "Not claimed",
 };
 
-export function mineView(root, s, query, { spawn = spawnWorker } = {}) {
+export function mineView(root, s, query, { spawn = spawnWorker, lab = labGpu } = {}) {
   let alive = true;
   let want = query?.get?.("t")?.toUpperCase() ?? null;
   let list = null; // GET /api/mine assets
@@ -404,8 +510,11 @@ export function mineView(root, s, query, { spawn = spawnWorker } = {}) {
   };
   const routeNow = () => route ?? defaultRoute({ relayMine: s.relayInfo?.mine, balance: s.relayBalance, serviceSats: service() });
 
+  // The hidden GPU option: only in a lab build (lab is null otherwise) and only with ?gpu=1 in the address.
+  const gpuUi = Boolean(lab) && query?.get?.("gpu") === "1";
   const ctl = new MineController({
     spawn,
+    gpuSpawn: gpuUi ? lab.spawnGpuWorker : null,
     prepare: async () => {
       if (!view || view.status !== "mining") throw new Error(`${view?.ticker ?? "This token"} is not open for mining right now.`);
       if (!s.view || s.view.height !== view.tip?.height) throw new Error(`Waiting for the wallet and the indexer to reach the same block${view.tip ? ` (${heightText(view.tip.height)})` : ""}.`);
@@ -420,9 +529,9 @@ export function mineView(root, s, query, { spawn = spawnWorker } = {}) {
     },
   });
 
-  function found({ draft, nonce, powHash }) {
+  function found({ draft, nonce, powHash, lane }) {
     s.holdDraft(draft); // its notes stay out of the next challenge (W-M)
-    const sol = { key: `${draft.refHeight}:${nonce}`, draft, nonce, powHash, status: "found", ref: draft.refHeight, reward: draft.reward, at: Date.now() };
+    const sol = { key: `${draft.refHeight}:${nonce}`, draft, nonce, powHash, status: "found", ref: draft.refHeight, reward: draft.reward, at: Date.now(), ...(lane ? { lane } : {}) };
     solutions.unshift(sol);
     if (autoSubmit) claim(sol);
     else paint();
@@ -454,7 +563,7 @@ export function mineView(root, s, query, { spawn = spawnWorker } = {}) {
       sol.status = entry.status;
     } catch (e) {
       if (e?.code === "pool_thin") minePoolThin = true;
-      Object.assign(sol, onClaimError(e, ctl));
+      Object.assign(sol, onClaimError(e, ctl, sol));
       if (e?.entry) sol.entryId = e.entry.id;
       // Nothing was handed out: the solution's notes stay out of the next challenge until it is claimed or expires (W-M).
       if (sol.status === "found") s.holdDraft(sol.draft);
@@ -600,11 +709,30 @@ export function mineView(root, s, query, { spawn = spawnWorker } = {}) {
         ${ctl.running ? button({ label: "Stop", kind: "secondary", size: "lg", icon: "cross", action: "mine-stop" }) : button({ label: "Start mining", kind: "btc", size: "lg", icon: "block", action: "mine-start", disabled: Boolean(reason), reason })}
         <label class="mine-threads"><span class="field-label">Threads <span class="mono" data-threads-out>${threads}</span> of ${tr.max}</span><input type="range" name="mine-threads" min="${tr.min}" max="${tr.max}" value="${threads}"></label>
         <label class="mine-auto"><input type="checkbox" name="mine-auto"${autoSubmit ? html` checked` : ""}><span>Claim each solution automatically</span></label>
+        ${gpuUi ? html`<label class="mine-auto"><input type="checkbox" name="mine-gpu"${ctl.gpu?.w ? html` checked` : ""}><span>${lab.LAB_TEXT.toggle}</span></label>` : ""}
       </div>
+      ${gpuUi ? html`<p class="caption t-3" data-mine-gpu></p>` : ""}
       <p class="caption t-3">${MINE_TEXT.gpu}</p>`;
+    paintGpu();
+  }
+
+  // The one caption line of the GPU option: the GPU name and its rate, or why the lane is off.
+  function gpuCaption() {
+    const g = ctl.gpu;
+    if (!g) return "";
+    if (g.state === "opening") return lab.LAB_TEXT.opening;
+    if (g.state === "off") return g.note ?? "";
+    return `${lab.LAB_TEXT.ready} ${g.name ?? "GPU"}, ${ctl.running ? rateText(ctl.hashrateByLane().gpu) : lab.LAB_TEXT.idle}`;
+  }
+
+  function paintGpu() {
+    if (!gpuUi) return;
+    const el = $("[data-mine-gpu]");
+    if (el) el.textContent = gpuCaption();
   }
 
   function paintLive() {
+    paintGpu();
     const el = $("[data-mine-live]");
     if (!el) return;
     const mine = ctl.hashrate();
@@ -768,6 +896,9 @@ export function mineView(root, s, query, { spawn = spawnWorker } = {}) {
       paint();
     } else if (t.name === "mine-auto") {
       autoSubmit = t.checked;
+    } else if (t.name === "mine-gpu") {
+      ctl.enableGpu(t.checked === true);
+      paintControls();
     } else if (t.name === "mine-linkable") {
       mineLinkable = t.checked === true;
     } else if (t.name === "mine-coins") {

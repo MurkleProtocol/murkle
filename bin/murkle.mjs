@@ -403,7 +403,7 @@ async function syncInPlace(idx) {
   const from = idx.height;
   const onBlock = (h, t) => process.stderr.write(`\rsync ${h}/${t}`);
   const headers = cliChain?.headers ?? null;
-  const tip = headers ? await syncIndexer(idx, api, { onBlock, headers }) : await syncIndexer(idx, api, { onBlock });
+  const tip = headers ? await syncIndexer(idx, api, { onBlock, headers, prefetch: cliChain?.prefetch }) : await syncIndexer(idx, api, { onBlock });
   if (tip > from) process.stderr.write("\n");
   saveIndexer(STATE, idx);
   cliChain?.save?.();
@@ -3317,7 +3317,7 @@ const commands = {
     let tip;
     try {
       tip = await syncIndexer(idx, source, {
-        ...(headers ? { headers } : {}),
+        ...(headers ? { headers, prefetch: cliChain?.prefetch } : {}),
         to: f.to !== undefined ? Number(f.to) : undefined,
         onBlock: (h, t, info) => {
           bytes += info.bytes;

@@ -191,6 +191,7 @@ export async function replayCompare({ snap, vkey, api, headers = null, to = snap
       await syncIndexer(idx, scanned.api, {
         to,
         headers,
+        prefetch: 1, // the ticker scan runs when a block is fetched: keep that in height order, never ahead of the apply
         onBlock: (h) => {
           const mine = idx.digestAt(h);
           const theirs = want.get(h) ?? null;

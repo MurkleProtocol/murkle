@@ -13,7 +13,12 @@ const checkTxid = (txid) => {
   return txid;
 };
 
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const sleep = (ms, signal) =>
+  new Promise((resolve, reject) => {
+    if (signal?.aborted) return reject(signal.reason);
+    const t = setTimeout(resolve, ms);
+    signal?.addEventListener("abort", () => { clearTimeout(t); reject(signal.reason); }, { once: true });
+  }); // a passed signal cuts a backoff short (the caller gave up)
 // The order in which /fee-estimates targets (blocks) stand in for mempool's halfHourFee.
 const FEE_TARGETS = ["3", "4", "5", "6", "2", "1"];
 
@@ -38,6 +43,7 @@ export class Esplora {
     this.retryMs = retryMs;
     this.network = network;
     this.prevouts = new Map();
+    this.throttled = 0; // how many 429 answers this client has seen (the block feed halves its window on a rise)
   }
 
   request(path, init) {
@@ -58,12 +64,13 @@ export class Esplora {
       res = await fetch(url, init);
     } catch (e) {
       if (!canRetry || !transientNetworkError(e, init)) throw e;
-      await sleep(this.retryMs * 2 ** attempt);
+      await sleep(this.retryMs * 2 ** attempt, init?.signal);
       return this.requestUrl(url, label, init, attempt + 1);
     }
+    if (res.status === 429) this.throttled += 1;
     if ((res.status === 429 && attempt < 5) || (res.status >= 500 && canRetry)) {
       await res.body?.cancel?.().catch(() => {});
-      await sleep(res.status === 429 ? 1000 * 2 ** attempt : this.retryMs * 2 ** attempt);
+      await sleep(res.status === 429 ? 1000 * 2 ** attempt : this.retryMs * 2 ** attempt, init?.signal);
       return this.requestUrl(url, label, init, attempt + 1);
     }
     if (!res.ok) throw new Error(`${method} ${label}: ${res.status} ${await res.text()}`);
@@ -78,8 +85,9 @@ export class Esplora {
     return (await (await this.request(`/block-height/${height}`)).text()).trim();
   }
 
-  async rawBlock(hash) {
-    return new Uint8Array(await (await this.request(`/block/${hash}/raw`)).arrayBuffer());
+  /** Raw block bytes; `signal` aborts the download (an abort is never retried). */
+  async rawBlock(hash, { signal } = {}) {
+    return new Uint8Array(await (await this.request(`/block/${hash}/raw`, signal ? { signal } : undefined)).arrayBuffer());
   }
 
   async blockTxids(hash) {

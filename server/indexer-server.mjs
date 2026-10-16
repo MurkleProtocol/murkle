@@ -63,7 +63,7 @@ const DEFAULT_STATE = join(ROOT, "data", NETWORK, "state.json");
 const DEFAULT_HEADERS = join(ROOT, "data", NETWORK, "headers.json");
 const SYNC_MS = 20_000;
 const HEALTH_MAX_SYNC_AGE_SECS = 600;
-/** The web build marker (web/vite.config.mjs writes it): { network, manifestSha256, genesisTxid }. */
+/** The web build marker (web/vite.config.mjs writes it): { network, manifestSha256, genesisTxid, lab }. */
 export const BUILD_MARKER = "murkle-build.json";
 const TICKER = /^[A-Z0-9]{1,16}$/;
 const MAX_LOG_PAGE = 500;
@@ -141,9 +141,10 @@ export function checkArtifacts(artifacts = ARTIFACTS) {
 /**
  * Which network the built web app in `webDist` is for (its murkle-build.json). A dist without the
  * marker is a build from before networks existed, so signet. { ok, network, message }: ok is false
- * when it was built for another network than `network` (or the marker cannot be read).
+ * when it was built for another network than `network` (or the marker cannot be read), or is a lab
+ * build (`lab: true`) on mainnet without MURKLE_ALLOW_LAB=1.
  */
-export function checkWebBuild(webDist, network = NETWORK) {
+export function checkWebBuild(webDist, network = NETWORK, { allowLab = env("ALLOW_LAB") === "1" } = {}) {
   const file = join(webDist, BUILD_MARKER);
   if (!existsSync(file)) {
     return network === "signet"
@@ -151,10 +152,17 @@ export function checkWebBuild(webDist, network = NETWORK) {
       : { ok: false, network: "signet", message: `The web app in ${webDist} has no ${BUILD_MARKER}, so it was built for signet; this indexer runs on ${network}. Rebuild it with MURKLE_NETWORK=${network}.` };
   }
   let built = null;
+  let lab = false;
   try {
-    built = JSON.parse(readFileSync(file, "utf8"))?.network ?? null;
+    const marker = JSON.parse(readFileSync(file, "utf8"));
+    built = marker?.network ?? null;
+    lab = marker?.lab === true;
   } catch {
     built = null;
+  }
+  // A lab build (MURKLE_LAB=1) carries the hidden WebGPU prototype: never served on mainnet unless asked for on purpose.
+  if (built === network && lab && network === "mainnet" && !allowLab) {
+    return { ok: false, network: built, message: `The web app in ${webDist} is a lab build (${BUILD_MARKER} says lab: true); it is not served on mainnet. Rebuild it without MURKLE_LAB, or set MURKLE_ALLOW_LAB=1 for a deliberate lab run.` };
   }
   if (built === network) return { ok: true, network: built, message: null };
   return {
@@ -582,7 +590,7 @@ export function createApp({
       status.syncing = true;
       try {
         // Without a header chain the call is exactly today's (signet fallback, tests).
-        status.chainTip = headers ? await syncIndexer(idx, api, { headers }) : await syncIndexer(idx, api);
+        status.chainTip = headers ? await syncIndexer(idx, api, { headers, prefetch: source?.prefetch }) : await syncIndexer(idx, api);
         // The header chain first: a crash between the two writes then leaves headers.json at or
         // above state.json, which alignTo() matches without fetching anything (src/sync.mjs).
         if (source && typeof source.save === "function") {

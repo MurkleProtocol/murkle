@@ -5,17 +5,17 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { sha256 } from "@noble/hashes/sha256";
 import * as H from "../src/btc/headers.mjs";
 import { HeaderChain, HeaderError, CHECKPOINTS, RULES, decodeHeader, encodeHeader, targetFromBits, bitsFromTarget, workOf, checkPow, nextBits, medianTimePast, maxTargetAt, versionFloorAt } from "../src/btc/headers.mjs";
 import { syncIndexer } from "../src/sync.mjs";
 import { parseBlock } from "../src/btc/block.mjs";
 import { Indexer } from "../src/indexer.mjs";
 import { Esplora } from "../src/btc/esplora.mjs";
-import { ATTEST_KIND, encodeAttest, opReturnScript } from "../src/envelope.mjs";
-import { concat, hex, u32le, u64le, unhex } from "../src/bytes.mjs";
+import { opReturnScript } from "../src/envelope.mjs";
+import { concat, hex, u32le } from "../src/bytes.mjs";
 import { makeHeaderCheck, chainTrustClause, verifyTx, CheckError } from "../src/verify-tx.mjs";
 import { registerHooks } from "node:module";
+import { VKEY, dsha, rev, varint, SP, TEST_RULES, EASY, mine, txBytes, merkle, makeChain, fakeSource, newChain } from "./fixtures/sync-chain.mjs";
 
 // Web modules import JSON without attributes and CSS (Vite handles both); teach Node the same.
 registerHooks({
@@ -26,9 +26,6 @@ registerHooks({
   },
 });
 
-const VKEY = JSON.parse(readFileSync("build/dev/verification_key.json", "utf8"));
-const dsha = (b) => sha256(sha256(b));
-const rev = (b) => Uint8Array.from(b).reverse();
 const code = (c) => (e) => e instanceof HeaderError && e.code === c;
 const CYRILLIC = new RegExp(`[${String.fromCharCode(0x400)}-${String.fromCharCode(0x4ff)}]`);
 
@@ -53,126 +50,6 @@ function baseFrom(get, h, periodStartTime) {
 }
 
 /* -------------------------------------------------------- synthetic chains */
-
-// Easy proof of work for synthetic headers: powLimit 0x207fffff (regtest), a 16-block retarget
-// interval and 1-second spacing. Core computes the retarget as target * timespan on 256 bits
-// (truncated), so synthetic targets stay below 2^250 (EASY) to keep that product in range.
-const SP = 1;
-const TEST_RULES = Object.freeze({
-  network: "test",
-  powLimit: targetFromBits(0x207fffff).target,
-  interval: 16,
-  targetTimespan: 16 * SP,
-  targetSpacing: SP,
-  retarget: true,
-  versionFloor: [[0, 2], [100005, 3], [100010, 4]],
-  maxFutureSecs: 7200,
-  validity: "pow",
-});
-const EASY = 0x2001ffff; // about 1 in 128 hashes meets it
-
-function mine({ prevHash, merkleRoot = "11".repeat(32), time, bits = EASY, version = 4 }) {
-  const { target } = targetFromBits(bits);
-  for (let nonce = 0; ; nonce++) {
-    const bytes = encodeHeader({ version, prevHash, merkleRoot, time, bits, nonce });
-    const d = decodeHeader(bytes);
-    if (BigInt("0x" + d.hash) <= target) return d;
-  }
-}
-
-const varint = (n) => (n < 0xfd ? Uint8Array.of(n) : concat(Uint8Array.of(0xfd), Uint8Array.of(n & 0xff, n >> 8)));
-const script = (s) => concat(varint(s.length), s);
-function txBytes({ outpoint = new Uint8Array(36).fill(0).map((_, i) => (i >= 32 ? 0xff : 0)), scriptSig = new Uint8Array(0), outputs }) {
-  return concat(
-    u32le(1), varint(1), outpoint, script(scriptSig), u32le(0xffffffff),
-    varint(outputs.length), ...outputs.map(({ value, s }) => concat(u64le(value), script(s))), u32le(0),
-  );
-}
-function merkle(hashes) {
-  let level = hashes;
-  while (level.length > 1) {
-    const next = [];
-    for (let i = 0; i < level.length; i += 2) next.push(dsha(concat(level[i], level[i + 1] ?? level[i])));
-    level = next;
-  }
-  return level[0];
-}
-
-/**
- * A synthetic chain: base header at `start`, then blocks start+1 .. start+n. Each block has a
- * coinbase (unique by height and `salt`); every `attestEvery`-th block also carries an ATTEST.
- */
-function makeChain({ start = 100000, n = 20, rules = TEST_RULES, t0 = 1_700_000_000, salt = 0, attestEvery = 3, from = null, bits = EASY } = {}) {
-  const blocks = new Map();
-  const periodStart = (h) => blocks.get(h)?.time;
-  const bitsFor = (height, prev) => {
-    if (!prev) return bits;
-    if (height % rules.interval !== 0) return prev.bits;
-    return nextBits(rules, { height, prevBits: prev.bits, prevTime: prev.time, firstTime: periodStart(height - rules.interval) ?? t0 - (start % rules.interval) * SP });
-  };
-  const addBlock = (height, prevHash, time) => {
-    const cb = txBytes({ scriptSig: concat(u32le(height), u32le(salt)), outputs: [{ value: 0n, s: Uint8Array.of(0x51) }] });
-    const txs = [cb];
-    if (attestEvery && height % attestEvery === 0) {
-      const env = encodeAttest({ kind: ATTEST_KIND.GENESIS, hash: dsha(concat(u32le(height), u32le(salt))) });
-      txs.push(txBytes({ outpoint: concat(dsha(u32le(height + 7)), u32le(0)), outputs: [{ value: 0n, s: opReturnScript(env) }] }));
-    }
-    const root = merkle(txs.map((t) => dsha(t)));
-    const b = bitsFor(height, blocks.get(height - 1));
-    const h = mine({ prevHash, merkleRoot: hex(rev(root)), time, bits: b });
-    const raw = concat(h.bytes, varint(txs.length), ...txs);
-    blocks.set(height, { height, hash: h.hash, header: h.bytes, raw, time, bits: b });
-    return h;
-  };
-  let prev;
-  if (from) {
-    for (const [k, v] of from.blocks) if (k <= from.forkAt) blocks.set(k, v);
-    prev = blocks.get(from.forkAt);
-  } else {
-    prev = addBlock(start, "00".repeat(32), t0);
-  }
-  const first = from ? from.forkAt + 1 : start + 1;
-  const last = from ? from.forkAt + n : start + n;
-  let prevHash = prev.hash;
-  for (let height = first; height <= last; height++) {
-    const time = t0 + (height - start) * SP + (from ? 1 : 0);
-    prevHash = addBlock(height, prevHash, time).hash;
-  }
-  const b = blocks.get(start);
-  const period = start - (start % rules.interval);
-  const base = { height: start, hash: b.hash, base: { bits, time: b.time, periodStartTime: b.time - (start - period) * SP, prevTimes: Array.from({ length: 10 }, (_, i) => b.time - (10 - i) * SP) } };
-  return { blocks, base, start, tip: last };
-}
-
-/** A fake chain source over one chain at a time (swap `source.chain` for a reorg). Records calls. */
-function fakeSource(chain) {
-  const s = {
-    chain,
-    calls: [],
-    async tipHeight() { s.calls.push("tipHeight"); return s.chain.tip; },
-    async blockHash(h) {
-      s.calls.push(`blockHash ${h}`);
-      const b = s.chain.blocks.get(h);
-      if (!b) throw new Error(`GET /block-height/${h}: 404 Block not found`);
-      return b.hash;
-    },
-    async rawBlock(hash) {
-      s.calls.push(`rawBlock ${hash.slice(0, 8)}`);
-      for (const b of s.chain.blocks.values()) if (b.hash === hash) return b.raw;
-      throw new Error("404");
-    },
-    async headers(from, count) {
-      s.calls.push(`headers ${from} ${count}`);
-      const out = [];
-      for (let h = from; h < from + count && s.chain.blocks.has(h); h++) out.push(s.chain.blocks.get(h).header);
-      return out;
-    },
-    async prevoutScript() { throw new Error("no prevouts in this chain"); },
-  };
-  return s;
-}
-
-const newChain = (c, opts = {}) => new HeaderChain({ network: "test", rules: TEST_RULES, checkpoints: [c.base], base: c.base, ...opts });
 
 /* ------------------------------------------------------- checkpoints and data */
 

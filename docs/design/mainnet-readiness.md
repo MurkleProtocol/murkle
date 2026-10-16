@@ -252,7 +252,7 @@ export async function openChainSource({ network = NETWORK, read = env, headersPa
 `parseBlock(raw)` additionally returns `header: Uint8Array(80)` (the first 80 bytes, already hashed there). Nothing else in its result changes.
 
 ```js
-export async function syncIndexer(idx, api, { onBlock, to, headers = null } = {})
+export async function syncIndexer(idx, api, { onBlock, to, headers = null, prefetch } = {})
 ```
 
 With `headers === null` the function behaves exactly as today (byte-for-byte the same calls and results). With a `HeaderChain`:
@@ -260,6 +260,7 @@ With `headers === null` the function behaves exactly as today (byte-for-byte the
 1. `await headers.alignTo(idx, api)`: if the chain is empty or behind `idx.height`, `catchUp` from its tip to `idx.height`; then for the heights both hold (at most the last `keep`), the hashes must agree with `idx.hashes`. A disagreement is treated as a reorg at that height (step 2).
 2. Reorg: the existing walk-back finds the fork `h` (highest height whose hash the source still serves). Before `idx.rollbackTo(h)`, `await headers.offer(api, h)` fetches the source's branch from `h + 1` to its tip, verifies it as in §3.1 from the header at `h`, and switches only if its work is strictly greater than the held branch above `h`. If not, `offer` throws `HeaderError("less-work")` and the indexer is **not** rolled back (the server logs it as `lastError`; the monitor alerts).
 3. For each new height: fetch the raw block, `parseBlock`, check `block.hash === hash` and the `prevHash` linkage as today, then `headers.append(height, block.header)` **before** `idx.applyBlock`. A `HeaderError` stops the run (the block is not applied); `retryable` errors (time-too-new, source failures) are retried on the next tick.
+3a. Downloads run ahead: up to `prefetch` raw blocks (default 4) are fetched while earlier ones are checked and applied in order. Their hashes come from `headers(from, n)` pages (unverified, used only to name the download); every check of step 3 still runs per block in the same order, so a wrong page hash ends the run with the same error as before. Short runs (under 8 blocks) and sources without `headers()` use `blockHash` per block. A 429 halves the window (minimum 1) and it grows back by one per 16 blocks; the window is kept per source object across `syncIndexer` calls, so the next browser chunk or server tick starts narrow. On a failed run the raw downloads and their backoff sleeps are aborted; a header page already in flight (`headers()` takes no signal) can still finish, so process exit can lag by a second or two.
 4. `onBlock(height, tip, { hash, bytes, envelopes })` is unchanged; the server calls `source.save()` after `saveIndexer`.
 
 `compareDigests` is unchanged.

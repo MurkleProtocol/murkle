@@ -5,6 +5,7 @@
 //                       still serves utxos() and merkleProof() when set
 //   MURKLE_BITCOIND_URL, MURKLE_BITCOIND_COOKIE, MURKLE_BITCOIND_USER, MURKLE_BITCOIND_PASSWORD_FILE
 //   MURKLE_HEADERS      on (default) | off (signet only: header verification cannot be turned off on mainnet)
+//   MURKLE_SYNC_PREFETCH  raw blocks downloaded ahead while syncing with header verification: 1 to 16 (default 4)
 //
 // Contract: docs/design/mainnet-readiness.md §3.3.
 import * as P from "../params.mjs";
@@ -12,6 +13,7 @@ import { Bitcoind } from "./bitcoind.mjs";
 import { Esplora } from "./esplora.mjs";
 import { HeaderChain } from "./headers.mjs";
 import { loadHeaderChain, saveHeaderChain } from "./headers-store.mjs";
+import { parsePrefetch } from "../sync.mjs";
 
 const DEFAULTS = {
   signet: { esplora: "https://mempool.space/signet/api", rpcPort: 38332, chain: "signet" },
@@ -25,7 +27,7 @@ export function esploraFor(network) {
 
 /**
  * Opens the chain source the environment selects, checks it serves `network`, and loads the
- * header chain. Returns { kind, api, headers, save(), describe() }.
+ * header chain. Returns { kind, api, headers, prefetch, save(), describe() }.
  *   startHeight  the indexer's start height (picks the base checkpoint; default: the pinned
  *                activation height when `network` is this build's network)
  *   fetch        test hook for the bitcoind source's HTTP (Esplora uses the global fetch)
@@ -48,6 +50,8 @@ export async function openChainSource({
   if (headersSetting !== "on" && headersSetting !== "off") throw new Error(`MURKLE_HEADERS must be on or off, not ${headersSetting}`);
   const headersOff = headersSetting === "off" || verifyHeaders === false;
   if (headersOff && network === "mainnet") throw new Error("header verification cannot be turned off on mainnet (MURKLE_HEADERS=off is for signet only)");
+
+  const prefetch = parsePrefetch(read("SYNC_PREFETCH")); // throws at startup on a bad value, like MURKLE_HEADERS
 
   const esploraUrl = read("ESPLORA") || null;
   let api;
@@ -84,12 +88,13 @@ export async function openChainSource({
     kind,
     api,
     headers,
+    prefetch,
     save() {
       if (headers && headersPath) saveHeaderChain(headersPath, headers);
     },
     describe() {
       const h = headers ? `headers from checkpoint ${headers.base.height}${network === "signet" ? " (signet block signatures not checked)" : ""}` : "headers not verified (MURKLE_HEADERS=off, signet only)";
-      return `${kind} ${api.base}${note}, ${h}`;
+      return `${kind} ${api.base}${note}, ${h}${headers ? `, ${prefetch} block downloads at a time` : ""}`;
     },
   };
 }

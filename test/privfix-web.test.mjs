@@ -12,6 +12,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import "./fixtures/lab-virtual-register.mjs"; // "virtual:murkle-lab" (imported by app-mine.js) is the stub outside Vite
 import * as btc from "@scure/btc-signer";
 import { schnorr } from "@noble/curves/secp256k1";
 import * as funding from "../src/btc/funding.mjs";

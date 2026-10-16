@@ -15,6 +15,7 @@ import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { register } from "node:module";
+import "./fixtures/lab-virtual-register.mjs"; // "virtual:murkle-lab" (imported by app-mine.js) is the stub outside Vite
 
 // Public pages import their CSS; under node it is an empty module. The landing imports facts.json without
 // an import attribute (Vite allows it): served as a module here, for web/src files only.
@@ -2089,7 +2090,7 @@ test("/mine GPU section: the commands are the CLI's real ones, the same steps on
   assert.doesNotMatch(sigPanel, /MURKLE_NETWORK|\$env:|open PowerShell/);
   assert.equal((sigPanel.match(/<li>/g) ?? []).length, (mainPanel.match(/<li>/g) ?? []).length, "the same structure on both networks");
   // The first run's sync: the October measurement only on mainnet, with its date; never a promised time.
-  assert.ok(has(mainPanel, "In October 2026 a fresh sync replayed blocks 971,316 to 971,726 in 273 s, about 0.67 s for each block on a home connection; the count grows with the chain."));
+  assert.ok(has(mainPanel, "In October 2026 a fresh sync replayed blocks 971,316 to 971,754 in 392 s, about 0.89 s for each block on a home connection (4 downloads at a time); the count grows with the chain."));
   assert.ok(!has(sigPanel, "In October 2026"));
   assert.doesNotMatch(mainPanel, /can take a minute|It has no coins yet|after the GPU self-test it prints/);
   // The send block: paid from the BTC fee address, amounts in base units worked out from the token's own divisibility and reward.

@@ -188,7 +188,7 @@ export function firstRunText({ height = null, from = null, network = "signet" } 
   const first = blocks === null
     ? "The first mine run (the split above, which comes first) syncs the chain: it replays every block from the activation block in the pins up to the tip."
     : `The first mine run (the split above, which comes first) syncs the chain: it replays every block from the activation block ${int(f)} up to the tip, ${int(blocks)} blocks now (both ends included).`;
-  const measured = network === "mainnet" ? " In October 2026 a fresh sync replayed blocks 971,316 to 971,726 in 273 s, about 0.67 s for each block on a home connection; the count grows with the chain." : "";
+  const measured = network === "mainnet" ? " In October 2026 a fresh sync replayed blocks 971,316 to 971,754 in 392 s, about 0.89 s for each block on a home connection (4 downloads at a time); the count grows with the chain." : "";
   return `${first}${measured} Later runs only catch up from where the last one stopped.`;
 }
 

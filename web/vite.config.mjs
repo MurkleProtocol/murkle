@@ -2,6 +2,7 @@ import { defineConfig } from "vite";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { murkleLab } from "./lab-plugin.mjs";
 
 // The indexer binds 127.0.0.1 by default (MURKLE_INDEXER_HOST), so the proxy names that address, not "localhost" (which can resolve to ::1).
 const INDEXER = `http://127.0.0.1:${process.env.MURKLE_INDEXER_PORT ?? 8787}`;
@@ -16,11 +17,18 @@ const NETWORK = (() => {
   if (v === "signet" || v === "mainnet") return v;
   throw new Error(`MURKLE_NETWORK must be "signet" or "mainnet", not ${JSON.stringify(v)}`);
 })();
+// The hidden WebGPU lab (see web/lab-plugin.mjs). "1" builds it in, unset or "" leaves it out, anything else refuses to build.
+const LAB = (() => {
+  const v = process.env.MURKLE_LAB;
+  if (v === undefined || v === "") return false;
+  if (v === "1") return true;
+  throw new Error(`MURKLE_LAB must be "1" or unset, not ${JSON.stringify(v)}`);
+})();
 const PINS = JSON.parse(readFileSync(here(NETWORK === "mainnet" ? "../src/pins.mainnet.json" : "../src/pins.json"), "utf8"));
 const DEFINE = { __MURKLE_NETWORK__: JSON.stringify(NETWORK) };
 
 /**
- * Writes murkle-build.json ({ network, manifestSha256, genesisTxid }) into the output dir. The
+ * Writes murkle-build.json ({ network, manifestSha256, genesisTxid, lab }) into the output dir. The
  * indexer refuses to serve a dist built for another network (server/indexer-server.mjs).
  */
 function buildMarker() {
@@ -35,7 +43,7 @@ function buildMarker() {
     closeBundle() {
       const file = join(outDir, "murkle-build.json");
       mkdirSync(dirname(file), { recursive: true });
-      writeFileSync(file, `${JSON.stringify({ network: NETWORK, manifestSha256: PINS.manifestSha256 ?? null, genesisTxid: PINS.genesisTxid ?? null }, null, 2)}\n`);
+      writeFileSync(file, `${JSON.stringify({ network: NETWORK, manifestSha256: PINS.manifestSha256 ?? null, genesisTxid: PINS.genesisTxid ?? null, lab: LAB }, null, 2)}\n`);
     },
   };
 }
@@ -114,7 +122,7 @@ export default defineConfig({
   root: fileURLToPath(new URL(".", import.meta.url)),
   // History-API routing: unknown paths fall back to index.html in dev and preview.
   appType: "spa",
-  plugins: [networkFacts(), preloadFonts(PRELOAD_FONTS), networkHtml(), buildMarker()],
+  plugins: [networkFacts(), preloadFonts(PRELOAD_FONTS), networkHtml(), buildMarker(), murkleLab(LAB)],
   define: DEFINE,
   server: {
     port: 5173,

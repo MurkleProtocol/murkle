@@ -104,6 +104,7 @@ The same recovery phrase gives different keys on each network (network-separated
 | `MURKLE_BITCOIND_USER`, `MURKLE_BITCOIND_PASSWORD_FILE` | — | rpcauth user and a file that holds its password (never the password itself in the environment) |
 | `MURKLE_HEADERS` | `on` | block header verification (SPEC.md §16); `off` is accepted on signet only |
 | `MURKLE_HEADERS_PATH` | `data/<network>/headers.json` | the server's verified header chain (the CLI keeps `cli-headers.json` in its data directory) |
+| `MURKLE_SYNC_PREFETCH` | 4 | raw blocks the CLI and the server download ahead while syncing with header verification (1 to 16; 1 downloads one at a time). Blocks are still checked and applied strictly in order; a 429 answer halves it for a while |
 | `MURKLE_ALLOW_PRE_GENESIS` | off | mainnet only, staging: start before a genesis is pinned (an unpinned verification key still refuses) |
 | `MURKLE_HEALTH_MAX_LAG` | 3 | `GET /api/health`: blocks behind the chain tip before `ok` turns false |
 | `MURKLE_PUBLIC_URL` | — | absolute origin used in OG meta |

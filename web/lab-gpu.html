@@ -1,0 +1,80 @@
+<!doctype html>
+<!--
+  SPDX-License-Identifier: GPL-3.0-or-later
+  Murkle WebGPU miner prototype: the lab bench page. Built only with MURKLE_LAB=1 (web/lab-plugin.mjs).
+  No wallet, no indexer, no app shell. See web/src/lab/lab-gpu.js.
+-->
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="robots" content="noindex" />
+    <meta name="color-scheme" content="dark light" />
+    <meta name="referrer" content="no-referrer" />
+    <title>Murkle lab: GPU prototype</title>
+    <script src="/theme-boot.js"></script>
+  </head>
+  <body>
+    <noscript><p>This page needs JavaScript.</p></noscript>
+    <main class="container container--app stack stack--l" style="padding-block:32px">
+      <header class="stack stack--s">
+        <h1 class="h2">GPU prototype lab</h1>
+        <p><b>Prototype. Uses this device's GPU only after you press a button.</b></p>
+        <p class="small">A bench page for the WebGPU Argon2id miner. It has no wallet and talks to no indexer. Every result below is a JSON object; Copy puts the whole log on the clipboard.</p>
+      </header>
+
+      <section class="panel stack">
+        <div class="eyebrow">OPEN</div>
+        <label class="stack stack--s"><span class="field-label">Memory for hashing</span>
+          <select class="input" id="lab-memory">
+            <option value="256">256 MiB</option>
+            <option value="1024" selected>1 GiB</option>
+            <option value="2048">2 GiB</option>
+            <option value="4096">4 GiB</option>
+          </select>
+        </label>
+        <label class="stack stack--s"><span class="field-label">Hashes per workgroup</span>
+          <select class="input" id="lab-hpw">
+            <option value="1">1</option>
+            <option value="2" selected>2</option>
+            <option value="4">4</option>
+            <option value="8">8</option>
+          </select>
+        </label>
+        <label class="stack stack--s"><span class="field-label">Target time of one dispatch (ms)</span>
+          <input class="input mono" id="lab-dispatch" type="number" min="5" max="500" value="50" />
+        </label>
+        <div><button type="button" class="btn btn--btc btn--lg" id="lab-open"><span>Open GPU</span></button></div>
+        <p class="caption">Opening asks the browser for a GPU adapter, builds the kernel, then checks it against the reference Argon2 before anything else is allowed.</p>
+      </section>
+
+      <section class="panel stack">
+        <div class="eyebrow">TESTS</div>
+        <label class="stack stack--s"><span class="field-label">Seconds (benchmark, hidden-tab test)</span>
+          <input class="input mono" id="lab-seconds" type="number" min="1" max="3600" value="10" />
+        </label>
+        <label class="stack stack--s"><span class="field-label">Random passwords (correctness)</span>
+          <input class="input mono" id="lab-n" type="number" min="1" max="1000000" value="1000" />
+        </label>
+        <div class="inline-actions" style="display:flex;gap:8px;flex-wrap:wrap">
+          <button type="button" class="btn btn--secondary btn--sm" id="lab-selftest"><span>Self-test</span></button>
+          <button type="button" class="btn btn--secondary btn--sm" id="lab-bench"><span>Benchmark</span></button>
+          <button type="button" class="btn btn--secondary btn--sm" id="lab-correct"><span>Correctness</span></button>
+          <button type="button" class="btn btn--secondary btn--sm" id="lab-hidden"><span>Hidden-tab test</span></button>
+          <button type="button" class="btn btn--secondary btn--sm" id="lab-info"><span>Info</span></button>
+          <button type="button" class="btn btn--secondary btn--sm" id="lab-close"><span>Close GPU</span></button>
+        </div>
+        <p class="caption">The hidden-tab test logs the rate once a second together with the tab's visibility. Start it, then switch to another tab.</p>
+      </section>
+
+      <section class="panel stack">
+        <div class="eyebrow">RESULTS</div>
+        <p class="small" id="lab-status" role="status">Nothing has run yet.</p>
+        <pre class="mono small" id="lab-out" style="max-height:480px;overflow:auto;white-space:pre-wrap"></pre>
+        <div><button type="button" class="btn btn--secondary btn--sm" id="lab-copy"><span>Copy</span></button></div>
+      </section>
+    </main>
+    <script type="module" src="/src/lab/lab-style.js"></script>
+    <script type="module" src="/src/lab/lab-gpu.js"></script>
+  </body>
+</html>

@@ -1,0 +1,72 @@
+name: webgpu-cpu
+
+# Runs the WebGPU miner engine (src/webgpu/) for real, on a CPU Vulkan driver (lavapipe), so no GPU is needed.
+# The `webgpu` package (Dawn for Node) is installed with --no-save and is never in package.json. The guard in
+# src/webgpu/guard.mjs only lets this run with MURKLE_WEBGPU=fallback, on Linux, with the Vulkan loader pinned
+# to a CPU driver file, so a physical GPU cannot be picked up by accident.
+# A hash is slow on a CPU driver: test/webgpu-engine.test.mjs measures it first and, when it is over 120 s,
+# runs only the known-answer check, the primitives check and one vector (the test names say so).
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "src/webgpu/**"
+      - "src/gpu-gate.mjs"
+      - "test/webgpu-engine.test.mjs"
+      - ".github/workflows/webgpu-cpu.yml"
+  pull_request:
+    paths:
+      - "src/webgpu/**"
+      - "src/gpu-gate.mjs"
+      - "test/webgpu-engine.test.mjs"
+      - ".github/workflows/webgpu-cpu.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  engine:
+    name: engine on lavapipe (Node 22)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      WEBGPU_PIN: "0.6.2"
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install the CPU Vulkan driver
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y mesa-vulkan-drivers vulkan-tools
+
+      - run: npm ci
+
+      - name: Install the webgpu package for this run only
+        run: npm i --no-save "webgpu@${WEBGPU_PIN}"
+
+      - name: The Vulkan loader sees the CPU driver only
+        env:
+          VK_ICD_FILENAMES: /usr/share/vulkan/icd.d/lvp_icd.x86_64.json
+        run: |
+          ls -l "$VK_ICD_FILENAMES"
+          vulkaninfo --summary
+
+      - name: Engine test on lavapipe
+        env:
+          MURKLE_WEBGPU: fallback
+          VK_ICD_FILENAMES: /usr/share/vulkan/icd.d/lvp_icd.x86_64.json
+        run: node --test --test-timeout=2400000 test/webgpu-engine.test.mjs
+
+      - name: Bench smoke (adapter info)
+        env:
+          MURKLE_WEBGPU: fallback
+          VK_ICD_FILENAMES: /usr/share/vulkan/icd.d/lvp_icd.x86_64.json
+        run: node scripts/webgpu-bench.mjs --info --mode fallback --memory 8 --hpw 1 --segments 2 --threads 1
