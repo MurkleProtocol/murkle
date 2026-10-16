@@ -18,11 +18,12 @@ import { getWalletStatus, onWalletStatus } from "../ui/status.js";
 import { setTitle } from "../router.js";
 import { toast } from "../ui/toast.js";
 import { copyText } from "../ui/behaviors.js";
-import { ADDRESS_HRP, BRAND, NETWORK } from "../config.js";
+import { ACTIVATION_HEIGHT, ADDRESS_HRP, BRAND, NETWORK } from "../config.js";
+import { CLAIM_VSIZE, feeEstimate } from "../share/mine-fee.js";
 import {
-  CLAIM_VSIZE, GPU_DRIVERS, GPU_HASHRATE, GPU_README_URL, GPU_RELEASE_URL, GPU_SOURCE_URL, claimsText, closedReason, difficultyText, featuredMined, feeEstimate,
-  fetchMined, gpuCommands, gpuSpeedNote, isOpen, issuedShareText, mineHref, minedCard, minedPill, miningOn, publicFeeRate, rankMined, rewardText, serviceSats,
-  speedNote, supplyText, wholeTokens,
+  COIN_CHANGE_SATS, GPU_COINS, GPU_DRIVERS, GPU_HASHRATE, GPU_HASHRATE_3090, GPU_README_URL, GPU_RELEASE_URL, GPU_RUN_HASHRATE, GPU_SOURCE_URL, claimsText, closedReason,
+  difficultyText, durationText, featuredMined, fetchMined, firstRunText, gpuCommands, gpuSpeedNote, isOpen, issuedShareText, mineHref, minedCard, minedPill,
+  miningOn, publicFeeRate, rankMined, rewardText, serviceSats, speedNote, supplyText, wholeTokens,
 } from "../share/mined.js";
 
 /** The four steps (icon, title, text). */
@@ -68,17 +69,20 @@ export function featuredCard(a, { walletReady = false } = {}) {
   </section>`;
 }
 
-/** What one claim costs: the Bitcoin network fee for about 680 vB at a rate, plus the platform's service fee. */
+/**
+ * What one claim costs from the browser wallet's mining address: the Bitcoin network fee for about 684 vB at the rate the
+ * wallet pays (the next-block rate plus 25%, up front), plus the platform's service fee.
+ */
 export function costPanel({ rate = null, service = serviceSats() } = {}) {
   const est = feeEstimate({ rate, service });
   return html`<section class="panel mi-panel" aria-labelledby="mi-cost-h">
     <header class="panel-head"><div class="panel-titles"><div class="eyebrow">COST OF ONE CLAIM</div><h2 class="h3" id="mi-cost-h">What one claim costs</h2></div></header>
     ${kv([
-      ["Bitcoin network fee", est ? html`<span class="mono t-btc">~${sats(est.networkSats)}</span> <span class="caption t-3">about 680 vB at ${est.rate} sat/vB ${prov("BTC")}</span>` : html`<span class="t-3">about 680 vB at the current fee rate (not loaded yet)</span>`],
+      ["Bitcoin network fee", est ? html`<span class="mono t-btc">~${sats(est.networkSats)}</span> <span class="caption t-3">about ${est.vsize} vB at up to ${est.rate} sat/vB: the next-block rate of ${est.nextRate} plus 25%, rounded up to a whole sat/vB, paid up front ${prov("BTC")}</span>` : html`<span class="t-3">about ${CLAIM_VSIZE} vB at the next-block fee rate plus 25%, rounded up to a whole sat/vB, paid up front (rate not loaded yet)</span>`],
       ["Service fee to the platform", html`<span class="mono t-btc">${sats(service)}</span>`],
       ["Total", est ? html`<span class="mono t-btc">~${sats(est.totalSats)}</span>` : DASH],
     ])}
-    <p class="caption t-3">Paid from your wallet's mining address; a relay balance has its own quote in the wallet. The Bitcoin fee follows the fee rate of the day.</p>
+    <p class="caption t-3">Paid from your wallet's mining address; a relay balance has its own quote in the wallet. The Bitcoin fee follows the fee rate of the day, and the 25% is paid up front because the fee recipient can block a later fee bump.</p>
   </section>`;
 }
 
@@ -92,26 +96,44 @@ export function speedPanel(a) {
 
 /** A copyable command block, as /verify's "Copy command" blocks. */
 function cmdBlock(text) {
-  return html`<div class="mi-cmd"><pre><code>${text}</code></pre><button type="button" class="icon-btn icon-btn--xs mi-cmd-copy" data-action="mi-copy-cmd" aria-label="Copy command" data-tip="Copy command">${icon("copy", { size: 14 })}</button></div>`;
+  // Long commands wrap on a phone; a flag (--prepare-coins) stays whole instead of splitting after its "--".
+  const words = String(text).split(" ").map((w, i) => html`${i ? " " : ""}${w.startsWith("--") ? html`<span class="mi-nobr">${w}</span>` : w}`);
+  return html`<div class="mi-cmd"><pre><code>${words}</code></pre><button type="button" class="icon-btn icon-btn--xs mi-cmd-copy" data-action="mi-copy-cmd" aria-label="Copy command" data-tip="Copy command">${icon("copy", { size: 14 })}</button></div>`;
 }
+
+/** What the first sync of the CLI replays (one element, data-gpu-sync, so a new block can update it without redrawing the section). */
+const syncNote = ({ height, network }) => firstRunText({ height, from: ACTIVATION_HEIGHT, network });
 
 /**
  * "Mine on a GPU": the command-line miner for NVIDIA cards (gpu/README.md, `mine <wallet> <TICKER> --gpu all`).
- * `a` is the featured token (its ticker and live difficulty), `network` the build's network: on mainnet the commands
+ * `a` is the featured token (its ticker, live difficulty and reward), `network` the build's network: on mainnet the commands
  * carry MURKLE_NETWORK=mainnet, on signet (the CLI's default) there is no variable and the structure is the same.
+ * `rate` is the next-block fee rate (sat/vB) and `height` the chain tip, each null until it is known. The CLI pays each claim
+ * at headroomRate(next-block rate), which is what feeEstimate shows.
  */
-export function gpuPanel(a, { network = NETWORK, hrp = ADDRESS_HRP, rate = null } = {}) {
+export function gpuPanel(a, { network = NETWORK, hrp = ADDRESS_HRP, rate = null, height = null } = {}) {
   const ticker = a?.ticker ?? "MURK";
   const c = gpuCommands({ network, ticker, hrp });
   const coins = network === "mainnet" ? "bitcoin" : "signet coins";
   const est = feeEstimate({ rate });
-  const claimCost = est ? html`about <span class="mono t-btc">${sats(est.totalSats)}</span> at ${est.rate} sat/vB (see the cost above)` : "about 2,000 to 4,000 sats, depending on the Bitcoin fee rate (see the cost above)";
+  const service = serviceSats();
+  const claimCost = est
+    ? html`about <span class="mono t-btc">${sats(est.totalSats)}</span> at up to ${est.rate} sat/vB (${est.vsize} vB at the next-block rate of ${est.nextRate} plus 25%, rounded up to a whole sat/vB, paid up front, plus the ${sats(service)} service fee)`
+    : html`the Bitcoin fee (about ${CLAIM_VSIZE} vB at the next-block rate plus 25%, rounded up to a whole sat/vB, paid up front) plus the ${sats(service)} service fee`;
+  const coin = est
+    ? html`One coin holds <span class="mono t-btc">${sats(est.totalSats + COIN_CHANGE_SATS)}</span>: the claim cost plus ${sats(COIN_CHANGE_SATS)} that come back as change`
+    : html`One coin holds the claim cost plus ${sats(COIN_CHANGE_SATS)} that come back as change`;
+  const d = Number(a?.difficulty);
+  const lasts = d > 0 ? html` At the time per solution above, ${GPU_COINS} coins last ${durationText((GPU_COINS * d) / GPU_RUN_HASHRATE)} on average.` : "";
+  const baseUnits = a?.reward != null && Number.isInteger(a?.divisibility)
+    ? html`<p class="small">Amounts are in base units: 1 ${ticker} = ${int(10n ** BigInt(a.divisibility))} base units, so one claim of ${rewardText(a)} is <span class="mono">${String(a.reward)}</span>.</p>`
+    : html`<p class="small">Amounts are in base units, the smallest unit of the token (<span class="mono">balance</span> prints them): 1 ${ticker} is 10 to the power of its divisibility in base units.</p>`;
   return html`<div class="container" data-gpu data-network="${network}">
     <div class="ld-sec-head"><div class="eyebrow">GPU MINING</div><h2 class="h2-landing" id="mi-gpu-h">Mine on a <em>GPU.</em></h2></div>
     <div class="mi-gpu">
-      <p class="lead">An NVIDIA graphics card mines ${ticker} with the ${BRAND} command-line miner. On one RTX 4090 we measured about ${int(GPU_HASHRATE)} hashes per second, as much as about a hundred browser tabs. <span data-gpu-speed>${gpuSpeedNote(a)}</span></p>
-      <p class="caption t-3">That is a measurement on one card; other cards are not measured yet.</p>
-      <p class="small" data-gpu-req><strong>You need:</strong> an NVIDIA GPU (Pascal or newer), Linux or Windows on x64, an NVIDIA driver ${GPU_DRIVERS}, and Node.js 22 or newer.</p>
+      <p class="lead">An NVIDIA graphics card mines ${ticker} with the ${BRAND} command-line miner. One RTX 4090 measured about ${int(GPU_HASHRATE)} hashes per second for the kernel alone and about ${int(GPU_RUN_HASHRATE)} in a full mining run (every solution re-checked), as much as about a hundred browser tabs. <span data-gpu-speed>${gpuSpeedNote(a)}</span></p>
+      <p class="caption t-3" data-gpu-measured>These are measurements on Linux. One RTX 3090 with the release build measured about ${int(GPU_HASHRATE_3090)} for the kernel alone. Other cards are not measured yet, and the Windows build has not been timed yet.</p>
+      <p class="small" data-gpu-req><strong>You need:</strong> an NVIDIA GPU (Pascal or newer), Linux or Windows on x64, an NVIDIA driver ${GPU_DRIVERS}, and Node.js 22 or newer. The minimum drivers follow NVIDIA's compatibility rules and are not tested on every version.</p>
       ${c.windowsEnv ? html`<div class="mi-gpu-win" data-gpu-win><p class="small"><strong>On Windows,</strong> open PowerShell and set the network once in that window with the line below, then drop the <span class="mono">MURKLE_NETWORK=mainnet</span> prefix from every command in this list.</p>${cmdBlock(c.windowsEnv)}</div>` : ""}
       <ol class="mi-gpu-steps">
         <li><h3>Get the code</h3>${cmdBlock(c.clone)}</li>
@@ -119,18 +141,23 @@ export function gpuPanel(a, { network = NETWORK, hrp = ADDRESS_HRP, rate = null 
           ${cmdBlock(c.fetch)}
           <p class="caption t-3">The first command fetches the circuit files and the second the GPU miner build from the release. Each file is checked against its pinned sha256, and nothing is written if one differs.</p></li>
         <li><h3>Create a mining wallet</h3>${cmdBlock(c.create)}
+          <p class="small">It prints three addresses at once: the ${BRAND} address (<span class="mono">${hrp}1</span>, where your private notes land), the BTC fee address (it pays a later send) and the <strong>mining fee address</strong>. The mining fee address is the one to fund for mining. The <span class="mono">address</span> command prints them again.</p>
           <p class="caption t-3">The wallet file is saved in the data folder with its keys in plain text; keep it private.</p></li>
-        <li><h3>Fund its mining fee address</h3>${cmdBlock(c.mine)}
-          <p class="small">The first run syncs the chain, so the address can take a minute to appear. It has no coins yet: after the GPU self-test it prints <span class="mono">mining fee address</span> and the address, and stops with nothing mined. (<span class="mono">${c.address}</span> prints it again.)</p>
-          <p class="small">Each solution is a claim, and each claim spends one coin from that address and costs ${claimCost}. Send enough ${coins} for the claims you want.</p></li>
+        <li><h3>Fund the mining fee address, then split it into coins</h3>
+          <p class="small">First send ${coins} to the mining fee address. Then split it into coins, one for each claim you want ready:</p>
+          ${cmdBlock(c.prepare)}
+          <p class="small"><span data-gpu-sync>${syncNote({ height, network })}</span> The <span class="mono">new</span> command does not sync.</p>
+          <p class="small">Each solution is a claim, and each claim spends one coin of that address and costs ${claimCost}. A GPU finds many solutions in a short time. Claims paid from a single coin chain on each other's unconfirmed change, and Bitcoin nodes accept only about 25 unconfirmed transactions in such a chain. Separate coins let claims go out side by side.</p>
+          <p class="small">The split above makes ${GPU_COINS} coins; change the number to the claims you want ready. ${coin}, so fund about ${GPU_COINS} times that, plus the split's own fee at the next-block rate (about 43 vB for each coin and about 110 vB more for the transaction itself). The miner binds each claim to your largest coin, so a large leftover coin would be spent first and chain; fund close to what you split.${lasts} Split again when the coins are used.</p></li>
         <li><h3>Mine</h3>${cmdBlock(c.mine)}
-          <p class="caption t-3"><span class="mono">--gpu all</span> uses every NVIDIA card; <span class="mono">--gpu 0,1</span> picks cards by number. Run the command again after funding. After funding you can split the balance into one coin per claim with <span class="mono">--prepare-coins n</span> (instead of <span class="mono">--gpu</span>), and <span class="mono">--max-claims n</span> stops after n claims. Ctrl+C stops after the current slice.</p></li>
+          <p class="caption t-3"><span class="mono">--gpu all</span> uses every NVIDIA card; <span class="mono">--gpu 0,1</span> picks cards by number. <span class="mono">--max-claims n</span> stops after n claims. Ctrl+C stops after the current slice. With no coins at the mining fee address it stops and says so.</p></li>
       </ol>
       <div class="mi-gpu-reward" data-gpu-reward>
         <h3>Where the reward goes</h3>
-        <p class="small">Each reward lands in that command-line wallet as a private note, not in your browser wallet. When you like, send it to your browser wallet's <span class="mono">${hrp}1</span> address with the send command. A send is paid from the command-line wallet's BTC fee address, which <span class="mono">new</span> printed.</p>
+        <p class="small">Each reward lands in that command-line wallet as a private note, not in your browser wallet. When you like, send it to your browser wallet's <span class="mono">${hrp}1</span> address with the send command. A send is paid from the BTC fee address that <span class="mono">new</span> printed, not from the mining fee address, so fund that address for the send's network fee first.</p>
         ${cmdBlock(c.send)}
         <p class="caption t-3">Edit before running: replace <span class="mono">&lt;amount&gt;</span> with a whole number of base units (as <span class="mono">balance</span> prints) and the last word with your browser wallet's address.</p>
+        ${baseUnits}
       </div>
       <div class="cluster mi-gpu-links" data-gpu-links>
         ${button({ label: "Release gpu-v1.0.0", href: GPU_RELEASE_URL, kind: "secondary", size: "sm" })}
@@ -149,6 +176,7 @@ export function render(root) {
   let alive = true;
   let paintKey = null;
   let gpuFeatured;
+  let tip = null;
 
   root.innerHTML = html`<div class="mi">
     <section class="mi-hero container" aria-labelledby="mi-h1">
@@ -206,7 +234,7 @@ export function render(root) {
     $("[data-others-grid]").innerHTML = html`${others.map((a) => minedCard(a, { walletReady }))}`;
     $("[data-speed-slot]").innerHTML = speedPanel(featured);
     gpuFeatured = featured;
-    $("[data-gpu-slot]").innerHTML = gpuPanel(featured, { rate });
+    $("[data-gpu-slot]").innerHTML = gpuPanel(featured, { rate, height: tip });
   }
 
   async function load(fresh = false) {
@@ -226,7 +254,7 @@ export function render(root) {
       rate = r;
       if (!alive) return;
       $("[data-cost]").innerHTML = costPanel({ rate });
-      if (gpuFeatured !== undefined) $("[data-gpu-slot]").innerHTML = gpuPanel(gpuFeatured, { rate });
+      if (gpuFeatured !== undefined) $("[data-gpu-slot]").innerHTML = gpuPanel(gpuFeatured, { rate, height: tip });
     })
     .catch(() => {});
 
@@ -236,6 +264,10 @@ export function render(root) {
       if (!alive || !s) return;
       if (lastHeight !== null && s.height !== lastHeight) load(true);
       lastHeight = s.height;
+      // The first-sync block count follows the tip without redrawing the section (a selection or a copied command stays put).
+      tip = Number.isSafeInteger(s.height) ? s.height : tip;
+      const note = $("[data-gpu-sync]");
+      if (note) note.textContent = syncNote({ height: tip, network: NETWORK });
     }),
     onWalletStatus(() => alive && list && paint()),
     on(root, "click", "[data-action=mi-retry]", () => load(true)),

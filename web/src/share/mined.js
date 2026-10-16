@@ -9,7 +9,7 @@
  * arrive as decimal strings.
  *
  * API
- *   CLAIM_VSIZE, TAB_HASHRATE                      the claim's size in vB and a desktop tab's hashrate (H/s)
+ *   TAB_HASHRATE                                   a desktop tab's hashrate (H/s)
  *   mineHref(ticker) -> "/app/mine?t=ABC"          the wallet's Mine page with the token preselected
  *   miningOn() -> boolean                          this network's service-fee rule is complete (mineFeeReady)
  *   serviceSats() -> bigint                        the platform's service fee per claim (MINE_FEE)
@@ -21,10 +21,10 @@
  *   rewardText(a), supplyText(a), difficultyText(a)
  *   wholeTokens(v, div) -> number                  base units to whole tokens (for the progress bar)
  *   issuedShare(a) -> 0..100, issuedShareText(a)   share of the supply issued
- *   feeEstimate({ rate }) -> { vsize, rate, networkSats, serviceSats, totalSats } | null
+ *   (the cost of a claim, CLAIM_VSIZE and feeEstimate, is in mine-fee.js: it pulls in funding.mjs, so only /mine loads it)
  *   publicFeeRate(esplora?) -> Promise<number>     next-block sat/vB, as the wallet reads it
  *   durationText(seconds), speedNote(a) -> string  expected time per solution = difficulty / hash rate
- *   GPU_HASHRATE, gpuSpeedNote(a), gpuCommands({ network, ticker }) -> { clone, fetch, create, mine, ... }   the GPU section
+ *   GPU_HASHRATE, GPU_RUN_HASHRATE, gpuSpeedNote(a), gpuCommands({ network, ticker }) -> { clone, fetch, create, prepare, mine, ... }   the GPU section
  *   minedPill(a), minedCard(a, { walletReady }), mineBlock(a, { walletReady })
  */
 import { html } from "../ui/dom.js";
@@ -35,8 +35,6 @@ import { sigil } from "../ui/sigil.js";
 import { MINE_FEE, mineFeeReady, REPO_URL } from "../../../src/params.mjs";
 import * as api from "../api.js";
 
-/** A mining claim's Bitcoin transaction is about 684 vB (the wallet prices claims with the same figure). */
-export const CLAIM_VSIZE = 684;
 /** What one browser tab on a desktop computer hashes per second, roughly (Argon2id, mining-contract.md section 10). */
 export const TAB_HASHRATE = 1000;
 
@@ -118,14 +116,6 @@ export const issuedShareText = (a) => {
   return p === 0 ? "0%" : p < 0.1 ? "under 0.1%" : `${p.toFixed(p < 10 ? 1 : 0)}%`;
 };
 
-/** Cost of one claim paid from the wallet's mining address, at a whole sat/vB rate (the page's estimate). */
-export function feeEstimate({ rate, service = serviceSats() } = {}) {
-  const r = Math.ceil(Number(rate));
-  if (!Number.isFinite(r) || r <= 0) return null;
-  const networkSats = BigInt(CLAIM_VSIZE * r);
-  return { vsize: CLAIM_VSIZE, rate: r, networkSats, serviceSats: service, totalSats: networkSats + service };
-}
-
 /** The next-block rate in sat/vB, read the way the wallet reads it. Throws when no explorer answers. */
 export async function publicFeeRate(esplora = api.esplora) {
   try {
@@ -164,19 +154,42 @@ export function speedNote(a) {
   return `${base} At difficulty ${int(a.difficulty)}, a desktop browser tab (about ${int(TAB_HASHRATE)} hashes per second) needs ${durationText(d / TAB_HASHRATE)} per solution. ${tail}`;
 }
 
-/** One RTX 4090 measured about 113,000 hashes per second with the GPU miner (gpu/README.md section 7, docs/design/mining.md 4.4). */
+/**
+ * One RTX 4090 on Linux measured about 113,000 hashes per second for the GPU kernel alone and 104,409 in a full
+ * `mine --gpu` run with every solution re-checked (gpu/README.md section 7, docs/design/mining.md 4.4). Times per solution use the full run.
+ */
 export const GPU_HASHRATE = 113_000;
+export const GPU_RUN_HASHRATE = 104_000;
+/** One RTX 3090 on Linux with the release build: about 91,000 hashes per second, the kernel alone (gpu/README.md section 7). */
+export const GPU_HASHRATE_3090 = 91_000;
 export const GPU_RELEASE_URL = `${REPO_URL}/releases/tag/gpu-v1.0.0`;
 export const GPU_README_URL = `${REPO_URL}/blob/main/gpu/README.md`;
 export const GPU_SOURCE_URL = `${REPO_URL}/tree/main/gpu`;
-/** The drivers gpu/README.md names (CUDA minor-version compatibility). */
+/** The minimum drivers gpu/README.md names (CUDA minor-version compatibility); not tested on every version. */
 export const GPU_DRIVERS = "525.60 or newer on Linux, 527.41 or newer on Windows";
 
-/** The GPU speed note: difficulty / 113,000 seconds for the token's live difficulty (the bare formula without one). */
+/** The GPU speed note: difficulty / 104,000 seconds (a full mining run) for the token's live difficulty (the bare formula without one). */
 export function gpuSpeedNote(a) {
   const d = Number(a?.difficulty);
-  if (!(d > 0)) return `Expected time per solution = difficulty / ${int(GPU_HASHRATE)} seconds.`;
-  return `At difficulty ${int(a.difficulty)} that is ${durationText(d / GPU_HASHRATE)} per solution on that card (difficulty / ${int(GPU_HASHRATE)} seconds).`;
+  if (!(d > 0)) return `Expected time per solution = difficulty / ${int(GPU_RUN_HASHRATE)} seconds.`;
+  return `At difficulty ${int(a.difficulty)} that is ${durationText(d / GPU_RUN_HASHRATE)} per solution at the full-run rate (difficulty / ${int(GPU_RUN_HASHRATE)} seconds).`;
+}
+
+/** Coins a split makes by default in the page's command (`mine <wallet> <TICKER> --prepare-coins 20`). */
+export const GPU_COINS = 20;
+/** What the change output of a prepared coin holds (the CLI's CHANGE_FLOOR: a P2TR output's dust limit, which comes back to the mining address). */
+export const COIN_CHANGE_SATS = 330n;
+
+/** The first `mine` run replays every block from the activation block to the tip; `height` is the tip (null: not known yet). */
+export function firstRunText({ height = null, from = null, network = "signet" } = {}) {
+  const h = height === null || height === undefined ? NaN : Number(height);
+  const f = from === null || from === undefined ? NaN : Number(from);
+  const blocks = Number.isSafeInteger(h) && Number.isSafeInteger(f) && h >= f ? h - f + 1 : null;
+  const first = blocks === null
+    ? "The first mine run (the split above, which comes first) syncs the chain: it replays every block from the activation block in the pins up to the tip."
+    : `The first mine run (the split above, which comes first) syncs the chain: it replays every block from the activation block ${int(f)} up to the tip, ${int(blocks)} blocks now (both ends included).`;
+  const measured = network === "mainnet" ? " In October 2026 a fresh sync replayed blocks 971,316 to 971,726 in 273 s, about 0.67 s for each block on a home connection; the count grows with the chain." : "";
+  return `${first}${measured} Later runs only catch up from where the last one stopped.`;
 }
 
 /**
@@ -193,6 +206,7 @@ export function gpuCommands({ network = "signet", ticker = "MURK", wallet = "min
     clone: `git clone ${REPO_URL}\ncd murkle\nnpm ci`,
     fetch: `${pre}npm run artifacts:fetch\nnpm run gpu:fetch`,
     create: `${pre}node bin/murkle.mjs new ${wallet}`,
+    prepare: `${pre}node bin/murkle.mjs mine ${wallet} ${ticker} --prepare-coins ${GPU_COINS}`,
     mine: `${pre}node bin/murkle.mjs mine ${wallet} ${ticker} --gpu all`,
     address: `${pre}node bin/murkle.mjs address ${wallet}`,
     send: `${pre}node bin/murkle.mjs send ${wallet} ${ticker} <amount> <your-${hrp}1-address>`,

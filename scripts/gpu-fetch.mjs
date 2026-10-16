@@ -93,6 +93,9 @@ export async function fetchGpuBinary({ pins, platform = process.platform, arch =
   return { path, sha256: got, status: "downloaded" };
 }
 
+/** The line printed after a fetch: a download passed the sha256 check against the pin, or the file on disk already matched. */
+export const fetchMessage = (r) => (r.status === "present" ? `${r.path} already matches its pin` : `downloaded ${r.path} (sha256 ${r.sha256} matches gpu/pins.json)`);
+
 /** The same check without the network: -> { path, sha256 | null, matches } */
 export function checkGpuBinary({ pins, platform = process.platform, arch = process.arch, dest = BIN_DIR } = {}) {
   const pin = pinFor(pins, platform, arch);
@@ -114,7 +117,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1
         process.exitCode = r.matches ? 0 : 1;
       } else {
         const r = await fetchGpuBinary({ ...opts, pins });
-        console.log(r.status === "present" ? `${r.path} already matches its pin` : `downloaded ${r.path} (sha256 ${r.sha256})`);
+        console.log(fetchMessage(r));
       }
     }
   } catch (e) {

@@ -145,7 +145,7 @@ From the owner's own wallet, on a machine you trust (the CLI wallet file holds p
 
 ```bash
 export MURKLE_NETWORK=mainnet MURKLE_DATA_DIR=/secure/murkle-owner MURKLE_BTC_SOURCE=esplora   # the default; bitcoind only with an own node
-node bin/murkle.mjs new owner                  # prints murk1… and the bc1p… fee address
+node bin/murkle.mjs new owner                  # prints murk1…, the bc1p… fee address and the mining fee address
 # fund the bc1p… fee address now: about 1,500 sats or more (a measured dry run was 160 vB and 644 sats; the fee rate varies)
 node bin/murkle.mjs attest genesis owner --dry-run
 node bin/murkle.mjs attest genesis owner       # ATTEST kind 1 over manifestSha256

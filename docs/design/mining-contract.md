@@ -612,7 +612,7 @@ Uses `grindRange` from `src/mine.mjs` in slices; each worker starts at a random 
 
 ### 10.3 `web/src/views/app-mine.js` (new), route `/app/mine`
 
-Token picker (`status === "mining"`), panel (reward, difficulty, network hashrate estimate, issued / max, reference block, cost per claim = `684 vB × next-block rate` + service fee (+ relay margin)), Start / Stop, threads slider `1 … hardwareConcurrency − 1` (default half), auto-submit (on), route selector (relay default when the balance covers a claim; built-in mining key; Unisat). Live figures: tab H/s (10 s average), expected time per solution `D / H`, chance in the next block `1 − exp(−600 × H / D)`, solutions with status, reward earned. Polls `/api/mine/:asset` every 15 s. Copy from §12.
+Token picker (`status === "mining"`), panel (reward, difficulty, network hashrate estimate, issued / max, reference block, cost per claim = `684 vB × headroomRate(next-block rate)` (the rate plus 25%, rounded up to a whole sat/vB) + service fee (+ relay margin)), Start / Stop, threads slider `1 … hardwareConcurrency − 1` (default half), auto-submit (on), route selector (relay default when the balance covers a claim; built-in mining key; Unisat). Live figures: tab H/s (10 s average), expected time per solution `D / H`, chance in the next block `1 − exp(−600 × H / D)`, solutions with status, reward earned. Polls `/api/mine/:asset` every 15 s. Copy from §12.
 
 ### 10.4 `web/src/views/app-launch.js` (CRLF)
 
@@ -646,7 +646,7 @@ Use existing tokens and components; new classes are prefixed `mine-`.
 - `murkle mine <wallet> <TICKER> [--threads N] [--pay key|relay] [--max-claims n] [--max-fee-rate r] [--prepare-coins n] [--accept-cap-risk] [--esplora url] [--relay url]`:
   - `worker_threads` through `createNodePowPool({ size: threads })` `grind` tasks, after the self-test;
   - a new `prepareClaim` on each new tip and after each solution; the same reference re-check, window, stale and cap checks as the page (block hash from its own esplora client);
-  - `--pay key` uses a separate mining key: wallet file field `mineKey` (32 random bytes, created on the first `mine` or `--prepare-coins`), never `btcKey`; `--pay relay` uses the relay balance (`info.mine`), never falling back to self-pay for a pending relayed claim;
+  - `--pay key` uses a separate mining key: wallet file field `mineKey` (32 random bytes, created by `murkle new`, or on the first `mine` or `--prepare-coins` for a wallet file made before that), never `btcKey`; `--pay relay` uses the relay balance (`info.mine`), never falling back to self-pay for a pending relayed claim;
   - W-M entries in the wallet file's `pending` list with `kind: "mine"` and `lockUntil`;
   - prints H/s, solutions, claims landed and fees spent; refuses before paying when the claim cannot land.
 - `murkle audit --compare`: when the first differing height is where `digestVersionAt` changes, print `digest version changes at H (vA -> vB): the other side runs a different release` instead of pointing at a transaction.

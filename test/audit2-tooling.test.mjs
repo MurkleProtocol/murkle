@@ -149,7 +149,7 @@ test("V2-33: `murkle new` creates the wallet owner-only and exclusively; reads t
   assert.equal(r.code, 0, r.stderr);
   const path = join(data, "wallets", "alice.json");
   const first = readFileSync(path, "utf8");
-  assert.equal(Object.keys(JSON.parse(first)).sort().join(), "btcKey,pending,seed");
+  assert.equal(Object.keys(JSON.parse(first)).sort().join(), "btcKey,mineKey,pending,seed");
   if (POSIX) {
     assert.equal(statSync(path).mode & 0o777, 0o600);
     assert.equal(statSync(join(data, "wallets")).mode & 0o777, 0o700);
@@ -164,6 +164,54 @@ test("V2-33: `murkle new` creates the wallet owner-only and exclusively; reads t
     assert.equal((await run(["address", "alice"], env)).code, 0);
     assert.equal(statSync(path).mode & 0o777, 0o600);
   }
+});
+
+test("`murkle new` makes the mining key at once and prints the mining fee address; `address` prints it again; no wallet name prints the usage", async () => {
+  const data = fresh("new-mine");
+  const env = { MURKLE_NETWORK: "signet", MURKLE_DATA_DIR: data, MURKLE_ESPLORA: "http://127.0.0.1:9/api" };
+  const made = await run(["new", "miner"], env);
+  assert.equal(made.code, 0, made.stderr);
+  const file = JSON.parse(readFileSync(join(data, "wallets", "miner.json"), "utf8"));
+  assert.match(file.mineKey, /^[0-9a-f]{64}$/, "32 random bytes");
+  assert.notEqual(file.mineKey, file.btcKey, "the mining key is never the BTC fee key");
+  const lines = made.stdout.trim().split("\n");
+  assert.deepEqual(lines.map((l) => l.split(":")[0]), ["Murkle address", "BTC fee address", "mining fee address"], made.stdout);
+  const mining = lines[2].match(/^mining fee address: (tb1p\S+) {2}\(fund this one to mine; it pays self-paid mining claims only\)$/);
+  assert.ok(mining, lines[2]);
+  assert.notEqual(mining[1], lines[1].match(/^BTC fee address: (tb1p\S+)/)[1], "a different address from the BTC fee address");
+  const again = await run(["address", "miner"], env);
+  assert.equal(again.code, 0, again.stderr);
+  assert.equal(again.stdout, made.stdout, "address prints the same three lines");
+  assert.equal(JSON.parse(readFileSync(join(data, "wallets", "miner.json"), "utf8")).mineKey, file.mineKey, "nothing changed on disk");
+  // A wallet file from before this change has no mining key: address does not invent one (mine makes it on first use).
+  const old = { seed: file.seed, btcKey: file.btcKey, pending: [] };
+  writeFileSync(join(data, "wallets", "old.json"), JSON.stringify(old));
+  const oldRun = await run(["address", "old"], env);
+  assert.equal(oldRun.code, 0, oldRun.stderr);
+  assert.doesNotMatch(oldRun.stdout, /mining fee address/);
+  assert.equal(JSON.parse(readFileSync(join(data, "wallets", "old.json"), "utf8")).mineKey, undefined);
+  // No wallet name: the usage line, before anything syncs, not an error that names undefined.json.
+  for (const args of [["address"], ["new"], ["balance"], ["mine", "--gpu", "all"]]) {
+    const r = await run(args, env);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, new RegExp(`^error: usage: murkle ${args[0]} <wallet> [.]{3}: the wallet name comes first`, "m"));
+    assert.doesNotMatch(r.stderr, /undefined/);
+  }
+});
+
+test("missingWalletName: every command whose first argument is a wallet refuses a missing or flag-shaped name; others pass", async () => {
+  const { missingWalletName } = await import("../bin/murkle.mjs");
+  for (const cmd of ["new", "address", "balance", "deploy", "mint", "send", "pending", "retry", "deploy-pow", "mine"]) {
+    const flagOnly = ["send", "pending", "retry"].includes(cmd) ? ["--relay", "https://relay.example.org"] : ["--gpu", "all"];
+    for (const args of [[], [""], flagOnly]) assert.match(missingWalletName(cmd, args), new RegExp(`^usage: murkle ${cmd} <wallet>`), `${cmd} ${args.join(" ")}`);
+    assert.equal(missingWalletName(cmd, ["miner", "MURK"]), null);
+  }
+  for (const cmd of ["sync", "assets", "log", "audit", "relay", "relayer", "attest", "address-script"]) assert.equal(missingWalletName(cmd, []), null, cmd);
+  // send, pending and retry take their flags anywhere: a flag before the wallet name is fine there.
+  assert.equal(missingWalletName("send", ["--relay", "https://relay.example.org", "alice", "MURK", "5", "mrk1x"]), null);
+  assert.equal(missingWalletName("retry", ["--fast", "alice"]), null);
+  assert.equal(missingWalletName("pending", ["--relay", "https://relay.example.org", "alice"]), null);
+  assert.match(missingWalletName("pending", ["--relay", "https://relay.example.org"]), /^usage: murkle pending <wallet>/);
 });
 
 // ------------------------------------------------------------------ V2-34 relay URLs

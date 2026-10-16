@@ -33,6 +33,18 @@ Three ways, in order of effort.
 
 ## 3. Mine
 
+Set the wallet up first (the same steps as the "Mine on a GPU" section of `/mine`):
+
+```bash
+node bin/murkle.mjs new alice                                 # prints the Murkle address, the BTC fee address and the mining fee address
+node bin/murkle.mjs address alice                             # prints them again
+node bin/murkle.mjs mine alice MURK --prepare-coins 20        # after funding the mining fee address: split it into 20 coins
+```
+
+- `new` makes the wallet's mining key at once, so the **mining fee address** is printed straight away. Fund that one for mining: it pays the Bitcoin fee and service fee of every self-paid claim. The BTC fee address pays a later `send` (fund it for that send's network fee), not the mining.
+- `--prepare-coins N` splits the mining fee address into `N` coins, each worth one claim plus a 330-sat change output that comes back (`prepareCoinsCommand`). A claim is bound to the largest coin of that address (`pickBindUtxo`), and a GPU finds many solutions in a short time: claims paid from one coin chain on each other's unconfirmed change, and Bitcoin nodes accept only about 25 unconfirmed transactions in such a chain (`docs/design/mining.md` section 8.6). With `N` coins, `N` claims go out side by side. Pick `N` as the number of claims you want ready; each claim pays the next-block fee rate plus 25% (`headroomRate`) for about 684 vB, plus the service fee, so fund about `N` times (that plus 330 sats), plus the split's own fee at the next-block rate (about 43 vB for each coin and about 110 vB more for the transaction), and split again when the coins are used.
+- The first `mine` run (the split, if it comes first) syncs the chain from the activation block in the pins; later runs only catch up from `cli-state.json`. A fresh mainnet sync in October 2026 replayed blocks 971316 to 971726 (411 blocks) in 273 s, about 0.67 s for each block on a home connection; it grows with the chain. `new` does not sync.
+
 ```bash
 node bin/murkle.mjs mine alice MURK --gpu all                 # every CUDA device, no CPU lanes
 node bin/murkle.mjs mine alice MURK --gpu 0,2 --threads 2     # devices 0 and 2, plus 2 CPU lanes
@@ -63,7 +75,7 @@ If no lane is left the miner stops: `every GPU and CPU lane is disabled; nothing
 
 ## 4. Rented machines
 
-A rented GPU box is somebody else's computer. Use a **separate mining wallet** on it, fund its mining key (`address <wallet>` prints the mining fee address) only with what you will spend on fees, **move the rewards to your main wallet often**, and remember that the provider can read the disk. Never put your main wallet file, your BTC fee key or your recovery phrase on it. `--pay relay` keeps the mining key's coins out of the picture but shows the relayer your claims (`README.md`, Mining).
+A rented GPU box is somebody else's computer. Use a **separate mining wallet** on it, fund its mining key (`new` and `address <wallet>` print the mining fee address) only with what you will spend on fees, **move the rewards to your main wallet often**, and remember that the provider can read the disk. Never put your main wallet file, your BTC fee key or your recovery phrase on it. `--pay relay` keeps the mining key's coins out of the picture but shows the relayer your claims (`README.md`, Mining).
 
 ## 5. How it is kept honest
 
@@ -122,7 +134,7 @@ Steps: build; correctness (the 32 vectors, the boundary searches, 100,000 seeded
 | Start-up (allocation plus self-test) | at most 15 s |
 | VRAM | within total minus the reserve |
 
-Measured on one RTX 4090 (Vast, driver 575.57, CUDA 12.8.93, 2026-10): 114,635 H/s best cell (112.6k - 114.6k across the whole sweep, so the slot count and hashes per block barely matter), 95.2% utilisation in the worst cell and 99.3% at the default, host CPU 2.2% of one core, cancel latency 14 ms, start-up 0.5 s, 0 mismatches over 100,000 random passwords, and 0 `GPU_WRONG` in a 10-minute lane run (104,409 H/s with the pool verifying on the same box). They are in `docs/design/mining.md` sections 4.4 and 8.6 and the root `README.md`. The release Linux build on one RTX 3090 (Vast, 2026-10): about 91,000 H/s, 0 mismatches over 20,000 random passwords, and the device tests pass. The RTX 3060, the RTX 5090 (sm_120) and the minimum driver (525.60 / 527.41) are not measured yet and stay estimates.
+All of these were measured on Linux; the Windows build has not been timed yet. Measured on one RTX 4090 (Vast, driver 575.57, CUDA 12.8.93, 2026-10): 114,635 H/s best cell (112.6k - 114.6k across the whole sweep, so the slot count and hashes per block barely matter), 95.2% utilisation in the worst cell and 99.3% at the default, host CPU 2.2% of one core, cancel latency 14 ms, start-up 0.5 s, 0 mismatches over 100,000 random passwords, and 0 `GPU_WRONG` in a 10-minute lane run (104,409 H/s with the pool verifying on the same box). They are in `docs/design/mining.md` sections 4.4 and 8.6 and the root `README.md`. The release Linux build on one RTX 3090 (Vast, 2026-10): about 91,000 H/s (the kernel alone), 0 mismatches over 20,000 random passwords, and the device tests pass. The RTX 3060, the RTX 5090 (sm_120) and the minimum driver (525.60 / 527.41) are not measured yet and stay estimates: the minimum drivers follow NVIDIA's compatibility rules and are not tested on every version. The `/mine` page quotes the kernel rate (about 113,000 H/s on the 4090) and the full-run rate (about 104,000 H/s, every solution re-checked) and computes the time per solution from the full run.
 
 ## 8. License
 

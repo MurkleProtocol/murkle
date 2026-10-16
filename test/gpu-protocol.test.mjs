@@ -17,7 +17,7 @@ import { GPU_SELF_TEST_VECTORS, GpuError, gpuBinaryPath, gpuSelfTest, listGpus, 
 import { MINE_SALT, SELF_TEST_VECTORS, nonceOf, passwordOf } from "../src/mine.mjs";
 import { createNodePowPool } from "../src/pow-pool.mjs";
 import { FAKE_GPU, alive, fakeSpawn, until } from "./fixtures/fake-gpu-spawn.mjs";
-import { binaryName, checkGpuBinary, fetchGpuBinary, parseArgs, pinFor } from "../scripts/gpu-fetch.mjs";
+import { binaryName, checkGpuBinary, fetchGpuBinary, fetchMessage, parseArgs, pinFor } from "../scripts/gpu-fetch.mjs";
 import { acceptance, parseBenchArgs, runBench } from "../scripts/gpu-bench.mjs";
 
 const TMP = mkdtempSync(join(tmpdir(), "murkle-gpu-protocol-"));
@@ -347,11 +347,13 @@ test("gpu:fetch refuses an unpinned platform and a sha256 mismatch, and installs
 
   const r = await fetchGpuBinary({ pins, platform: "linux", arch: "x64", dest, fetchImpl: answer(bytes) });
   assert.equal(r.status, "downloaded");
+  assert.equal(fetchMessage(r), `downloaded ${r.path} (sha256 ${good} matches gpu/pins.json)`, "a download says its sha256 matches the pin");
   assert.equal(r.path, join(dest, binaryName("linux", "x64")));
   assert.deepEqual([...readFileSync(r.path)], [...bytes]);
   assert.equal(checkGpuBinary({ pins, platform: "linux", arch: "x64", dest }).matches, true);
   const again = await fetchGpuBinary({ pins, platform: "linux", arch: "x64", dest, fetchImpl: async () => { throw new Error("must not download"); } });
   assert.equal(again.status, "present");
+  assert.equal(fetchMessage(again), `${again.path} already matches its pin`);
   assert.equal(binaryName("win32", "x64"), "murkle-gpu-win32-x64.exe");
   assert.deepEqual(parseArgs(["--force", "--dest", dest]).force, true);
   assert.throws(() => parseArgs(["--nope"]), /unknown argument/);

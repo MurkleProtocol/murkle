@@ -92,7 +92,10 @@ function readWalletJson(path, name = path) {
   checkWalletNetwork(file, name);
   return file;
 }
-const readWalletFile = (name) => readWalletJson(walletPath(name), name);
+const readWalletFile = (name) => {
+  if (!name) throw new Error(`a wallet name is needed (usage: ${CLI} <command> <wallet>)`);
+  return readWalletJson(walletPath(name), name);
+};
 
 /** The network a wallet file belongs to: its `network` field, else signet (files from before the field). */
 export const walletNetworkOf = (file) => (typeof file?.network === "string" && file.network ? file.network : "signet");
@@ -335,6 +338,26 @@ export function commandRefusal(cmd, args = [], { test = IS_TESTNET, preGenesis =
   // No relay command before genesis: a relay account would hand out deposit addresses for real
   // coins that could neither pay for a transfer nor be withdrawn.
   return `${BRAND} has not launched on ${NETWORK}: no genesis is pinned in ${PINS_FILE}, so ${cmd} is refused. Only new, address, address-script, attest genesis and read-only commands run.`;
+}
+
+/** The commands whose first argument is a wallet name. */
+const WALLET_FIRST = new Set(["new", "address", "balance", "deploy", "mint", "send", "pending", "retry", "deploy-pow", "mine"]);
+/** Of those, the ones that take their flags anywhere (parseRelayFlags): the wallet is the first argument that is not a flag. */
+const FLAGS_ANYWHERE = new Set(["send", "pending", "retry"]);
+
+/** A usage line when a wallet command has no wallet name, checked before anything syncs (else null). */
+export function missingWalletName(cmd, args = []) {
+  if (!WALLET_FIRST.has(cmd)) return null;
+  let name = args[0];
+  if (FLAGS_ANYWHERE.has(cmd)) {
+    try {
+      name = parseRelayFlags(args).args[0];
+    } catch {
+      return null; // a bad flag: the command itself says what is wrong
+    }
+  }
+  if (name !== undefined && name !== "" && !String(name).startsWith("--")) return null;
+  return `usage: ${CLI} ${cmd} <wallet> ...: the wallet name comes first (${CLI} with no arguments lists every command)`;
 }
 
 /** "tb" / "bc" address -> scriptPubKey hex, for this network only (the owner fills MINE_FEES.mainnet.platformScript with it). */
@@ -2901,6 +2924,8 @@ const commands = {
     // Owner-only and exclusive: an existing wallet (its only copy of the seed) is never overwritten.
     // Bound to its network (a file without the field is a signet one, as every earlier file).
     const fresh = { ...(NETWORK === "signet" ? {} : { network: NETWORK }), seed: randomBytes(32).toString("hex"), btcKey: randomBytes(32).toString("hex"), pending: [] };
+    // The mining key is made now, so the mining fee address is known before the first `mine` run (an older wallet still gets it on first use).
+    mineKeyOf(fresh);
     createFileDurable(walletPath(name), JSON.stringify(fresh, null, 2));
     if (!IS_TESTNET) console.log(`This wallet file holds plaintext keys for Bitcoin ${NETWORK}: ${walletPath(name)}. Back it up, keep it private, and hold only small amounts with it.`);
     await commands.address([name]);
@@ -2913,12 +2938,13 @@ const commands = {
   },
 
   async address([name]) {
+    if (!name) throw new Error(`usage: ${CLI} address <wallet>`);
     const file = readWalletFile(name);
     console.log(`${BRAND} address: ${encodeAddress(deriveKeys(Buffer.from(file.seed, "hex")))}`);
     // Signet keeps its line verbatim; mainnet names the network and says what the coins are.
     const where = NETWORK === "signet" ? "signet" : `Bitcoin ${NETWORK}: real bitcoin`;
     console.log(`BTC fee address: ${btcAccount(Buffer.from(file.btcKey, "hex")).address}  (${where}; fund it for fees and mint prices)`);
-    if (file.mineKey) console.log(`mining fee address: ${btcAccount(mineKeyOf(file)).address}  (pays self-paid mining claims only)`);
+    if (file.mineKey) console.log(`mining fee address: ${btcAccount(mineKeyOf(file)).address}  (fund this one to mine; it pays self-paid mining claims only)`);
   },
 
   async sync() {
@@ -3363,7 +3389,7 @@ if (isEntryScript()) {
     process.exit(cmd ? 1 : 0);
   }
   try {
-    const refused = commandRefusal(cmd, args);
+    const refused = missingWalletName(cmd, args) ?? commandRefusal(cmd, args);
     if (refused) throw new Error(refused);
     if (!OFFLINE_COMMANDS.has(cmd)) {
       cliChain = await openCliChainSource();

@@ -143,6 +143,7 @@ const { OP, decodeEnvelope, encodeTxBody, opReturnScript, opReturnPayload, NONCE
 const { hex, unhex, outpointOf } = await import("../src/bytes.mjs");
 const { MerkleTree } = await import("../src/core.mjs");
 const funding = await import("../src/btc/funding.mjs");
+const { MINE_VSIZE, headroomRate } = funding;
 const btc = await import("@scure/btc-signer");
 const { sha256 } = await import("@noble/hashes/sha256");
 const { hkdf } = await import("@noble/hashes/hkdf");
@@ -1455,16 +1456,29 @@ test("public mined-token helpers: claims of the total, the featured token, the c
   assert.equal(M.featuredMined([]), null);
   assert.deepEqual(M.rankMined([d, c, a, b]).map((x) => x.ticker), ["BBB", "AAA", "CCC", "DDD"]);
   assert.equal(M.minedClaims([a, b, d]), 514);
-  // The cost of a claim: 684 vB at the rate, plus the service fee from the app's own params.
-  assert.equal(M.CLAIM_VSIZE, S.MINE_EST_VSIZE, "the page prices a claim with the wallet's size");
+  // The cost of a claim: 684 vB at the rate the wallet and the CLI pay (the next-block rate plus 25%, up front), plus the service fee from the app's own params.
+  const F = await import("../web/src/share/mine-fee.js");
+  assert.equal(F.CLAIM_VSIZE, S.MINE_EST_VSIZE, "the page prices a claim with the wallet's size");
+  assert.equal(F.CLAIM_VSIZE, MINE_VSIZE.feeOutputAndChange, "and with the carrier size of funding.mjs");
   assert.equal(M.serviceSats(), MINE_FEE.platformSats);
-  const est = M.feeEstimate({ rate: 5 });
-  assert.equal(est.networkSats, 684n * 5n);
+  const est = F.feeEstimate({ rate: 5 });
+  assert.equal(est.rate, 7, "ceil(5 x 1.25)");
+  assert.equal(est.nextRate, 5);
+  assert.equal(est.networkSats, 684n * 7n);
   assert.equal(est.serviceSats, MINE_FEE.platformSats);
-  assert.equal(est.totalSats, 684n * 5n + MINE_FEE.platformSats);
-  assert.equal(M.feeEstimate({ rate: 4.2 }).rate, 5, "a fractional rate rounds up");
-  assert.equal(M.feeEstimate({ rate: null }), null);
-  assert.equal(M.feeEstimate({ rate: 0 }), null);
+  assert.equal(est.totalSats, 684n * 7n + MINE_FEE.platformSats);
+  assert.equal(F.feeEstimate({ rate: 4.2 }).nextRate, 5, "a fractional rate rounds up");
+  // The page pays what each payer pays: vsize x headroomRate(rate) + service fee, as the wallet's quote and the CLI's claim.
+  for (const rate of [1, 2, 3, 4, 8, 20, 101]) {
+    const e = F.feeEstimate({ rate });
+    assert.equal(e.rate, headroomRate(rate));
+    assert.equal(e.networkSats, BigInt(F.CLAIM_VSIZE * headroomRate(rate)));
+    assert.equal(e.totalSats, BigInt(F.CLAIM_VSIZE * headroomRate(rate)) + MINE_FEE.platformSats);
+    assert.equal(e.totalSats, S.mineQuote({ route: "key", feeRate: rate, serviceSats: MINE_FEE.platformSats }).total, "the browser's own quote");
+  }
+  assert.equal(F.feeEstimate({ rate: 1 }).totalSats, 684n * 2n + 500n, "1 sat/vB: the CLI pays 684 x 2 + 500 = 1,868 sats, not 1,184");
+  assert.equal(F.feeEstimate({ rate: null }), null);
+  assert.equal(F.feeEstimate({ rate: 0 }), null);
   // Speed: difficulty / hash rate, a desktop tab at about 1,000 H/s; no word about limits.
   assert.equal(M.durationText(3600), "about 1 hour");
   assert.equal(M.durationText(7200), "about 2 hours");
@@ -1534,12 +1548,12 @@ test("/mine page: hero, the featured token with live numbers, the other tokens, 
     assert.match(others, /data-ticker="ORE"/);
     assert.match(others, /href="\/app\/mine\?t=ORE"/);
     assert.equal(root.querySelector("[data-others]").hidden, false);
-    // The cost: about 680 vB at the page's rate (684 x 4), plus the service fee read from the params.
+    // The cost: 684 vB at the rate the wallet pays (4 plus 25%, up front = 5), plus the service fee read from the params.
     const cost = String(root.querySelector("[data-cost]").innerHTML);
-    assert.ok(has(cost, `~${int_(684 * 4)} sats`), "network fee at the fetched rate");
+    assert.ok(has(cost, `~${int_(684 * 5)} sats`), "network fee at the rate the wallet pays");
     assert.ok(has(cost, `${int_(MINE_FEE.platformSats)} sats`), "the service fee comes from MINE_FEE");
-    assert.ok(has(cost, `~${int_(684n * 4n + MINE_FEE.platformSats)} sats`), "the total");
-    assert.ok(has(cost, "about 680 vB at 4 sat/vB"));
+    assert.ok(has(cost, `~${int_(684n * 5n + MINE_FEE.platformSats)} sats`), "the total");
+    assert.ok(has(cost, "about 684 vB at up to 5 sat/vB: the next-block rate of 4 plus 25%, rounded up to a whole sat/vB, paid up front"));
     const speed = String(root.querySelector("[data-speed-slot]").innerHTML);
     assert.ok(has(speed, "Expected time per solution = difficulty / hash rate."));
     assert.ok(has(speed, "needs about 1 hour per solution"));
@@ -1895,7 +1909,7 @@ test("copy of the public mining pages: no banned words, no limit framing, no pro
   const MINE = await import("../web/src/views/mine.js");
   const code = (f) => src(f).replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:"'`])\/\/.*$/gm, "$1");
   const texts = [
-    code("web/src/views/mine.js"), code("web/src/share/mined.js"),
+    code("web/src/views/mine.js"), code("web/src/share/mined.js"), code("web/src/share/mine-fee.js"),
     M.speedNote(murk()), String(M.mineBlock(murk())), String(M.minedCard(murk())), String(MINE.featuredCard(murk())), String(MINE.costPanel({ rate: 3 })), String(MINE.speedPanel(murk())),
     M.gpuSpeedNote(murk()), String(MINE.gpuPanel(murk(), { network: "mainnet", hrp: "murk" })), String(MINE.gpuPanel(murk(), { network: "signet", hrp: "mrk" })),
     ...MINE.HOW_STEPS.flat(),
@@ -1905,13 +1919,19 @@ test("copy of the public mining pages: no banned words, no limit framing, no pro
   }
 });
 
+test("the landing page and /mints do not pull in the fee rules: funding.mjs is imported by mine-fee.js, which only /mine loads", () => {
+  assert.doesNotMatch(src("web/src/share/mined.js").replace(/\/\*[\s\S]*?\*\//g, ""), /funding\.mjs|mine-fee/, "mined.js (read by the landing page and /mints) stays light");
+  for (const f of ["web/src/views/landing.js", "web/src/views/mints.js"]) assert.doesNotMatch(src(f), /mine-fee/, f);
+  assert.match(src("web/src/views/mine.js"), /from "\.\.\/share\/mine-fee\.js"/);
+});
+
 test("line endings: the public mining pages' files keep theirs (CRLF stays CRLF), the new files are LF", () => {
   const raw = (p) => readFileSync(new URL(`../${p}`, import.meta.url), "latin1");
   for (const f of ["web/src/views/landing.js", "web/src/share/public.css", "web/src/ui/icons.js", "web/src/views/app-create.js", "web/src/views/app-import.js"]) {
     const s = raw(f);
     assert.equal((s.match(/\r\n/g) ?? []).length, (s.match(/\n/g) ?? []).length, `${f} stays CRLF`);
   }
-  for (const f of ["web/src/views/mints.js", "web/src/views/mine.js", "web/src/share/mined.js"]) {
+  for (const f of ["web/src/views/mints.js", "web/src/views/mine.js", "web/src/share/mined.js", "web/src/share/mine-fee.js"]) {
     const s = raw(f);
     assert.ok(!s.includes("\r"), `${f} is LF`);
     assert.ok(s.endsWith("\n"), `${f} ends with a newline`);
@@ -1934,22 +1954,45 @@ test("/mine: the Mine on a GPU section sits below the panels with the intro, the
     await settle(30);
     const gpu = String(root.querySelector("[data-gpu-slot]").innerHTML);
     assert.ok(has(gpu, "An NVIDIA graphics card mines MURK with the Murkle command-line miner."));
-    assert.ok(has(gpu, "On one RTX 4090 we measured about 113,000 hashes per second, as much as about a hundred browser tabs."));
-    assert.ok(has(gpu, "That is a measurement on one card; other cards are not measured yet."));
-    // Difficulty 3,600,000 / 113,000 = 31.9 s.
-    assert.ok(has(gpu, "At difficulty 3,600,000 that is about 32 seconds per solution on that card (difficulty / 113,000 seconds)."));
-    assert.equal(M.gpuSpeedNote(murk({ difficulty: "1130000000" })), "At difficulty 1,130,000,000 that is about 2.8 hours per solution on that card (difficulty / 113,000 seconds).");
-    assert.match(M.gpuSpeedNote(null), /^Expected time per solution = difficulty \/ 113,000 seconds\.$/);
+    // The speed: the kernel alone (113,000) and a full mining run (104,000), on Linux; the time per solution comes from the full run.
+    assert.ok(has(gpu, "One RTX 4090 measured about 113,000 hashes per second for the kernel alone and about 104,000 in a full mining run (every solution re-checked), as much as about a hundred browser tabs."));
+    assert.ok(has(gpu, "These are measurements on Linux. One RTX 3090 with the release build measured about 91,000 for the kernel alone. Other cards are not measured yet, and the Windows build has not been timed yet."));
+    // Difficulty 3,600,000 / 104,000 = 34.6 s.
+    assert.ok(has(gpu, "At difficulty 3,600,000 that is about 35 seconds per solution at the full-run rate (difficulty / 104,000 seconds)."));
+    assert.equal(M.gpuSpeedNote(murk({ difficulty: "1040000000" })), "At difficulty 1,040,000,000 that is about 2.8 hours per solution at the full-run rate (difficulty / 104,000 seconds).");
+    assert.match(M.gpuSpeedNote(null), /^Expected time per solution = difficulty \/ 104,000 seconds\.$/);
+    assert.equal(M.GPU_HASHRATE, 113_000);
+    assert.equal(M.GPU_RUN_HASHRATE, 104_000);
+    assert.doesNotMatch(M.gpuSpeedNote(murk()), /113,000/, "no time per solution from the kernel-only figure");
     assert.ok(has(gpu, "You need:"));
-    assert.ok(has(gpu, "an NVIDIA GPU (Pascal or newer), Linux or Windows on x64, an NVIDIA driver 525.60 or newer on Linux, 527.41 or newer on Windows, and Node.js 22 or newer."));
-    for (const h of ["Get the code", "Download the pinned files", "Create a mining wallet", "Fund its mining fee address", "Mine", "Where the reward goes"]) assert.ok(has(gpu, h), h);
+    assert.ok(has(gpu, "an NVIDIA GPU (Pascal or newer), Linux or Windows on x64, an NVIDIA driver 525.60 or newer on Linux, 527.41 or newer on Windows, and Node.js 22 or newer. The minimum drivers follow NVIDIA"));
+    assert.ok(gpu.includes("compatibility rules and are not tested on every version."));
+    for (const h of ["Get the code", "Download the pinned files", "Create a mining wallet", "Fund the mining fee address, then split it into coins", "Mine", "Where the reward goes"]) assert.ok(has(gpu, h), h);
     assert.equal((gpu.match(/<ol class="mi-gpu-steps">/g) ?? []).length, 1);
     assert.equal((gpu.match(/<li>/g) ?? []).length, 5, "five numbered steps");
     assert.ok(has(gpu, "private note, not in your browser wallet"));
     assert.ok(has(gpu, "send it to your browser wallet"));
     assert.ok(has(gpu, "send command"));
+    // The first sync: the block count from the tip (the activation block of the pins up to the tip), never a time promise.
+    const from = C.ACTIVATION_HEIGHT;
+    const withTip = String(MINE.gpuPanel(murk(), { network: "signet", hrp: "mrk", height: 971_582 }));
+    assert.ok(has(withTip, `The first mine run (the split above, which comes first) syncs the chain: it replays every block from the activation block ${int_(from)} up to the tip, ${int_(971_582 - from + 1)} blocks now (both ends included). Later runs only catch up from where the last one stopped.`));
+    assert.ok(withTip.includes('</span> The <span class="mono">new</span> command does not sync.'), "the command name is set in mono, outside the live note");
+    assert.ok(has(gpu, "up to the tip. Later runs only catch up") || has(gpu, "blocks now (both ends included). Later runs only catch up"), "with or without the tip the sentence says what the first run does");
+    assert.ok(has(String(MINE.gpuPanel(murk(), { network: "signet", hrp: "mrk" })), "it replays every block from the activation block in the pins up to the tip. Later runs only catch up"));
+    // A missing activation height or tip is unknown, never 0: no block count then.
+    assert.ok(!M.firstRunText({ height: 971_582, from: null }).includes("blocks now"));
+    assert.ok(!M.firstRunText({ height: null, from: 100 }).includes("blocks now"));
+    assert.ok(M.firstRunText({ height: 971_582, from: 971_000 }).includes("971,000 up to the tip, 583 blocks now (both ends included)."));
+    assert.doesNotMatch(withTip, /971,726/, "the October measurement is a mainnet one");
+    assert.doesNotMatch(gpu, /can take a minute|The first run syncs the chain|It has no coins yet/);
     // Every command has the page's copy button, and the copy handler reads the block's text.
     assert.ok((gpu.match(/data-action="mi-copy-cmd"/g) ?? []).length >= 6);
+    const blocks = [...gpu.matchAll(/<pre><code>([\s\S]*?)<\/code><\/pre>/g)].map((m) => m[1].replace(/<[^>]+>/g, ""));
+    // A flag is wrapped whole (no line break after its "--" on a phone); the copied text is the plain command.
+    assert.ok(blocks.some((b) => b.includes("--gpu all")) && /<span class="mi-nobr">--gpu<\/span> all/.test(gpu));
+    assert.ok(blocks.length >= 6);
+    assert.equal(new Set(blocks).size, blocks.length, "no command block appears twice");
     assert.match(src("web/src/views/mine.js"), /\[data-action=mi-copy-cmd\][\s\S]{0,200}copyText\(b\.closest\("\.mi-cmd"\)\.querySelector\("code"\)\.textContent\)/);
     // The links: the release page, gpu/README.md on GitHub and the source.
     const links = [...gpu.matchAll(/<a class="[^"]*" href="([^"]+)"/g)].map((m) => m[1]);
@@ -1982,6 +2025,7 @@ test("/mine GPU section: the commands are the CLI's real ones, the same steps on
     clone: "git clone https://github.com/MurkleProtocol/murkle\ncd murkle\nnpm ci",
     fetch: "MURKLE_NETWORK=mainnet npm run artifacts:fetch\nnpm run gpu:fetch",
     create: "MURKLE_NETWORK=mainnet node bin/murkle.mjs new miner",
+    prepare: "MURKLE_NETWORK=mainnet node bin/murkle.mjs mine miner MURK --prepare-coins 20",
     mine: "MURKLE_NETWORK=mainnet node bin/murkle.mjs mine miner MURK --gpu all",
     address: "MURKLE_NETWORK=mainnet node bin/murkle.mjs address miner",
     send: "MURKLE_NETWORK=mainnet node bin/murkle.mjs send miner MURK <amount> <your-murk1-address>",
@@ -1989,6 +2033,7 @@ test("/mine GPU section: the commands are the CLI's real ones, the same steps on
   assert.equal(sig.windowsEnv, null);
   for (const [k, v] of Object.entries(sig)) if (k !== "network" && v) assert.doesNotMatch(v, /MURKLE_NETWORK/, `signet ${k} has no variable`);
   assert.equal(sig.mine, "node bin/murkle.mjs mine miner MURK --gpu all");
+  assert.equal(sig.prepare, "node bin/murkle.mjs mine miner MURK --prepare-coins 20");
   assert.equal(sig.fetch, "npm run artifacts:fetch\nnpm run gpu:fetch");
   assert.equal(sig.send, "node bin/murkle.mjs send miner MURK <amount> <your-mrk1-address>");
   // The CLI's own words: mine <wallet> <TICKER> [--gpu all|0,1,...], the npm scripts, the commands and send's argument order.
@@ -1997,33 +2042,67 @@ test("/mine GPU section: the commands are the CLI's real ones, the same steps on
   assert.equal(pkg.scripts["gpu:fetch"], "node scripts/gpu-fetch.mjs");
   for (const cmd of ["new", "address", "send", "mine"]) assert.match(bin, new RegExp(`async ${cmd}\\(`), `the CLI has ${cmd}`);
   assert.match(bin, /const SEND_USAGE = `usage: \$\{CLI\} send <wallet> <ticker> <amount> </);
-  // The page's mine command really parses with the CLI's parser (a child process: the CLI is a real program, not loaded into this fake DOM).
-  const code = "const c = await import(process.argv[1]); console.log(JSON.stringify(c.parseMineArgs(process.argv.slice(2), { processors: 8 })));";
-  const words = main.mine.replace(/^MURKLE_NETWORK=mainnet node bin\/murkle\.mjs mine /, "").split(" ");
-  const r = spawnSync(process.execPath, ["--input-type=module", "-e", code, pathToFileURL(join(process.cwd(), "bin/murkle.mjs")).href, ...words], {
-    env: { ...process.env, MURKLE_NETWORK: "" }, encoding: "utf8", windowsHide: true,
-  });
-  assert.equal(r.status, 0, r.stderr);
-  const parsed = JSON.parse(r.stdout.trim().split("\n").pop());
-  assert.deepEqual([parsed.name, parsed.ticker, parsed.gpu, parsed.pay], ["miner", "MURK", "all", "key"]);
+  // The page's mine, split and send commands really parse with the CLI's own parsers (a child process: the CLI is a real program, not loaded into this fake DOM).
+  const code = "const c = await import(process.argv[1]); const [fn, ...w] = process.argv.slice(2); console.log(JSON.stringify(fn === 'mine' ? c.parseMineArgs(w, { processors: 8 }) : c.parseRelayFlags(w)));";
+  const parseWith = (fn, line, verb) => {
+    const words = line.replace(new RegExp(`^MURKLE_NETWORK=mainnet node bin/murkle\\.mjs ${verb} `), "").split(" ");
+    const r = spawnSync(process.execPath, ["--input-type=module", "-e", code, pathToFileURL(join(process.cwd(), "bin/murkle.mjs")).href, fn, ...words], {
+      env: { ...process.env, MURKLE_NETWORK: "" }, encoding: "utf8", windowsHide: true,
+    });
+    assert.equal(r.status, 0, r.stderr);
+    return JSON.parse(r.stdout.trim().split("\n").pop());
+  };
+  const parsed = parseWith("mine", main.mine, "mine");
+  assert.deepEqual([parsed.name, parsed.ticker, parsed.gpu, parsed.pay, parsed.prepareCoins], ["miner", "MURK", "all", "key", null]);
+  const split = parseWith("mine", main.prepare, "mine");
+  assert.deepEqual([split.name, split.ticker, split.gpu, split.pay, split.prepareCoins], ["miner", "MURK", null, "key", 20]);
+  const sent = parseWith("send", main.send, "send");
+  assert.deepEqual(sent.args, ["miner", "MURK", "<amount>", "<your-murk1-address>"], "send <wallet> <ticker> <amount> <address>, no relay flag");
+  assert.equal(sent.relay, false);
   // The rendered section shows the commands of each network, the Windows line only on mainnet.
   const mainPanel = String(MINE.gpuPanel(murk(), { network: "mainnet", hrp: "murk" }));
-  for (const text of [main.clone, main.fetch, main.create, main.mine, main.send, main.windowsEnv, "open PowerShell and set the network once in that window", "prefix from every command in this list"]) assert.ok(has(mainPanel, text), text);
-  assert.equal((mainPanel.match(/node bin\/murkle\.mjs mine miner MURK --gpu all/g) ?? []).length, 2, "the mine command is copyable at the funding step and the mining step");
-  assert.ok(has(mainPanel, "Send enough bitcoin for the claims you want."));
-  assert.ok(has(mainPanel, "each claim spends one coin from that address and costs about 2,000 to 4,000 sats"), "without a fee rate the page gives a range");
-  assert.ok(has(mainPanel, "--prepare-coins n") && has(mainPanel, "--max-claims n"));
+  const plainPanel = String(mainPanel).replace(/<span class="mi-nobr">([^<]*)<\/span>/g, "$1"); // a flag is wrapped whole; the command text is unchanged
+  for (const text of [main.clone, main.fetch, main.create, main.mine, main.send, main.windowsEnv, "open PowerShell and set the network once in that window", "prefix from every command in this list"]) assert.ok(has(plainPanel, text), text);
+  assert.equal((plainPanel.match(/node bin\/murkle\.mjs mine miner MURK --gpu all/g) ?? []).length, 1, "the mining command appears once");
+  assert.equal((plainPanel.match(/node bin\/murkle\.mjs mine miner MURK --prepare-coins 20/g) ?? []).length, 1, "and so does the split");
+  assert.ok(has(mainPanel, "First send bitcoin to the mining fee address."));
+  assert.ok(has(mainPanel, "each claim spends one coin of that address and costs the Bitcoin fee (about 684 vB at the next-block rate plus 25%, rounded up to a whole sat/vB, paid up front) plus the 500 sats service fee"), "without a fee rate the page gives the formula in words, not an invented range");
+  assert.doesNotMatch(mainPanel, /2,000 to 4,000/);
+  assert.ok(has(mainPanel, "--max-claims n"));
+  // Step 3 says which address to fund; step 4 why a GPU wants the split.
+  assert.ok(has(mainPanel, "It prints three addresses at once"));
+  assert.ok(has(mainPanel, "The mining fee address is the one to fund for mining."));
+  assert.ok(mainPanel.includes('The <span class="mono">address</span> command prints them again.'), "the address command is named as the way to print them again");
+  assert.ok(has(mainPanel, "A GPU finds many solutions in a short time. Claims paid from a single coin chain on each other"));
+  assert.ok(mainPanel.includes("s unconfirmed change, and Bitcoin nodes accept only about 25 unconfirmed transactions in such a chain."));
+  assert.ok(has(mainPanel, "The miner binds each claim to your largest coin"));
   assert.ok(mainPanel.indexOf("data-gpu-win") < mainPanel.indexOf("mi-gpu-steps"), "the Windows line comes before the steps");
   const rated = String(MINE.gpuPanel(murk(), { network: "mainnet", hrp: "murk", rate: 4 }));
-  assert.match(rated, /costs about <span class="mono t-btc">[^<]*<\/span> at 4 sat\/vB/);
+  // At a next-block rate of 4 the CLI pays headroomRate(4) = 5 sat/vB: 684 x 5 + 500 sats (the claim), and a coin also holds 330 sats of change.
+  assert.ok(rated.includes(`costs about <span class="mono t-btc">${int_(684n * 5n + MINE_FEE.platformSats)} sats</span> at up to 5 sat/vB (684 vB at the next-block rate of 4 plus 25%, rounded up to a whole sat/vB, paid up front, plus the 500 sats service fee)`), rated);
+  assert.ok(rated.includes(`One coin holds <span class="mono t-btc">${int_(684n * 5n + MINE_FEE.platformSats + 330n)} sats</span>: the claim cost plus 330 sats that come back as change`));
+  // 20 coins at difficulty 3,600,000 and 104,000 H/s last 20 x 34.6 s = 692 s = about 12 minutes, on average.
+  assert.ok(has(rated, "At the time per solution above, 20 coins last about 12 minutes on average."));
   assert.ok(has(mainPanel, "whole number of base units"));
   const sigPanel = String(MINE.gpuPanel(murk({ ticker: "DIG" }), { network: "signet", hrp: "mrk" }));
-  for (const text of [sig.clone, sig.fetch, "node bin/murkle.mjs new miner", "node bin/murkle.mjs mine miner DIG --gpu all", "node bin/murkle.mjs send miner DIG <amount> <your-mrk1-address>", "Send enough signet coins for the claims you want.", "An NVIDIA graphics card mines DIG"]) assert.ok(has(sigPanel, text), text);
+  for (const text of [sig.clone, sig.fetch, "node bin/murkle.mjs new miner", "node bin/murkle.mjs mine miner DIG --gpu all", "node bin/murkle.mjs send miner DIG <amount> <your-mrk1-address>", "First send signet coins to the mining fee address.", "An NVIDIA graphics card mines DIG"]) assert.ok(has(sigPanel.replace(/<span class="mi-nobr">([^<]*)<\/span>/g, "$1"), text), text);
   assert.doesNotMatch(sigPanel, /MURKLE_NETWORK|\$env:|open PowerShell/);
   assert.equal((sigPanel.match(/<li>/g) ?? []).length, (mainPanel.match(/<li>/g) ?? []).length, "the same structure on both networks");
-  // The funding step says what the first run does, as the CLI does.
-  assert.ok(has(mainPanel, "after the GPU self-test it prints"));
-  assert.ok(has(mainPanel, "The first run syncs the chain"));
+  // The first run's sync: the October measurement only on mainnet, with its date; never a promised time.
+  assert.ok(has(mainPanel, "In October 2026 a fresh sync replayed blocks 971,316 to 971,726 in 273 s, about 0.67 s for each block on a home connection; the count grows with the chain."));
+  assert.ok(!has(sigPanel, "In October 2026"));
+  assert.doesNotMatch(mainPanel, /can take a minute|It has no coins yet|after the GPU self-test it prints/);
+  // The send block: paid from the BTC fee address, amounts in base units worked out from the token's own divisibility and reward.
+  assert.ok(has(mainPanel, "A send is paid from the BTC fee address that "));
+  assert.ok(mainPanel.includes(" printed, not from the mining fee address, so fund that address for the send's network fee first."));
+  assert.ok(has(mainPanel, "Amounts are in base units: 1 MURK = 100,000,000 base units, so one claim of 1,000 MURK is "));
+  assert.ok(mainPanel.includes('<span class="mono">100000000000</span>.'));
+  const dig = String(MINE.gpuPanel(murk({ ticker: "DIG", divisibility: 2, reward: "5000" }), { network: "signet", hrp: "mrk" }));
+  assert.ok(has(dig, "1 DIG = 100 base units, so one claim of 50 DIG is "));
+  assert.ok(dig.includes('<span class="mono">5000</span>.'));
+  assert.ok(has(String(MINE.gpuPanel(null, { network: "mainnet", hrp: "murk" })), "Amounts are in base units, the smallest unit of the token"));
+  // What the CLI says about the address: "new" prints it, and the page names the same words.
+  assert.match(bin, /\(fund this one to mine; it pays self-paid mining claims only\)/);
   assert.match(bin, /mining fee address \$\{account\.address\} \(separate from the BTC fee key; it pays only claims\)/);
   assert.match(bin, /no coins at the mining fee address \$\{account\.address\}; fund it with/);
 });
@@ -2033,4 +2112,22 @@ test("/mine GPU section release gate: once gpu/pins.json pins builds it pins bot
   const files = Object.keys(pins.files ?? {});
   if (!files.length) return; // gpu-v1.0.0 is not published and pinned yet: deploy of the GPU section waits for it (npm run gpu:fetch fails until then)
   for (const platform of ["linux-x64", "win32-x64"]) assert.ok(files.some((f) => f.includes(platform)), `gpu/pins.json pins a ${platform} build`);
+});
+
+test("/mine GPU section on a phone: the copy button sits beside the command, outside its scroll area, and the intro shrinks only inside the section", () => {
+  const css = src("web/src/share/public.css");
+  const rule = (sel) => css.match(new RegExp(`^${sel.replace(/[.*+?^${}()|[\]\\]/g, "\$&")} \{([^}]*)\}`, "m"))?.[1] ?? "";
+  assert.match(rule(".mi-cmd"), /display: flex/, "a flex row: command, then button");
+  assert.match(rule(".mi-cmd pre"), /flex: 1 1 auto; min-width: 0/);
+  assert.match(rule(".mi-cmd pre"), /overflow-x: auto/, "the command scrolls on its own");
+  assert.doesNotMatch(rule(".mi-cmd pre"), /padding: 12px 44px/, "no room kept under a floating button");
+  assert.match(rule(".mi-cmd-copy"), /flex: none/);
+  assert.doesNotMatch(rule(".mi-cmd-copy"), /position: absolute/, "the button no longer covers the text");
+  // The phone indent is declared after the base rules it overrides (same specificity: the later rule wins).
+  const at = (needle) => css.indexOf(needle);
+  const phone = at("@media (max-width: 479px) { .mi-gpu-steps > li, .mi-gpu-reward, .mi-gpu-links { padding-left: 28px; } }");
+  assert.ok(phone > at(".mi-gpu-reward {") && phone > at(".mi-gpu-links {") && phone > at(".mi-gpu-steps > li {"), "the media rule comes after the base rules");
+  assert.match(css, /@media \(max-width: 479px\) \{ \.mi-cmd pre \{ white-space: pre-wrap; overflow-wrap: anywhere; \} \}/, "on a phone a command wraps instead of hiding behind a sideways scroll");
+  assert.match(css, /@media \(max-width: 479px\) \{ \.mi-gpu \.lead \{ font-size: 16px; line-height: 24px; \} \}/, "only the GPU intro, not every .lead");
+  assert.doesNotMatch(css.replace(/\.mi-gpu \.lead/g, ""), /@media[^{]*\{ *\.lead \{/);
 });
