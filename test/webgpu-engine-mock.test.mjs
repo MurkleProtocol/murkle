@@ -5,11 +5,14 @@
 // kernel text, and one test below runs the engine over the real kernel text on the interpreter.
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { setTimeout as delay } from "node:timers/promises";
+import v8 from "node:v8";
+import vm from "node:vm";
 import { sha256 } from "@noble/hashes/sha256";
 import { hex, unhex } from "../src/bytes.mjs";
 import { GPU_SELF_TEST_VECTORS, GpuError, GpuLane, gpuSelfTest } from "../src/gpu-gate.mjs";
 import { SELF_TEST_VECTORS, nonceOf, passwordOf } from "../src/mine.mjs";
-import { bankCapacities, openWebGpu, segmentEdges } from "../src/webgpu/engine.mjs";
+import { bankCapacities, fillRandom, openWebGpu, segmentEdges } from "../src/webgpu/engine.mjs";
 import { createFakeGpu } from "./fixtures/fake-webgpu.mjs";
 
 const SLOW = process.env.MURKLE_SLOW_TESTS === "1";
@@ -308,6 +311,107 @@ test("close() releases every buffer and the device, and later calls fail with GP
   await assert.rejects(dev.hash(pws(1)), (e) => e.code === "GPU_CLOSED");
   await assert.rejects(dev.search({ challenge: new Uint8Array(32), target: 1n, nonceStart: 0n, count: 1 }), (e) => e.code === "GPU_CLOSED");
   await dev.close(); // twice is fine
+});
+
+// Dawn (the "webgpu" package) ends the native instance when the JS GPU object is collected, even while its adapter and
+// device are in use (segfaults and futex errors on the rented boxes). The caller of openWebGpu may drop its reference.
+async function collect() {
+  v8.setFlagsFromString("--expose-gc");
+  const gc = vm.runInNewContext("gc");
+  for (let i = 0; i < 6; i++) {
+    gc();
+    await delay(5);
+  }
+}
+// Nothing here keeps the GPU object but the engine: the helper returns only the device and a weak reference.
+async function openDroppingGpu() {
+  const fake = createFakeGpu({ tagOf });
+  const weak = new WeakRef(fake.gpu);
+  const dev = await openWebGpu({ gpu: fake.gpu, mode: "gpu", env: GPU_ENV, platform: "linux", memoryMiB: 16, hpw: 2, segments: 3 });
+  return { dev, weak, state: fake.state };
+}
+
+test("the engine keeps the GPU object and the adapter alive while the device is open (garbage collection must not end Dawn's instance), and lets go in close()", async () => {
+  const { dev, weak, state } = await openDroppingGpu();
+  await collect();
+  assert.ok(weak.deref(), "the GPU object was garbage-collected under a live device");
+  assert.ok(dev._held().gpu === weak.deref() && typeof dev._held().adapter.requestDevice === "function");
+  const [tag] = await dev.hash(pws(1)); // and the device still works after the collection
+  assert.equal(tag.length, 32);
+  await dev.close();
+  assert.equal(dev._held(), null, "close() drops the GPU object");
+  assert.equal(state.devices[0].destroyed, true);
+  await collect();
+  assert.equal(weak.deref(), undefined, "nothing else holds the GPU object after close()");
+});
+
+test("a failed open does not leak the GPU object either", async () => {
+  const fake = createFakeGpu({ tagOf, corruptKat: true });
+  const weak = new WeakRef(fake.gpu);
+  await assert.rejects(openWebGpu({ gpu: fake.gpu, mode: "gpu", env: GPU_ENV, platform: "linux", memoryMiB: 16, hpw: 2, segments: 3 }), (e) => e.code === "GPU_SELF_TEST");
+  fake.gpu = null;
+  await collect();
+  assert.equal(weak.deref(), undefined);
+});
+
+test("fillRandom: pieces of at most 65,536 bytes (the Web Crypto limit), every byte filled", () => {
+  const sizes = [];
+  const crypto = {
+    getRandomValues(a) {
+      if (a.byteLength > 65_536) throw Object.assign(new Error("The requested length exceeds 65,536 bytes"), { name: "QuotaExceededError" });
+      sizes.push(a.byteLength);
+      a.fill(0xa5);
+      return a;
+    },
+  };
+  const out = fillRandom(new Uint8Array(2048 * 40), crypto); // 8 GiB: 2,048 slots of 40 bytes
+  assert.deepEqual(sizes, [65_536, 16_384]);
+  assert.ok(out.every((x) => x === 0xa5));
+  assert.equal(fillRandom(new Uint8Array(0), crypto).length, 0);
+  assert.throws(() => globalThis.crypto.getRandomValues(new Uint8Array(65_537)), /65,536/, "the platform really has the limit");
+  assert.equal(fillRandom(new Uint8Array(65_537)).length, 65_537);
+});
+
+test("memory from 8 GiB up: 2,048+ slots open and calibrate (the batch is above 65,536 bytes and the Params uniform buffer is above 64 KiB) within the device limits", { timeout: 120_000 }, async () => {
+  const GiB = 1024 * 1024 * 1024;
+  // the limits a real NVIDIA adapter reports: 2 GiB minus 4 bytes per binding, so 511 slots per bank and a short last bank;
+  // the fake enforces maxUniformBufferBindingSize = 65,536 on every bind group and dynamic offset, as Dawn does
+  const limits = { maxStorageBufferBindingSize: 2 * GiB - 4, maxBufferSize: 2 ** 40 };
+  for (const [memoryMiB, slots] of [[8192, 2048], [16384, 4096]]) {
+    const { dev, state } = await open({ limits }, { memoryMiB, hpw: 2, segments: undefined, targetBatchMs: 1e8, maxDispatchMs: 1e8, hangMs: 1e9 }); // generous: the fake's JS speed must not halve the slots
+    try {
+      assert.equal(dev.info.slots, slots);
+      const caps = bankCapacities(slots, 511, 2);
+      assert.equal(dev.info.banks, caps.length);
+      assert.ok(caps.length > slots / 512, "more banks than a round 2 GiB split: 511 slots per bank, not 512");
+      assert.equal(caps.reduce((a, b) => a + b, 0), slots);
+      assert.ok(slots * 40 > 65_536, "the password batch is above the Web Crypto limit");
+      const params = state.buffers.find((b) => b.label === "params");
+      assert.equal(params.size, dev.info.banks * 258 * 256);
+      if (slots === 2048) assert.ok(params.size > 65_536, "the Params buffer is bigger than one uniform binding is allowed to be");
+      const uniformBinds = state.buffers.filter((b) => b.usage & 0x40);
+      assert.ok(uniformBinds.length >= 2);
+      const hs = await dev.hash(pws(slots + 3));
+      assert.equal(hs.length, slots + 3);
+      assert.equal(state.errors.length, 0);
+    } finally {
+      await dev.close();
+    }
+  }
+});
+
+test("the fake enforces the uniform limits it stands for: a binding above 64 KiB and a dynamic offset beyond the buffer are refused", async () => {
+  const { gpu } = createFakeGpu();
+  const adapter = await gpu.requestAdapter();
+  const d = await adapter.requestDevice({});
+  const bgl = d.createBindGroupLayout({ entries: [{ binding: 4, visibility: 4, buffer: { type: "uniform", hasDynamicOffset: true, minBindingSize: 16 } }] });
+  const buf = d.createBuffer({ label: "u", size: 4096, usage: 0x40 | 0x8 });
+  const big = d.createBuffer({ label: "ubig", size: 131_072, usage: 0x40 | 0x8 });
+  assert.throws(() => d.createBindGroup({ layout: bgl, entries: [{ binding: 4, resource: { buffer: big } }] }), /maxUniformBufferBindingSize/);
+  const bg = d.createBindGroup({ layout: bgl, entries: [{ binding: 4, resource: { buffer: buf, offset: 0, size: 16 } }] });
+  const pass = d.createCommandEncoder().beginComputePass();
+  pass.setBindGroup(0, bg, [4096 - 16 - ((4096 - 16) % 256)]);
+  assert.throws(() => pass.setBindGroup(0, bg, [4096]), /beyond buffer/);
 });
 
 test("an unreported device error (onuncapturederror) fails the device with GPU_EXITED", async () => {

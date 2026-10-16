@@ -130,7 +130,14 @@ export async function runWebGpuBench(o, { log = console.error, emit = () => {}, 
     results[action] = data;
     emit(action, data);
   };
-  const gpuFor = async (flags = []) => loadDawn(flags);
+  // Every GPU object lives until the run ends. Dawn's native instance dies with its JS object, and a collected object
+  // under a live adapter or device crashes the process (the engine holds the one it is given too; this is the second belt).
+  const held = [];
+  const gpuFor = async (flags = []) => {
+    const gpu = await loadDawn(flags);
+    held.push(gpu);
+    return gpu;
+  };
   const openDev = async ({ memory = o.memory, hpw = o.hpw, segments = o.segments, flags = [] } = {}) =>
     openWebGpu({ gpu: await gpuFor(flags), mode: o.mode, memoryMiB: memory, hpw, segments, pipelineDepth: o.depth, log: (m) => log(`  engine: ${m}`) });
 
@@ -200,6 +207,7 @@ export async function runWebGpuBench(o, { log = console.error, emit = () => {}, 
     }
   } finally {
     await pool.close();
+    held.length = 0; // after the last device is closed
   }
   return results;
 }
@@ -363,6 +371,7 @@ async function loseRun(o, openDev, verifyMany, best) {
 async function defaultLoadDawn(flags) {
   const m = await import("webgpu"); // only after the guard has passed
   Object.assign(globalThis, m.globals ?? {});
+  // The caller (runWebGpuBench, and the engine) keeps the returned object alive: see the note there.
   return m.create(flags);
 }
 

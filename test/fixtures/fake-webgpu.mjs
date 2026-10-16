@@ -23,6 +23,8 @@ export const DEFAULT_LIMITS = Object.freeze({
   maxComputeWorkgroupStorageSize: 16384,
   maxStorageBuffersPerShaderStage: 8,
   maxComputeWorkgroupsPerDimension: 65535,
+  maxUniformBufferBindingSize: 65536, // the WebGPU default: one uniform binding is at most 64 KiB (the buffer itself may be larger)
+  minUniformBufferOffsetAlignment: 256,
 });
 
 class FakeBuffer {
@@ -193,6 +195,8 @@ export function createFakeGpu(options = {}) {
         const need = { storage: U.STORAGE, "read-only-storage": U.STORAGE, uniform: U.UNIFORM }[l.buffer.type];
         if (!(buf.usage & need)) throw new Error(`binding ${e.binding}: buffer ${buf.label} lacks the usage`);
         const size = e.resource.size ?? buf.size - (e.resource.offset ?? 0);
+        if (l.buffer.type === "uniform" && size > limits.maxUniformBufferBindingSize) throw new Error(`binding ${e.binding}: ${size} bytes is above maxUniformBufferBindingSize`);
+        if ((e.resource.offset ?? 0) + size > buf.size) throw new Error(`binding ${e.binding}: the range is beyond buffer ${buf.label}`);
         if (l.buffer.type !== "uniform" && size > limits.maxStorageBufferBindingSize) throw new Error(`binding ${e.binding}: ${size} bytes is above maxStorageBufferBindingSize`);
         if (l.buffer.minBindingSize && size < l.buffer.minBindingSize) throw new Error(`binding ${e.binding}: below minBindingSize`);
       }
@@ -216,7 +220,13 @@ export function createFakeGpu(options = {}) {
               const dyn = g.layout.entries.filter((e) => e.buffer.hasDynamicOffset).length;
               if (offsets.length !== dyn) throw new Error(`expected ${dyn} dynamic offsets`);
               offsets.forEach((x) => {
-                if (x % 256) throw new Error(`dynamic offset ${x} is not a multiple of 256`);
+                if (x % limits.minUniformBufferOffsetAlignment) throw new Error(`dynamic offset ${x} is not a multiple of ${limits.minUniformBufferOffsetAlignment}`);
+              });
+              // the bound range of every dynamic-offset binding, moved by its offset, must stay inside its buffer
+              g.layout.entries.filter((e) => e.buffer.hasDynamicOffset).forEach((e, k) => {
+                const r = g.entries.find((x) => x.binding === e.binding).resource;
+                const end = (r.offset ?? 0) + offsets[k] + (r.size ?? r.buffer.size - (r.offset ?? 0));
+                if (end > r.buffer.size) throw new Error(`dynamic offset ${offsets[k]} moves binding ${e.binding} beyond buffer ${r.buffer.label} (${end} > ${r.buffer.size})`);
               });
               bg = g;
               offs = offsets;

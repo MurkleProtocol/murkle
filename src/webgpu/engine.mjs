@@ -44,6 +44,16 @@ const MAX_SLOTS_PER_BANK = 1023; // 1023 * 524288 words stays below 2^32 in the 
 const CAL_SEGMENTS = 64;
 const PRIMS_CASES = 4096;
 
+// crypto.getRandomValues refuses more than 65,536 bytes per call (QuotaExceededError, "The requested length exceeds
+// 65,536 bytes"); a calibration batch is slots * 40 bytes, which passes that from 1,639 slots (8 GiB of memory = 2,048).
+const RANDOM_CHUNK = 65_536;
+
+/** Fills `bytes` with random bytes in pieces the Web Crypto limit allows. Returns `bytes`. */
+export function fillRandom(bytes, crypto = globalThis.crypto) {
+  for (let o = 0; o < bytes.length; o += RANDOM_CHUNK) crypto.getRandomValues(bytes.subarray(o, Math.min(bytes.length, o + RANDOM_CHUNK)));
+  return bytes;
+}
+
 const now = () => globalThis.performance.now();
 const clamp = (x, lo, hi) => Math.min(hi, Math.max(lo, x));
 const limitOf = (limits, name, fallback = Infinity) => (typeof limits?.[name] === "number" ? limits[name] : fallback);
@@ -134,7 +144,7 @@ export async function openWebGpu(opts = {}) {
     throw new GpuError(`requesting a WebGPU device failed: ${e?.message ?? e}`, "GPU_START", { cause: e });
   }
   const dev = new WebGpuDevice({
-    device, adapter, name, vendor, ai, mode, hpw, pipelineDepth, hangMs, log, bindMax, slotsPerBankMax,
+    gpu, device, adapter, name, vendor, ai, mode, hpw, pipelineDepth, hangMs, log, bindMax, slotsPerBankMax,
     afterReadback: opts._afterReadback ?? null,
   });
   try {
@@ -156,6 +166,12 @@ export class WebGpuDevice {
   lost;
   #device;
   #adapter;
+  // The GPU object openWebGpu was given, kept (with the adapter) for the whole life of the device. In Node the "webgpu"
+  // package (Dawn) ties the native instance to that JS object: when it is garbage-collected while the adapter and the
+  // device are still in use, Dawn tears the instance down under them and the process dies in native code (segfault,
+  // futex errors, glibc assertions) after a few batches. The adapter and the device do not keep it alive themselves.
+  // Released in close(). A page's navigator.gpu is a global and needs no help, but holding it costs nothing.
+  #gpu;
   #cfg;
   #closing = false;
   #error = null;
@@ -187,10 +203,11 @@ export class WebGpuDevice {
   #stats = { batches: 0, hashes: 0, busyMs: 0, dispatchMsMax: 0, lastBatchMs: 0 };
   #buffers = [];
 
-  constructor(cfg) {
-    this.#cfg = cfg;
+  constructor({ gpu, ...cfg }) {
+    this.#cfg = cfg; // no GPU object in it: close() must be able to let that go
     this.#device = cfg.device;
     this.#adapter = cfg.adapter;
+    this.#gpu = gpu;
     this.#failed = new Promise((_, reject) => (this.#rejectFailed = reject));
     this.#failed.catch(() => {});
     this.lost = Promise.resolve(this.#device.lost).then((l) => {
@@ -520,7 +537,7 @@ export class WebGpuDevice {
       this.#setPlan(active, K);
       // (d) one real batch at this size, with the readback
       const pw = new Uint8Array(active * PW_BYTES);
-      globalThis.crypto.getRandomValues(pw);
+      fillRandom(pw);
       const t0 = now();
       await this.#runBatch(pw);
       batchMs = now() - t0;
@@ -674,7 +691,15 @@ export class WebGpuDevice {
     this.#device.destroy();
   }
 
-  /** Destroys the buffers and the device. */
+  /** Test hook: what this device keeps alive for Dawn's sake, or null after close(). */
+  _held() {
+    return this.#gpu ? { gpu: this.#gpu, adapter: this.#adapter } : null;
+  }
+
+  /**
+   * Destroys the buffers and the device, then lets go of the GPU object (the native Dawn instance). The adapter reference
+   * stays (info reads on a closed device); nothing submits work through it after close().
+   */
   async close() {
     if (this.#closing) return;
     this.#closing = true;
@@ -686,5 +711,6 @@ export class WebGpuDevice {
       // already gone
     }
     await this.#chain.catch(() => {});
+    this.#gpu = null; // only now: a batch still in flight above needed the native instance
   }
 }
