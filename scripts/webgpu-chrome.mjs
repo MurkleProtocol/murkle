@@ -154,7 +154,8 @@ async function main() {
   let browser;
   try {
     const puppeteer = (await import("puppeteer-core")).default; // only after the guard has passed
-    browser = await puppeteer.launch(launchOptions(o, puppeteer.defaultArgs?.({ headless: true }) ?? []));
+    // puppeteer-core 25 returns a promise from defaultArgs (older versions an array): await covers both.
+    browser = await puppeteer.launch(launchOptions(o, (await puppeteer.defaultArgs?.({ headless: true })) ?? []));
     const results = await runChromeLab(o, { browser, emit });
     process.exitCode = chromeLabOk(results) ? 0 : 1;
   } catch (e) {
