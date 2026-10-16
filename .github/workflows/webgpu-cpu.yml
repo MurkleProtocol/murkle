@@ -52,21 +52,21 @@ jobs:
       - name: Install the webgpu package for this run only
         run: npm i --no-save "webgpu@${WEBGPU_PIN}"
 
+      # The driver file's name differs between Mesa releases (lvp_icd.x86_64.json, lvp_icd.json): find it.
       - name: The Vulkan loader sees the CPU driver only
-        env:
-          VK_ICD_FILENAMES: /usr/share/vulkan/icd.d/lvp_icd.x86_64.json
         run: |
-          ls -l "$VK_ICD_FILENAMES"
-          vulkaninfo --summary
+          ls -l /usr/share/vulkan/icd.d/
+          icd="$(ls /usr/share/vulkan/icd.d/lvp_icd*.json | head -n 1)"
+          test -n "$icd"
+          echo "VK_ICD_FILENAMES=$icd" >> "$GITHUB_ENV"
+          VK_ICD_FILENAMES="$icd" vulkaninfo --summary
 
       - name: Engine test on lavapipe
         env:
           MURKLE_WEBGPU: fallback
-          VK_ICD_FILENAMES: /usr/share/vulkan/icd.d/lvp_icd.x86_64.json
         run: node --test --test-timeout=2400000 test/webgpu-engine.test.mjs
 
       - name: Bench smoke (adapter info)
         env:
           MURKLE_WEBGPU: fallback
-          VK_ICD_FILENAMES: /usr/share/vulkan/icd.d/lvp_icd.x86_64.json
         run: node scripts/webgpu-bench.mjs --info --mode fallback --memory 8 --hpw 1 --segments 2 --threads 1
