@@ -2516,6 +2516,9 @@ test("after a block the claims go out again: 24 earlier carriers are confirmed (
   const payer = new FakeMinePayer({ miningAddress: s.minePayer.address, limit: 25 });
   payer.seed([900_000], { height: TIP0 - 5 });
   usePayer(payer);
+  // This test pins "once per block". The time-based re-ask (confirmRetryMs, 12 s) is tested on its own; on a slow CI runner this test can take
+  // longer than 12 s, which would let a second ask in the same block through, so it is switched off here.
+  s.confirmRetryMs = Infinity;
   const asked = [];
   setRoute(/\/tx\/([0-9a-f]{64})\/status$/, async ({ m }) => {
     asked.push(m[1]);
