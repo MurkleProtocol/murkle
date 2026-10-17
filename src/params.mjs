@@ -107,6 +107,9 @@ export const SECURITY_CONTACT = "https://github.com/MurkleProtocol/murkle/securi
 // /verify, a Source link on /protocol and the private-advisory link on /security.
 export const REPO_URL = "https://github.com/MurkleProtocol/murkle";
 
+// The project's X account; the site footer and the mobile More sheet link to it.
+export const X_URL = "https://x.com/murklebtc";
+
 // Pins written by scripts/build-circuit.mjs (signet artifacts, manifest), by the operator
 // from npm run key:mainnet (mainnet artifacts, manifest) and after the genesis
 // ATTEST confirms (genesisTxid, activationHeight, reservedTickers). One file per network (PINS_FILE).

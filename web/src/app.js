@@ -27,7 +27,7 @@ import "./frame-guard.js";
 import facts from "./facts.json";
 import {
   ADDRESS_HRP, ARTIFACT_SHA256, BRAND, GENESIS_TXID, ACTIVATION_HEIGHT, IS_SIGNET, LEGACY_STORAGE_PREFIX, MANIFEST_SHA256,
-  NETWORK_TAG, NOT_LAUNCHED, PRE_GENESIS, REPO_URL, STORAGE_PREFIX,
+  NETWORK_TAG, NOT_LAUNCHED, PRE_GENESIS, REPO_URL, STORAGE_PREFIX, X_URL,
 } from "./config.js";
 
 // The honesty ribbon per network: signet keeps its words; mainnet says it has not launched until
@@ -603,6 +603,7 @@ function footerMarkup() {
     )}</nav>`;
   const source = [["/verify#run", "Run an indexer"], ["/protocol", "Specification"]];
   if (REPO_URL) source.unshift([REPO_URL, "Repository"]);
+  if (X_URL) source.push([X_URL, "X (@murklebtc)"]);
   const vkeyPin = ARTIFACT_SHA256?.vkey ?? facts.artifacts?.vkey?.sha256 ?? null;
   const c = facts.circuit ?? {};
   return html`<div class="container">
@@ -688,7 +689,7 @@ function openMore() {
       : html`<a href="${href}" data-link data-sheet-close>${icon(ic)}<span>${label}</span></a>`;
   const items = inApp
     ? [link("/app/receive", "receive", "Receive"), html`<button type="button" data-action="add-btc">${icon("plus")}<span>Add BTC</span></button>`, link("/app/launch", "launch", "Launch a token"), link("/app/settings", "settings", "Settings"), link("/", "arrow-left", "Back to site"), html`<button type="button" data-action="lock-now" data-sheet-close>${icon("lock")}<span>Lock now</span></button>`]
-    : [link("/verify", "proof", "Verify"), link("/security", "seal", "Security"), link("/protocol", "notes", "Protocol"), link("/verify#run", "server", "Run an indexer"), REPO_URL ? link(REPO_URL, "code", "Source") : ""];
+    : [link("/verify", "proof", "Verify"), link("/security", "seal", "Security"), link("/protocol", "notes", "Protocol"), link("/verify#run", "server", "Run an indexer"), REPO_URL ? link(REPO_URL, "code", "Source") : "", X_URL ? link(X_URL, "external", "X (@murklebtc)") : ""];
   let then = null;
   const s = openSheet({
     title: "More",

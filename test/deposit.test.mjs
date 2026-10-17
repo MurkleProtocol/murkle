@@ -495,6 +495,7 @@ function shell({ load, unlocked = true } = {}) {
     streamerOn: () => false,
     themeControl: () => "",
     REPO_URL: null,
+    X_URL: null,
   };
   const fns = new Function(...Object.keys(deps), `${code}\nreturn { addBtc, walletMenu, openMore };`)(...Object.values(deps));
   return { ...fns, ui, log };

@@ -88,3 +88,4 @@ export const NETWORK_TAG = NETWORK_NAME.toUpperCase();
 export const NOT_LAUNCHED = !IS_SIGNET && PRE_GENESIS;
 export const MAINNET_NOT_LAUNCHED_TEXT = `${BRAND} has not launched on Bitcoin mainnet. No genesis is pinned, so nothing here can move funds.`;
 export const REPO_URL = P.REPO_URL ?? null;
+export const X_URL = P.X_URL ?? null;
