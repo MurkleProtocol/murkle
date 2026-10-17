@@ -22,7 +22,13 @@
 //     --correct N         N seeded random passwords, GPU against hash-wasm (--threads T); --noble M of them also against noble
 //     --sweep             memory x HPW grid, --seconds S each (60), best cell repeated 3 times
 //     --robust            the best cell (or --memory / --hpw) with Dawn's robustness checks off, next to the normal run
-//     --lane S            GpuLane for S seconds against a synthetic target (--difficulty D, default 10000), pool-verified
+//     --lane S            GpuLane for S seconds against a synthetic target (--difficulty D, default 3600000), pool-verified
+//                         3600000 is the live MURK difficulty (about one hit per 39 s on a 4090): the lane ran at 97-100% of the kernel there.
+//                         A low difficulty such as 10000 (about 7 hits a second) mostly measures hit handling (a discarded batch + a CPU
+//                         re-check per hit: about 63-83% of the kernel on a 4090). The lane's rounds last about 2 s, so one probe is re-hashed
+//                         about every 2 s (the browser's rounds last about 1 s). The probe is awaited after the next search, not before it:
+//                         +0.8% in the verify run and about +2% in the profile run with an idle CPU at the live difficulty (the run-to-run
+//                         noise is about 1.7%), about 5-8% recovered with the CPU busy.
 //     --watchdog          dispatchMsMax at the auto config, and the time of one batch at 2 GiB with a single segment
 //     --lose              destroys the device under a running search: GPU_EXITED, then a restart and a passing self-test
 //   options: --memory MiB (default 4096)  --hpw 1|2|4|8 (2)  --segments K (auto)  --depth 1..3 (2)
@@ -45,7 +51,7 @@ const ACTIONS = ["info", "startup", "correct", "sweep", "robust", "lane", "watch
 
 export function parseWebGpuBenchArgs(argv, env = process.env) {
   const o = {
-    actions: [], correct: 20_000, noble: 2000, seconds: 60, runs: 3, lane: 600, difficulty: 10_000, memory: 4096, hpw: 2, segments: undefined, depth: 2,
+    actions: [], correct: 20_000, noble: 2000, seconds: 60, runs: 3, lane: 600, difficulty: 3_600_000, memory: 4096, hpw: 2, segments: undefined, depth: 2,
     threads: Math.max(1, Math.min(8, os.availableParallelism() - 1)), sweepMemory: [1024, 2048, 4096, 8192], sweepHpw: [1, 2, 4], mode: env.MURKLE_WEBGPU === "fallback" ? "fallback" : "gpu", out: null,
   };
   const whole = (name, v, min = 1) => {

@@ -25,7 +25,7 @@
  *   publicFeeRate(esplora?) -> Promise<number>     next-block sat/vB, as the wallet reads it
  *   durationText(seconds), speedNote(a) -> string  expected time per solution = difficulty / hash rate
  *   GPU_HASHRATE, GPU_RUN_HASHRATE, gpuSpeedNote(a), gpuCommands({ network, ticker }) -> { clone, fetch, create, prepare, mine, ... }   the GPU section
- *   WEBGPU_CHROME_4090, WEBGPU_RUN, WEBGPU_RUN_CHECKED_3090, WEBGPU_8GIB, gpuTabNote(a)  the graphics card in the browser tab (beta): measured rates (4 GiB, and 8 GiB) and the per-difficulty sentence
+ *   WEBGPU_CHROME_4090, WEBGPU_RUN, WEBGPU_RUN_CHECKED_4090, WEBGPU_8GIB, gpuTabNote(a)  the graphics card in the browser tab (beta): measured rates (4 GiB, and 8 GiB) and the per-difficulty sentence
  *   minedPill(a), minedCard(a, { walletReady }), mineBlock(a, { walletReady })
  */
 import { html } from "../ui/dom.js";
@@ -183,8 +183,14 @@ export const WEBGPU_CHROME_4090 = 95_000;
  * RTX 4090, 51,800 on an RTX 3090 and 31,800 on an RTX 3060.
  */
 export const WEBGPU_RUN = Object.freeze([["RTX 4090", 90_800], ["RTX 3090", 51_800], ["RTX 3060", 31_800]]);
-/** A full GpuLane run with every answer re-checked, in Node on Linux with 4 GiB: about 44,500 H/s on an RTX 3090 (44,550 measured). */
-export const WEBGPU_RUN_CHECKED_3090 = 44_500;
+/**
+ * A full GpuLane run with every answer re-checked on a rented RTX 4090 (Linux), at the live difficulty 3,600,000: it kept 97-100% of the
+ * kernel measured in the same session (88,368 -> 89,093 H/s at 4 GiB, 103,087 -> 103,940 at 8 GiB, over 300 s, outside the browser), about
+ * 98%; only the 4 GiB figure is printed, because the 8 GiB kernel figure (WEBGPU_8GIB) comes from another session and box. The page in
+ * headless Chrome averaged about 94,000 H/s at 4 GiB (means 94,343 and 95,667; the median, 91,800, is lower because the samples take few values).
+ * The earlier figures were taken at difficulty 10,000, where the run is about 63-83% of the kernel (hit handling dominates).
+ */
+export const WEBGPU_RUN_CHECKED_4090 = Object.freeze({ share: 98, gib4: 89_000, chrome: 94_000, difficulty: 3_600_000 });
 /** With 8 GiB, which only fits cards with spare memory, the two cards measured with it were faster: RTX 4090 about 103,000 H/s, RTX 3060 about 35,900. */
 export const WEBGPU_8GIB = Object.freeze([["RTX 4090", 103_000], ["RTX 3060", 35_900]]);
 

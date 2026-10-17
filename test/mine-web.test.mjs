@@ -2360,7 +2360,7 @@ test("/mine: the graphics-card-in-the-tab section holds the measured numbers exa
   const M = await import("../web/src/share/mined.js");
   assert.equal(M.WEBGPU_CHROME_4090, 95_000);
   assert.deepEqual(M.WEBGPU_RUN, [["RTX 4090", 90_800], ["RTX 3090", 51_800], ["RTX 3060", 31_800]], "Node, 4 GiB");
-  assert.equal(M.WEBGPU_RUN_CHECKED_3090, 44_500);
+  assert.deepEqual(M.WEBGPU_RUN_CHECKED_4090, { share: 98, gib4: 89_000, chrome: 94_000, difficulty: 3_600_000 }, "RTX 4090, live difficulty");
   assert.deepEqual(M.WEBGPU_8GIB, [["RTX 4090", 103_000], ["RTX 3060", 35_900]]);
   const panel = String(MINE.gpuTabPanel(murk({ difficulty: "3600000" }), { rate: 1 }));
   assert.match(panel, /id="gpu-tab-h"/);
@@ -2368,9 +2368,9 @@ test("/mine: the graphics-card-in-the-tab section holds the measured numbers exa
   assert.ok(inc(panel, "Mine with your graphics card in this tab (beta)"));
   assert.ok(inc(panel, "On the Mine page, tick \"Use the graphics card (beta)\" and this tab searches with your graphics card as well as the processor. It runs on WebGPU, which current Chrome and Edge have on desktop computers. It is off by default and is off again after every reload."));
   const measured = panel.match(/<p[^>]*data-gpu-tab-measured[^>]*>([\s\S]*?)<\/p>/)[1];
-  for (const n of ["95,000", "90,800", "51,800", "31,800", "44,500", "103,000", "35,900", "1,000"]) assert.ok(measured.includes(n), `${n} is stated`);
-  for (const n of ["72,000", "45,000", "28,000"]) assert.ok(!measured.includes(n), `${n} (an 8 GiB or older figure) is gone`);
-  assert.ok(inc(measured, "Measured on Linux with NVIDIA cards, 1 hash per workgroup and 4 GiB of graphics memory in use: one RTX 4090 computed about 95,000 hashes per second in Chrome and about 90,800 measured with the same code outside the browser; an RTX 3090 gave about 51,800 and an RTX 3060 about 31,800 there. A full mining run with every answer re-checked, measured outside the browser, gave about 44,500 on the RTX 3090. With 8 GiB, which suits cards with spare memory, the RTX 4090 was faster (about 103,000) and so was the RTX 3060 (about 35,900). The page uses 4 GiB unless you pick another size beside the box. A desktop browser tab without the graphics card does about 1,000."));
+  for (const n of ["95,000", "90,800", "51,800", "31,800", "89,000", "94,000", "103,000", "35,900", "1,000"]) assert.ok(measured.includes(n), `${n} is stated`);
+  for (const n of ["72,000", "45,000", "44,500", "28,000"]) assert.ok(!measured.includes(n), `${n} (an 8 GiB or older figure) is gone`);
+  assert.ok(inc(measured, "Measured on Linux with NVIDIA cards, 1 hash per workgroup and 4 GiB of graphics memory in use: one RTX 4090 computed about 95,000 hashes per second in Chrome and about 90,800 measured with the same code outside the browser; an RTX 3090 gave about 51,800 and an RTX 3060 about 31,800 there. On the RTX 4090 a full mining run with every answer re-checked kept about 98% of the card's rate (about 89,000 hashes per second at 4 GiB, measured outside the browser at difficulty 3,600,000), and the page in Chrome averaged about 94,000. With 8 GiB, which suits cards with spare memory, the RTX 4090 was faster (about 103,000) and so was the RTX 3060 (about 35,900). The page uses 4 GiB unless you pick another size beside the box. A desktop browser tab without the graphics card does about 1,000."));
   // 3,600,000 / 90,800 = 40 s, / 31,800 = 113 s, / 1,000 = 3,600 s
   assert.equal(M.durationText(3_600_000 / 90_800), "about 40 seconds");
   assert.equal(M.durationText(3_600_000 / 31_800), "about 2 minutes");

@@ -20,6 +20,8 @@ test("argument parsing: actions, numbers, lists, modes and refusals", () => {
   assert.deepEqual([o.correct, o.noble, o.threads, o.seconds, o.hpw, o.memory, o.lane, o.out, o.mode], [100, 5, 3, 7, 4, 2048, 30, "r.json", "fallback"]);
   assert.deepEqual([o.sweepMemory, o.sweepHpw], [[1024, 2048], [1, 2]]);
   assert.equal(parseWebGpuBenchArgs([], { MURKLE_WEBGPU: "gpu" }).mode, "gpu");
+  assert.equal(parseWebGpuBenchArgs([], {}).difficulty, 3_600_000, "--lane defaults to the live MURK difficulty");
+  assert.equal(parseWebGpuBenchArgs(["--lane", "5", "--difficulty", "10000"], {}).difficulty, 10_000, "--difficulty overrides it");
   assert.throws(() => parseWebGpuBenchArgs(["--hpw", "3"]), /hpw/);
   assert.throws(() => parseWebGpuBenchArgs(["--depth", "4"]), /depth/);
   assert.throws(() => parseWebGpuBenchArgs(["--nope"]), /unknown argument/);

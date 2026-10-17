@@ -305,15 +305,29 @@ export class GpuLane {
     const ch = challengeBytes(challenge);
     const tgt = typeof target === "string" ? BigInt(`0x${target}`) : asBig(target, "target");
     const n = asBig(count, "count");
-    await this.#settleProbe();
+    // The random probe: one uniformly random nonce of every round (random % count) comes back with the GPU's tag and
+    // is re-hashed on the CPU. Every nonce is equally likely to be the one, so a GPU that gets a fraction f of its
+    // hashes wrong is caught in a round with probability f. The probe rate therefore depends on the round size: one
+    // probe per round, so up to about 60 a minute in the browser (rounds of about 1 s) and about 30 a minute in the bench's
+    // lane run (rounds of about 2 s). The probe check of round N is awaited AFTER round N + 1's search returns, not
+    // before it starts: waiting before it left the GPU idle for the whole Argon2 re-hash (15-23 ms per round on a
+    // rented RTX 4090). Measured at the live difficulty (3,600,000): +0.8% in the verify run and about +2% in the
+    // profile run with an idle CPU, the same size as the run-to-run noise of about 1.7% (kernel 91,371 vs 92,934); with 22 busy CPU threads about 5-8% of the rate was recovered. The detection rate is the same;
+    // only the verdict arrives one round later, and the settle below still runs before this method returns anything
+    // (a candidate or "none").
     const probe = Number(bytesToBig(Uint8Array.from(this.randomBytes(6))) % n);
     let res;
     try {
       res = await this.device.search({ challenge: ch, target: tgt, nonceStart: counterBig(nonceStart), count: n, probe, signal, timeoutMs });
     } catch (e) {
-      if (e instanceof GpuError && !NO_RESTART_CODES.has(e.code)) await this.#restart(e);
+      if (e instanceof GpuError && !NO_RESTART_CODES.has(e.code)) {
+        // the previous round's probe is still unjudged: a wrong one bans the lane (GPU_WRONG, no restart) instead of being lost with the old device
+        await this.#settleProbe();
+        await this.#restart(e);
+      }
       throw e;
     }
+    await this.#settleProbe(); // the previous round's probe: a mismatch disables the lane and this round's answer is dropped
     if (res.probe) this.#startProbe(ch, res.probe);
     const tried = Number(res.done);
     this.hashed += tried;
