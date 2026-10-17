@@ -1,7 +1,8 @@
-// The hidden WebGPU lab stays hidden: the guard's verdicts, the Vite plugin (stub or real module, lab page only
+// What a default build guarantees about WebGPU: the guard's verdicts, the Vite plugin (stub or lab module, lab page only
 // when asked for), MURKLE_LAB in the Vite config and the build marker, the server's refusal of a lab dist on
-// mainnet, and a default build that carries no WebGPU code (proved on the module graph of the page, and by one real
-// build when MURKLE_SLOW_TESTS=1). The GPU lane of MineController is driven with fake workers.
+// mainnet, no WebGPU code in any eager chunk, the GPU worker fetched only on the tick, and no lab page or stub worker
+// (proved on the module graph, and by one real build when MURKLE_SLOW_TESTS=1). The GPU lane of MineController is
+// driven with fake workers.
 // No GPU, no navigator.gpu, no `webgpu` package, no browser.
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -166,12 +167,14 @@ test("server: a dist whose marker says lab: true is refused on mainnet unless MU
   }
 });
 
-/* ---------- a default build carries no WebGPU code ---------- */
+/* ---------- what a default build guarantees about WebGPU code ---------- */
 
-// The module graph of a page, the way Vite follows it: imports, dynamic imports, `new URL("./x.js", import.meta.url)`
-// workers and import.meta.glob. Bare specifiers (packages) and CSS are not followed; "virtual:murkle-lab" resolves
-// to what the plugin gives (the stub, or the lab index).
-function graph(entries, lab) {
+// The module graph of a page, the way Vite follows it. Bare specifiers (packages) and CSS are not followed;
+// "virtual:murkle-lab" resolves to what the plugin gives (the stub, or the lab index).
+//   lazy true   everything Vite bundles for the page: imports, dynamic imports, `new URL("./x.js", import.meta.url)` workers
+//               and import.meta.glob
+//   lazy false  the eager graph: only static `import ... from` / `import "x"` (nothing a click or a route loads later)
+function graph(entries, lab, { lazy = true } = {}) {
   const seen = new Map();
   const queue = [...entries];
   // a block comment starts at a line start or after a space ("./views/*.js" in a glob string is not one)
@@ -186,11 +189,13 @@ function graph(entries, lab) {
     const specs = new Set();
     for (const m of code.matchAll(/(?:^|[;\s}])(?:import|export)\s[^"'`;]*?from\s*["']([^"']+)["']/g)) specs.add(m[1]);
     for (const m of code.matchAll(/(?:^|[;\s])import\s*["']([^"']+)["']/g)) specs.add(m[1]);
-    for (const m of code.matchAll(/import\(\s*["']([^"']+)["']\s*\)/g)) specs.add(m[1]);
-    for (const m of code.matchAll(/new URL\(\s*["']([^"']+)["']\s*,\s*import\.meta\.url\s*\)/g)) specs.add(m[1]);
-    for (const m of code.matchAll(/import\.meta\.glob\(\s*["']([^"']+)["']\s*\)/g)) {
-      const dir = dirname(join(dirname(file), m[1]));
-      for (const f of readdirSync(dir)) if (/\.js$/.test(f)) specs.add(`./${join(dirname(m[1]), f).replace(/\\/g, "/")}`);
+    if (lazy) {
+      for (const m of code.matchAll(/import\(\s*["']([^"']+)["']\s*\)/g)) specs.add(m[1]);
+      for (const m of code.matchAll(/new URL\(\s*["']([^"']+)["']\s*,\s*import\.meta\.url\s*\)/g)) specs.add(m[1]);
+      for (const m of code.matchAll(/import\.meta\.glob\(\s*["']([^"']+)["']\s*\)/g)) {
+        const dir = dirname(join(dirname(file), m[1]));
+        for (const f of readdirSync(dir)) if (/\.js$/.test(f)) specs.add(`./${join(dirname(m[1]), f).replace(/\\/g, "/")}`);
+      }
     }
     for (const s of specs) {
       if (s === LAB_MODULE) {
@@ -207,46 +212,84 @@ function graph(entries, lab) {
 }
 
 const WEBGPU_WORDS = /requestAdapter|murkle-webgpu-kernel|lab-gpu|navigator\.gpu|[\\/]webgpu[\\/]/;
+const rel = (f) => f.replace(ROOT, "").replace(/\\/g, "/");
+const GPU_PATHS = /web\/src\/(gpu|lab)\/|src\/webgpu\/|src\/gpu-gate\.mjs/;
 
-test("a default build carries no WebGPU code: nothing the app page reaches mentions the adapter, the kernel or the lab page", () => {
-  const app = graph([join(WEB, "src", "app.js")], false);
-  assert.ok(app.size > 60, `the app graph was followed (${app.size} files)`);
-  assert.ok([...app.keys()].some((f) => f.endsWith(join("views", "app-mine.js"))), "the mine view is part of the app");
-  const bad = [...app].filter(([, text]) => WEBGPU_WORDS.test(text)).map(([f]) => f.replace(ROOT, ""));
-  assert.deepEqual(bad, [], "no file of the default graph mentions WebGPU");
-  assert.equal([...app.keys()].some((f) => /[\\/]lab[\\/]|[\\/]webgpu[\\/]|gpu-gate|lab-gpu/.test(f)), false, "no lab, webgpu or gate module is reachable");
+test("(a) no WebGPU code in any eager chunk: the entries of the app page and of the public and mine views reach no WebGPU file, adapter call or kernel", () => {
+  const entries = ["app.js", "views/landing.js", "views/mints.js", "views/mine.js", "views/app-mine.js"];
+  for (const e of entries) {
+    const eager = graph([join(WEB, "src", e)], false, { lazy: false });
+    assert.ok(eager.size > 5, `${e}: the eager graph was followed (${eager.size} files)`);
+    const bad = [...eager].filter(([, text]) => WEBGPU_WORDS.test(text)).map(([f]) => rel(f));
+    assert.deepEqual(bad, [], `${e}: no eager file mentions the adapter, the kernel, the lab page or navigator's gpu`);
+    assert.deepEqual([...eager.keys()].map(rel).filter((f) => GPU_PATHS.test(f)), [], `${e}: no file of web/src/gpu, web/src/lab, src/webgpu or src/gpu-gate.mjs is eager`);
+    // a lab build adds the lab index to the eager graph of the mine view, and it too holds no WebGPU word
+    const eagerLab = graph([join(WEB, "src", e)], true, { lazy: false });
+    assert.deepEqual([...eagerLab].filter(([, text]) => WEBGPU_WORDS.test(text)).map(([f]) => rel(f)), [], `${e}: nor does a lab build's eager graph`);
+  }
+  const mine = graph([join(WEB, "src", "views", "app-mine.js")], false, { lazy: false });
+  assert.ok([...mine.keys()].some((f) => f.endsWith(join("web", "src", "session.js"))), "the mine view's eager graph includes the wallet session");
   const html = read("web/index.html");
-  assert.equal(/lab-gpu|webgpu/i.test(html), false, "index.html does not name the lab page");
+  assert.equal(/lab-gpu|webgpu|gpu-worker/i.test(html), false, "index.html names neither the lab page nor the GPU worker (no preload)");
 });
 
-test("a lab build carries it: through virtual:murkle-lab the app page reaches the worker, the engine and the kernel", () => {
-  const lab = graph([join(WEB, "src", "app.js")], true);
-  const files = [...lab.keys()].map((f) => f.replace(ROOT, "").replace(/\\/g, "/"));
-  for (const f of ["web/src/lab/index.js", "web/src/lab/gpu-worker.js", "src/webgpu/engine.mjs", "src/webgpu/argon2.wgsl.mjs", "src/webgpu/guard.mjs", "src/gpu-gate.mjs"]) {
-    assert.ok(files.some((x) => x.endsWith(f)), `${f} is reachable`);
-  }
-  const all = [...lab.values()].join("\n");
+test("(b) app-mine.js has exactly one worker edge into web/src/gpu/, and that worker reaches the engine, the shader and the gate", () => {
+  const text = read("web/src/views/app-mine.js").replace(/\r\n/g, "\n");
+  const edges = [...text.matchAll(/new URL\(\s*["']([^"']+)["']\s*,\s*import\.meta\.url\s*\)/g)].map((m) => m[1]);
+  const gpu = edges.filter((e) => /(^|\/)gpu\//.test(e));
+  assert.deepEqual(gpu, ["../gpu/gpu-worker.js"]);
+  assert.equal(text.split("../gpu/gpu-worker.js").length - 1, 1, "the file name appears once");
+  assert.match(text, /const spawnGpuWorker = \(\) => new Worker\(new URL\("\.\.\/gpu\/gpu-worker\.js", import\.meta\.url\), \{ type: "module" \}\);/);
+  const worker = graph([join(WEB, "src", "gpu", "gpu-worker.js")], false);
+  const files = [...worker.keys()].map(rel);
+  for (const f of ["src/webgpu/engine.mjs", "src/webgpu/argon2.wgsl.mjs", "src/gpu-gate.mjs"]) assert.ok(files.some((x) => x.endsWith(f)), `${f} is reachable from the worker`);
+  const all = [...worker.values()].join("\n");
   assert.match(all, /requestAdapter/);
   assert.match(all, /murkle-webgpu-kernel/);
+  // the whole app graph reaches the worker through that one edge, and only that file of web/src/gpu/
+  const app = graph([join(WEB, "src", "app.js")], false);
+  const gpuFiles = [...app.keys()].map(rel).filter((f) => f.includes("web/src/gpu/"));
+  assert.deepEqual(gpuFiles, ["web/src/gpu/gpu-worker.js"]);
+});
+
+test("(c) without the lab, no file in the app's lazy graph is under web/src/lab/ and none mentions the stub or the lab page", () => {
+  const app = graph([join(WEB, "src", "app.js")], false);
+  assert.ok(app.size > 60, `the app graph was followed (${app.size} files)`);
+  assert.deepEqual([...app.keys()].map(rel).filter((f) => f.includes("web/src/lab/")), []);
+  assert.equal([...app.values()].some((t) => /gpu-stub-worker|lab-gpu/.test(t)), false);
+});
+
+test("(d) with the lab, the app page reaches the stub worker and the lab index, and the lab page reaches the lab controller, the pool worker and the GPU worker", () => {
+  const lab = graph([join(WEB, "src", "app.js")], true);
+  const files = [...lab.keys()].map(rel);
+  for (const f of ["web/src/lab/index.js", "web/src/lab/gpu-stub-worker.js", "web/src/gpu/gpu-worker.js", "src/webgpu/engine.mjs", "src/webgpu/guard.mjs"]) {
+    assert.ok(files.some((x) => x.endsWith(f)), `${f} is reachable`);
+  }
+  assert.equal(files.some((x) => x.endsWith("web/src/lab/lab-gpu.js")), false, "the lab page is not part of the app page");
   // the standalone lab page reaches the lab controller, the pool worker and the page script
   const page = graph([join(WEB, "src", "lab", "lab-gpu.js"), join(WEB, "src", "lab", "lab-style.js")], true);
-  const pageFiles = [...page.keys()].map((f) => f.replace(ROOT, "").replace(/\\/g, "/"));
+  const pageFiles = [...page.keys()].map(rel);
+  assert.ok(pageFiles.some((f) => f.endsWith("web/src/lab/lab-gpu.js")));
   assert.ok(pageFiles.some((f) => f.endsWith("web/src/lab/pow-pool-worker.js")));
-  assert.ok(pageFiles.some((f) => f.endsWith("web/src/lab/gpu-worker.js")));
+  assert.ok(pageFiles.some((f) => f.endsWith("web/src/gpu/gpu-worker.js")));
   const html = read("web/lab-gpu.html");
   assert.match(html, /\/src\/lab\/lab-gpu\.js/);
   assert.match(html, /Prototype\. Uses this device's GPU only after you press a button\./);
   assert.equal(/<script[^>]*>[^<]/.test(html), false, "no inline script (the CSP forbids it)");
+  // the lab index holds only the stub and the fault hook
+  const index = read("web/src/lab/index.js");
+  assert.match(index, /export const labGpu = Object\.freeze\(\{ spawnStub, faultOf \}\);/);
+  assert.equal(/LAB_TEXT|spawnGpuWorker/.test(index), false);
 });
 
-test("a real default signet build in a scratch directory has no file with requestAdapter, murkle-webgpu-kernel or lab-gpu", { skip: !SLOW && "MURKLE_SLOW_TESTS=1 runs a real vite build" }, async () => {
+test("a real default signet build in a scratch directory: WebGPU code only in the GPU worker, fetched only on the tick; no lab page, no stub worker", { skip: !SLOW && "MURKLE_SLOW_TESTS=1 runs a real vite build" }, async () => {
   const out = scratch("lab-build");
   const dist = join(out, "dist");
   await new Promise((done, fail) => {
     const env = { ...process.env };
     delete env.MURKLE_LAB;
     env.MURKLE_NETWORK = "";
-    execFile(process.execPath, [join(ROOT, "node_modules", "vite", "bin", "vite.js"), "build", "--config", "web/vite.config.mjs", "--outDir", dist, "--emptyOutDir"], { cwd: ROOT, env, timeout: 600_000, maxBuffer: 1 << 26 }, (err, _o, stderr) => (err ? fail(new Error(`${err.message}\n${stderr}`)) : done()));
+    execFile(process.execPath, [join(ROOT, "node_modules", "vite", "bin", "vite.js"), "build", "--config", "web/vite.config.mjs", "--outDir", dist, "--emptyOutDir", "--manifest"], { cwd: ROOT, env, timeout: 600_000, maxBuffer: 1 << 26 }, (err, _o, stderr) => (err ? fail(new Error(`${err.message}\n${stderr}`)) : done()));
   });
   const files = [];
   const walk = (d) => {
@@ -254,12 +297,45 @@ test("a real default signet build in a scratch directory has no file with reques
   };
   walk(dist);
   assert.ok(files.length > 10);
+  const name = (f) => f.slice(dist.length + 1).replace(/\\/g, "/");
+  // 3. no lab page and no stub worker; the marker says lab: false
   assert.equal(files.some((f) => f.endsWith("lab-gpu.html")), false);
-  for (const f of files) {
-    if (!/\.(js|html|css|json|mjs)$/.test(f)) continue;
-    assert.equal(/requestAdapter|murkle-webgpu-kernel|lab-gpu/.test(readFileSync(f, "utf8")), false, `${f} is free of WebGPU code`);
-  }
+  assert.equal(files.some((f) => /gpu-stub-worker/.test(f)), false);
   assert.equal(JSON.parse(readFileSync(join(dist, "murkle-build.json"), "utf8")).lab, false);
+  const text = (f) => readFileSync(f, "utf8");
+  const code = files.filter((f) => /\.(js|html|css|json|mjs)$/.test(f));
+  // 1. the static closure of the entries holds none of the three words
+  const manifest = JSON.parse(readFileSync(join(dist, ".vite", "manifest.json"), "utf8"));
+  const closure = new Set();
+  const add = (key) => {
+    const m = manifest[key];
+    if (!m || closure.has(m.file)) return;
+    closure.add(m.file);
+    for (const i of m.imports ?? []) add(i);
+  };
+  const entries = ["index.html", "src/views/landing.js", "src/views/mints.js", "src/views/mine.js", "src/views/app-mine.js"];
+  for (const e of entries) {
+    assert.ok(manifest[e], `${e} is a manifest entry`);
+    add(e);
+  }
+  assert.ok(closure.size > 3);
+  for (const f of closure) assert.equal(/requestAdapter|murkle-webgpu-kernel|navigator\.gpu/.test(text(join(dist, f))), false, `${f} (eager) is free of WebGPU code`);
+  // exactly the worker file (and chunks only it imports) holds the kernel
+  const workers = code.filter((f) => /^gpu-worker/.test(name(f).split("/").pop()));
+  assert.equal(workers.length, 1, `one gpu-worker file: ${workers.map(name)}`);
+  const holders = code.filter((f) => /murkle-webgpu-kernel/.test(text(f))).map(name);
+  assert.ok(holders.length >= 1);
+  const workerRoot = name(workers[0]);
+  const importsOf = (f) => [...text(join(dist, f)).matchAll(/from\s*["']\.\/([^"']+\.js)["']|import\s*["']\.\/([^"']+\.js)["']/g)].map((m) => join(dirname(f), m[1] ?? m[2]).replace(/\\/g, "/"));
+  const workerClosure = new Set([workerRoot]);
+  for (const f of workerClosure) for (const i of importsOf(f)) if (existsSync(join(dist, i))) workerClosure.add(i);
+  for (const h of holders) assert.ok(workerClosure.has(h), `${h} holding the kernel is the worker or a chunk it imports`);
+  // 2. the app-mine chunk names the worker file; index.html does not preload it
+  const appMine = text(join(dist, manifest["src/views/app-mine.js"].file));
+  assert.ok(appMine.includes(workerRoot.split("/").pop()), "the app-mine chunk contains the worker's file name");
+  const index = text(join(dist, "index.html"));
+  assert.equal(/modulepreload[^>]*gpu-worker|gpu-worker[^>]*modulepreload/.test(index), false, "index.html has no preload of the worker");
+  assert.equal(index.includes("gpu-worker"), false);
 });
 
 /* ---------- the app-mine view: an optional GPU lane that never disturbs the CPU lanes ---------- */
@@ -331,8 +407,10 @@ test("enableGpu: the worker is spawned and told to open; it joins the challenge 
   assert.equal(ctl.workers.length, 2, "the thread count is CPU only");
   assert.equal(cpu.all.length, 2);
 
+  assert.equal(ctl.gpu.checked, false, "the GPU has not opened yet: the box says it is starting");
   g.all[0].emit({ type: "gpu-info", info: { name: "Fake GPU 9000", slots: 64 } });
   assert.equal(ctl.gpu.name, "Fake GPU 9000");
+  assert.equal(ctl.gpu.checked, true, "gpu-info means the GPU opened and its self-test runs");
   g.all[0].emit({ type: "ready", ok: true, impl: "webgpu", name: "Fake GPU 9000" });
   assert.equal(ctl.gpu.state, "ready");
   const s = startsOf(g.all[0]);
@@ -504,20 +582,26 @@ test("a wrong GPU answer bans the lane for the life of the page: it cannot be ti
   b.ctl.terminate();
 });
 
-test("the mine view's source: the toggle is behind labGpu and ?gpu=1, its words live in the lab module, nothing else changed its imports", () => {
+test("the mine view's source: the box is in every build, its worker is created in one place, and no WebGPU word is in the view", () => {
   const text = read("web/src/views/app-mine.js");
-  assert.match(text, /import \{ labGpu \} from "virtual:murkle-lab";/);
-  assert.match(text, /query\?\.get\?\.\("gpu"\) === "1"/);
-  assert.match(text, /gpuSpawn: gpuUi \? lab\.spawnGpuWorker : null/);
-  assert.equal(/Use GPU/.test(text), false, "the toggle's label comes from LAB_TEXT, so a default build has none of it");
-  assert.equal(/requestAdapter|navigator\.gpu|webgpu/i.test(text), false);
-  const labText = read("web/src/lab/index.js");
-  assert.match(labText, /toggle: "Use GPU \(prototype\)"/);
-  assert.match(labText, /export const labGpu = Object\.freeze\(\{ spawnGpuWorker, LAB_TEXT \}\);/);
+  assert.ok(text.includes('import { labGpu } from "virtual:murkle-lab";'));
+  assert.ok(text.includes('export const gpuSupported = (nav = globalThis.navigator) => Boolean(nav) && typeof nav === "object" && "gpu" in nav;'));
+  assert.equal(text.split("spawnGpuWorker(").length - 1, 0, "spawnGpuWorker is passed as a default, never called at render");
+  assert.ok(text.includes("gpuSpawn = spawnGpuWorker, gpuDetect = gpuSupported, lab = labGpu"));
+  assert.equal(["requestAdapter", "navigator.gpu", "murkle-webgpu-kernel", "lab-gpu"].some((w) => text.includes(w)), false, "no WebGPU call or lab page name in the view");
+  assert.equal(["localStorage", "sessionStorage", ".setItem("].some((w) => text.includes(w)), false, "the view itself stores nothing: the box is never stored");
+  // the only thing remembered is the graphics-memory number, by its own module, under its own key; it holds no WebGPU word either
+  const mem = read("web/src/share/gpu-memory.js");
+  assert.ok(text.includes('from "../share/gpu-memory.js"'));
+  assert.equal(mem.split(".setItem(").length - 1, 1, "one write, of the memory choice");
+  assert.ok(mem.includes("storage.setItem(GPU_MEMORY_KEY, String(mib))"));
+  assert.equal(["requestAdapter", "navigator.gpu", "murkle-webgpu-kernel", "lab-gpu", "/webgpu/"].some((w) => mem.includes(w)), false);
+  assert.equal(/mine-gpu["'`]/.test(mem), false, "the box's name is not in the storage module");
+  assert.ok(read("web/src/lab/index.js").includes("export const labGpu = Object.freeze({ spawnStub, faultOf });"));
 });
 
 test("lab files: English only, no banned public words, GPL header on the new source files", () => {
-  const files = ["web/lab-plugin.mjs", "web/lab-gpu.html", "web/src/lab/index.js", "web/src/lab/lab-gpu.js", "web/src/lab/gpu-worker.js", "web/src/lab/pow-pool-worker.js", "web/src/lab/lab-style.js", "scripts/webgpu-chrome.mjs"];
+  const files = ["web/lab-plugin.mjs", "web/lab-gpu.html", "web/src/lab/index.js", "web/src/lab/lab-gpu.js", "web/src/lab/gpu-stub-worker.js", "web/src/gpu/gpu-worker.js", "web/src/lab/pow-pool-worker.js", "web/src/lab/lab-style.js", "scripts/webgpu-chrome.mjs"];
   for (const f of files) {
     const text = read(f);
     assert.equal(/[^\x00-\x7f]/.test(text), false, `${f} is ASCII`);
@@ -525,50 +609,4 @@ test("lab files: English only, no banned public words, GPL header on the new sou
     assert.equal(/\b(anonymous|trustless|untraceable|audited|mixer|secure|invisible)\b/i.test(text), false, `${f} has a banned word`);
     if (f !== "web/src/lab/lab-style.js") assert.match(text, /SPDX-License-Identifier: GPL-3\.0-or-later/, `${f} has the GPL header`);
   }
-});
-
-test("the view shows the GPU toggle only with a lab module and ?gpu=1 in the address; ticking it drives the controller and the caption", async () => {
-  const els = new Map();
-  const el = (sel) => {
-    if (!els.has(sel)) els.set(sel, { innerHTML: "", textContent: "", replaceWith() {}, querySelectorAll: () => [], querySelector: () => null, dataset: {} });
-    return els.get(sel);
-  };
-  const root = { innerHTML: "", ls: {}, querySelector: el, querySelectorAll: () => [], addEventListener(t, f) { (this.ls[t] ??= []).push(f); }, removeEventListener(t, f) { this.ls[t] = (this.ls[t] ?? []).filter((x) => x !== f); }, contains: () => true };
-  // a session with just what the page reads before a token is picked
-  const s = { history: [], relayInfo: null, view: null, state: null, closed: false, sync: async () => {}, loadRelayInfo: async () => {}, relayBalance: null, minePayer: null, mineBtc: null, unisat: null, linkage: () => [], holdDraft() {}, releaseDraft() {} };
-  const gpuWorkers = fakeWorkers();
-  const LAB = { spawnGpuWorker: gpuWorkers.spawn, LAB_TEXT: { toggle: "Use GPU (prototype)", opening: "Opening the GPU.", ready: "GPU lane on:", idle: "waiting" } };
-  const shown = (query, lab) => {
-    els.clear();
-    const off = MINEVIEW.mineView(root, s, new URLSearchParams(query), { spawn: () => ({ postMessage() {}, terminate() {} }), lab });
-    const controls = String(el("[data-mine-controls]").innerHTML);
-    off();
-    return { toggle: controls.includes('name="mine-gpu"'), label: controls.includes("Use GPU (prototype)"), caption: controls.includes("data-mine-gpu") };
-  };
-  assert.deepEqual(shown("", null), { toggle: false, label: false, caption: false }, "a default build: the page is as it was");
-  assert.deepEqual(shown("gpu=1", null), { toggle: false, label: false, caption: false }, "?gpu=1 alone does nothing");
-  assert.deepEqual(shown("", LAB), { toggle: false, label: false, caption: false }, "a lab build without ?gpu=1 shows nothing either");
-  assert.deepEqual(shown("gpu=0", LAB), { toggle: false, label: false, caption: false });
-  assert.deepEqual(shown("gpu=1", LAB), { toggle: true, label: true, caption: true });
-  assert.equal(gpuWorkers.all.length, 0, "no GPU worker exists until the box is ticked");
-
-  // tick the box: the worker is spawned and told to open; the caption follows its messages
-  els.clear();
-  const off = MINEVIEW.mineView(root, s, new URLSearchParams("gpu=1"), { spawn: () => ({ postMessage() {}, terminate() {} }), lab: LAB });
-  const controls = String(el("[data-mine-controls]").innerHTML);
-  assert.equal(/name="mine-gpu"[^>]*checked/.test(controls), false, "unticked by default");
-  root.ls.change[0]({ target: { name: "mine-gpu", checked: true } });
-  assert.equal(gpuWorkers.all.length, 1);
-  assert.deepEqual(gpuWorkers.all[0].posts, [{ type: "open" }]);
-  assert.equal(el("[data-mine-gpu]").textContent, "Opening the GPU.");
-  assert.equal(/name="mine-gpu"[^>]*checked/.test(String(el("[data-mine-controls]").innerHTML)), true);
-  gpuWorkers.all[0].emit({ type: "gpu-info", info: { name: "Fake GPU 9000" } });
-  gpuWorkers.all[0].emit({ type: "ready", ok: true, impl: "webgpu", name: "Fake GPU 9000" });
-  assert.match(el("[data-mine-gpu]").textContent, /^GPU lane on: Fake GPU 9000, waiting$/);
-  gpuWorkers.all[0].emit({ type: "lane-off", reason: "GPU 0 (Fake GPU 9000) disabled: it reported a nonce whose Argon2 hash differs from the reference" });
-  assert.match(el("[data-mine-gpu]").textContent, /disabled: it reported a nonce/);
-  root.ls.change[0]({ target: { name: "mine-gpu", checked: false } });
-  assert.equal(gpuWorkers.all[0].terminated, true);
-  assert.equal(el("[data-mine-gpu]").textContent, "", "switched off by the user: the caption is gone");
-  off();
 });

@@ -38,7 +38,8 @@
 //            events: "relay" (info), "relay-balance" (balance, deposits, pending)
 //   Mining (docs/design/mining-contract.md §10.1):
 //            minePayer: the built-in MINING key (feeKeysOf mineFeeKey), apart from localPayer (transfers,
-//            top-ups); its coins never pay a transfer or a top-up. checkMineBtc(), prepareCoins(n),
+//            top-ups); its coins never pay a transfer or a top-up. checkMineBtc(), prepareCoins(n) (writes a short-lived
+//            {kind:"split"} mark into the history, so another tab never binds a coin the split spent),
 //            moveBetweenKeys({ from, amount, confirm }) (asks first: it links the two addresses)
 //            assetList merges /api/assets with /api/mine (kind "mint" | "pow"); mineInfo = the last /api/mine
 //            prepareMine(asset) -> draft (fresh outputs every call), claimMine({ ... }) -> history entry (W-M)
@@ -555,15 +556,85 @@ export function deriveMineStatus(entry, ctx = {}) {
 const mineError = (code, message, extra = {}) => Object.assign(new Error(message), { code, ...extra });
 
 /**
- * The mining key's coins held by pending claims (W-M): each pending entry's bound coin and,
- * once signed, every coin its carrier spends. "txid:vout" strings.
+ * Runs fn(signal) but gives up after ms: the signal is aborted and the claim step fails with the retry code "indexer" (nothing is paid or
+ * recorded; the solution waits, still valid, and is tried again). A passed signal aborts it too. A lookup that ignores its signal is left behind.
  */
-export function busyMineCoins(history) {
+async function bounded(ms, what, fn, signal) {
+  const ctl = new AbortController();
+  const onAbort = () => ctl.abort(signal.reason);
+  if (signal?.aborted) ctl.abort(signal.reason);
+  signal?.addEventListener("abort", onAbort, { once: true });
+  let timer;
+  const late = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      ctl.abort();
+      reject(mineError("indexer", `${what} did not answer in ${Math.round(ms / 1000)} s. Nothing was paid; the claim is tried again after the next block.`));
+    }, ms);
+  });
+  try {
+    return await Promise.race([fn(ctl.signal), late]);
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener("abort", onAbort);
+  }
+}
+
+/** What a browser says when it cannot give a proof's WebAssembly (or array) memory: too many threads and workers at once. */
+export const PROVE_MEMORY = /could not allocate memory|out of memory|allocation failed/i;
+export const PROVE_MEMORY_TEXT = "The browser ran out of memory while proving, so nothing was sent and nothing was paid. Lowering the Threads slider on the Mine page frees memory.";
+
+/** A memory error of the prover as a coded refusal (code "prove_memory"); any other error as it is. */
+function memoryFailure(e) {
+  return PROVE_MEMORY.test(String(e?.message ?? e)) ? mineError("prove_memory", PROVE_MEMORY_TEXT, { cause: e }) : e;
+}
+
+/** Script names of this page's own workers (the GPU lane and the mining workers): their errors are not the prover's. */
+const OWN_WORKERS = /(?:gpu-worker|mine-worker)[^/]*$/i;
+
+/**
+ * Rejects when the page reports a memory allocation error while a proof runs. The prover's own worker threads throw it where
+ * nobody awaits it, so the proof promise never settles and every claim behind it waits forever (found on a rented RTX 3060 with
+ * 12 mining threads). Where the page has no global event target (tests, Node) it never rejects.
+ */
+function memoryTrip(target = globalThis) {
+  if (typeof target.addEventListener !== "function") return { promise: new Promise(() => {}), stop() {} };
+  let off = () => {};
+  const promise = new Promise((_, reject) => {
+    const on = (ev) => {
+      if (OWN_WORKERS.test(String(ev?.filename ?? ""))) return; // the GPU lane or a mining worker failing is not the prover's memory
+      const text = String(ev?.message ?? ev?.error?.message ?? ev?.reason?.message ?? ev?.reason ?? "");
+      if (PROVE_MEMORY.test(text)) reject(new RangeError(text));
+    };
+    target.addEventListener("error", on);
+    target.addEventListener("unhandledrejection", on);
+    off = () => {
+      target.removeEventListener?.("error", on);
+      target.removeEventListener?.("unhandledrejection", on);
+    };
+  });
+  return { promise, stop: () => off() };
+}
+
+/** How long the coins a split spent count as held, for every tab (a {kind:"split"} history entry, see prepareCoins). */
+export const SPLIT_HOLD_MS = 600_000;
+
+/**
+ * The mining key's coins held by pending claims (W-M): each pending entry's bound coin, the extra coins picked to fund it
+ * (reservedCoins, set when the entry is recorded) and, once signed, every coin its carrier spends. "txid:vout" strings.
+ * Also the inputs of a split mark ({ kind: "split", inputs, at }) younger than SPLIT_HOLD_MS: a split that another tab sent
+ * has spent them, whatever the explorer still lists.
+ */
+export function busyMineCoins(history, now = Date.now()) {
   const busy = new Set();
   for (const h of history ?? []) {
+    if (h.kind === "split") {
+      if (now - Number(h.at ?? h.time ?? 0) < SPLIT_HOLD_MS) for (const c of h.inputs ?? []) busy.add(c);
+      continue;
+    }
     if (h.kind !== "mine" || !MINE_PENDING.has(h.status)) continue;
     if (h.coin) busy.add(h.coin);
     for (const c of h.inputs ?? []) busy.add(c);
+    for (const c of h.reservedCoins ?? []) busy.add(c); // the bound coin and the extra coins picked to fund it, from the moment it is recorded
   }
   return busy;
 }
@@ -581,6 +652,140 @@ export async function carrierRefused(err, txid, esplora = api.esplora) {
   } catch (e) {
     return /:\s*404\b/.test(String(e?.message ?? ""));
   }
+}
+
+/**
+ * This wallet's own unconfirmed transactions after which a claim binds only a confirmed coin. Bitcoin Core refuses a
+ * transaction with more than 25 unconfirmed ancestors or descendants (too-long-mempool-chain; with cluster mempool,
+ * too-large-cluster), counting the transaction itself; 24 keeps one in hand.
+ */
+export const CHAIN_ROOM = 24;
+
+/** A node's refusal of a carrier for the length of its unconfirmed chain: the carrier is held for the next block, never dropped. */
+export const CHAIN_LIMIT = /too-long-mempool-chain|too-large-cluster/i;
+
+const coinKey = (u) => `${u.txid}:${u.vout}`;
+/** A listed coin counts as confirmed unless the explorer says it is not (a listing without status is confirmed). */
+const isConfirmed = (u) => u.status?.confirmed !== false;
+const largest = (coins) => coins.reduce((a, b) => (b.value > a.value ? b : a));
+
+/**
+ * The split transactions of this session that may still be unconfirmed: `splits` minus those with an output listed
+ * confirmed, minus those the explorer's /tx/<id>/status says are confirmed (`confirmed`, a set of txids), and minus those
+ * with no listed output while no self-paid claim is pending (nothing depends on them then).
+ */
+export function pruneSplits(splits, utxos, history, confirmed = new Set()) {
+  const pending = (history ?? []).some((h) => h.kind === "mine" && h.via === "self" && MINE_PENDING.has(h.status));
+  return [...splits].filter((t) => {
+    if (confirmed.has(t)) return false;
+    const mine = utxos.filter((u) => u.txid === t);
+    if (mine.some((u) => u.status?.confirmed === true)) return false;
+    return mine.length > 0 || pending;
+  });
+}
+
+/**
+ * The coins this session's splits spent (outpoint -> ms): forgotten after 10 minutes, or after 2 minutes when the explorer still lists
+ * the coin (the split never reached the network). Within those 2 minutes a claim that bound the coin before the split cannot record it.
+ */
+export function pruneSplitSpent(spent, utxos, now = Date.now()) {
+  const listed = new Set((utxos ?? []).map(coinKey));
+  return new Map([...spent].filter(([k, at]) => now - at < 600_000 && !(now - at >= 120_000 && listed.has(k))));
+}
+
+/**
+ * The history without its spent split marks (kind "split"): a mark goes after 10 minutes, or after 2 minutes while the explorer
+ * still lists one of its coins (the split never reached the network); pruneSplitSpent's rule. Returns the same array when
+ * nothing goes. utxos null: only the age counts.
+ */
+export function pruneSplitMarks(history, utxos = null, now = Date.now()) {
+  const listed = new Set((utxos ?? []).map(coinKey));
+  const all = history ?? [];
+  const keep = all.filter((h) => {
+    if (h.kind !== "split") return true;
+    const age = now - Number(h.at ?? h.time ?? 0);
+    return age < SPLIT_HOLD_MS && !(age >= 120_000 && (h.inputs ?? []).some((c) => listed.has(c)));
+  });
+  return keep.length === all.length ? history : keep;
+}
+
+/**
+ * This wallet's own unconfirmed transactions (see pickMineCoin): listed unconfirmed coins, pending self-paid claims, unconfirmed
+ * splits, claims still proving. `confirmed` holds the txids the explorer says are confirmed: a carrier whose change was spent by
+ * the next claim is no longer listed, so only its status can tell that its block came.
+ */
+function countUnconfirmed({ utxos, history, splits = [], confirmed = new Set() }) {
+  const listedConfirmed = new Set([...utxos.filter((u) => u.status?.confirmed === true).map((u) => u.txid), ...confirmed]);
+  const unconfirmedTx = new Set(utxos.filter((u) => u.status?.confirmed === false).map((u) => u.txid));
+  let proving = 0;
+  for (const h of history ?? []) {
+    if (h.kind !== "mine" || h.via !== "self" || !MINE_PENDING.has(h.status)) continue;
+    if (!h.txid) proving += 1;
+    else if (!listedConfirmed.has(h.txid)) unconfirmedTx.add(h.txid);
+  }
+  for (const t of splits) if (!listedConfirmed.has(t)) unconfirmedTx.add(t);
+  return unconfirmedTx.size + proving;
+}
+
+/**
+ * Which of the mining key's coins a self-paid claim binds and may spend (Bitcoin nodes accept about 25 unconfirmed
+ * transactions in one chain, so a long run of claims must start new chains on confirmed coins).
+ *   utxos   the mining key's coins from Esplora: { txid, vout, value, status?: { confirmed } }
+ *   history the wallet history (busyMineCoins, own pending self-paid claims)
+ *   splits  txids of this session's own split transactions (prepareCoins), until seen confirmed
+ *   need    bigint sats one claim spends: MINE_EST_VSIZE x claim rate + service
+ *   confirmed  txids the explorer reports confirmed (Session.#confirmedTxids): they stop counting at once, listed or not
+ * -> { coin, spend: [coins the carrier may spend], unconfirmed }
+ *  | { wait: "chain" | "coins", unconfirmed, freeSats }
+ * unconfirmed counts this wallet's own unconfirmed transactions: listed unconfirmed coins' txids, the txids of pending
+ * self-paid claims not listed confirmed, unconfirmed splits, and one for each pending claim still proving (no txid yet).
+ * All of them together bound any chain they form, so a claim on a confirmed coin (no ancestors) is always safe, and
+ * overcounting only makes a claim wait one block.
+ */
+export function pickMineCoin({ utxos, history, splits = [], need, room = CHAIN_ROOM, confirmed = new Set() }) {
+  const busy = busyMineCoins(history);
+  const free = utxos.filter((u) => !busy.has(coinKey(u)));
+  const unconfirmed = countUnconfirmed({ utxos, history, splits, confirmed });
+  const enough = free.filter((u) => u.value >= need);
+  const confirmedEnough = enough.filter(isConfirmed);
+  if (confirmedEnough.length) {
+    const coin = largest(confirmedEnough);
+    return { coin, spend: [coin], unconfirmed };
+  }
+  const roomLeft = unconfirmed + 1 <= room;
+  if (enough.length && roomLeft) {
+    const coin = largest(enough);
+    return { coin, spend: [coin], unconfirmed };
+  }
+  const freeSats = free.reduce((s, u) => s + u.value, 0);
+  if (freeSats >= need && free.length && (free.every(isConfirmed) || roomLeft)) return { coin: largest(free), spend: free, unconfirmed };
+  // The room is full and one free coin is unconfirmed: the confirmed free coins alone may still cover the claim (no ancestors).
+  const confirmedFree = free.filter(isConfirmed);
+  if (confirmedFree.length && confirmedFree.reduce((s, u) => s + u.value, 0) >= need) return { coin: largest(confirmedFree), spend: confirmedFree, unconfirmed };
+  return { wait: freeSats < need ? "coins" : "chain", unconfirmed, freeSats };
+}
+
+/**
+ * What the mining key holds, for the page: { sats, coins, ready, unconfirmed, busy, claimsCovered }.
+ *   ready          free (not held by a claim in flight) confirmed coins worth at least one claim
+ *   unconfirmed    free coins that are not confirmed yet
+ *   busy           coins held by claims in flight
+ *   claimsCovered  floor(free sats / need), null while the cost of a claim is not known
+ */
+export function mineCoinSummary({ utxos, history, need = null }) {
+  const busySet = busyMineCoins(history);
+  const all = utxos ?? [];
+  const free = all.filter((u) => !busySet.has(coinKey(u)));
+  const cost = need == null ? null : BigInt(need);
+  const freeSats = free.reduce((s, u) => s + u.value, 0);
+  return {
+    sats: all.reduce((s, u) => s + u.value, 0),
+    coins: all.length,
+    ready: cost === null ? 0 : free.filter((u) => isConfirmed(u) && u.value >= cost).length,
+    unconfirmed: free.filter((u) => !isConfirmed(u)).length,
+    busy: all.length - free.length,
+    claimsCovered: cost !== null && cost > 0n ? Number(BigInt(freeSats) / cost) : null,
+  };
 }
 
 /** The next-block fee rate: mempool.space's fastestFee where it answers, else the backend's estimate. */
@@ -740,6 +945,17 @@ export class Session {
     this.mineBtc = null; // { sats, at } of the mining key, only after an explicit check
     this.mineInfo = null; // the last GET /api/mine
     this.mineHeld = new Set(); // notes rolled into found solutions not yet recorded (W-M before the entry exists)
+    this.mineSplits = new Set(); // txids of this session's own split transactions, until seen confirmed (pickMineCoin)
+    this.splitSpent = new Map(); // "txid:vout" -> ms: coins this session's splits spend, so a claim that bound one before the split took the lock never records it (claimMine step 3)
+    this.refHashes = new Map(); // ref height -> block hash, kept once the block lies 6 deep (it no longer changes): one explorer lookup per reference block, not per claim
+    this.mineStepMs = 25_000; // the longest one indexer or explorer lookup of a claim may take before the claim waits for the next block
+    this.splitBroadcastMs = 30_000; // the longest Prepare coins waits for the answer to its broadcast while it holds the spend lock
+    this.repriceAfterMs = 120_000; // a self-paid claim signed later than this after its bind step asks for the fee rate again
+    this.mineCoins = null; // { utxos, at, need } of the mining key as last listed, for the page's coin summary
+    this.confirmedTx = new Set(); // txids of this wallet's own claims and splits seen confirmed (GET /tx/<id>/status); a confirmed txid stays confirmed
+    this.unconfirmedAt = new Map(); // txid -> { height, at }: the wallet height and time at which its status was last asked and was not "confirmed"
+    this.confirmRetryMs = 12000; // an unconfirmed or failed answer is asked again after this long, or at once when a new block came
+    this.confirmLookupMs = 6000; // the longest a claim waits for those answers
     this.relayPayer = new RelayPayer();
     this.unisat = null;
     this.unisatOff = null; // removes the accountsChanged listener
@@ -1441,8 +1657,14 @@ export class Session {
     // Open, or announced by /api/state while relay info could not be read: a relayer runs and
     // will send scheduled batch items at their release, so none is looked up or stranded early.
     const open = relayOpen() || relayAnnounced(this.state);
+    // Split marks (prepareCoins) are not transfers: they only age out.
+    const live = pruneSplitMarks(this.history);
+    if (live !== this.history) {
+      this.history = live;
+      changed = true;
+    }
     for (const h of this.history) {
-      if (h.era === "legacy") continue;
+      if (h.era === "legacy" || h.kind === "split") continue;
       if (h.kind === "mine") {
         changed = (await this.#refreshClaim(h, ctx)) || changed;
         continue;
@@ -1550,7 +1772,7 @@ export class Session {
         amount: n.amount.toString(), div: a?.divisibility ?? 0, leafIndex: n.leafIndex, spent: n.spent,
       });
     }
-    const all = [...this.history, ...received];
+    const all = [...this.history.filter((h) => h.kind !== "split"), ...received]; // a split mark is bookkeeping, not an activity row
     const h = (x) => x.height ?? (x.status === "accepted" ? 0 : Infinity);
     return all.sort((a, b) => h(b) - h(a) || (b.time ?? 0) - (a.time ?? 0));
   }
@@ -1701,15 +1923,88 @@ export class Session {
   }
 
   /** root: the root the proof is checked against (value or function), the tip's by default. */
-  async #proveAndCheck(onStep, build, { root = () => this.view.tree.root(), detail = null } = {}) {
-    const envelope = await step(onStep, "prove", build, detail);
-    await step(onStep, "verify", async () => {
-      if (!(await verifyEnvelope(envelope, typeof root === "function" ? root() : root))) {
-        throw new Error("The proof built in your browser didn't verify, so nothing was sent. Sync and try again.");
+  async #proveAndCheck(onStep, build, { root = () => this.view.tree.root(), detail = null, beforeProve = null } = {}) {
+    // A memory error of the prover (it can be thrown in the prover's own thread, where nothing awaits it) ends the proof as a
+    // coded refusal, "prove_memory", instead of leaving the claim in Proving for ever. beforeProve (the page waits there for the
+    // memory of the workers it ended to come back) runs before the build starts.
+    const trip = memoryTrip();
+    trip.promise.catch(() => {}); // a trip during that wait is not an unhandled rejection; the race below still sees it
+    try {
+      const envelope = await step(
+        onStep,
+        "prove",
+        async () => {
+          await beforeProve?.();
+          return Promise.race([build(), trip.promise]);
+        },
+        detail,
+      );
+      await step(onStep, "verify", async () => {
+        if (!(await Promise.race([verifyEnvelope(envelope, typeof root === "function" ? root() : root), trip.promise]))) {
+          throw new Error("The proof built in your browser didn't verify, so nothing was sent. Sync and try again.");
+        }
+        return { detail: "Groth16, pinned key" };
+      });
+      return envelope;
+    } catch (e) {
+      throw memoryFailure(e);
+    } finally {
+      trip.stop();
+    }
+  }
+
+  /**
+   * The explorer's hash of block ref, asked once per reference block while it lies 6 deep (a deep block no longer changes). A shallow block is asked every time: the check exists to see a reorg of it. Bounded like the other lookups.
+   */
+  async #refHash(ref, signal) {
+    const known = this.refHashes.get(ref);
+    if (known) return known;
+    const h = await bounded(this.mineStepMs, "The explorer", (sig) => api.esplora.blockHash(ref, { signal: sig }), signal);
+    if ((this.view?.height ?? 0) >= ref + 6 && /^[0-9a-f]{64}$/i.test(String(h).trim())) {
+      this.refHashes.set(ref, String(h).trim());
+      if (this.refHashes.size > 64) this.refHashes.delete(this.refHashes.keys().next().value);
+    }
+    return h;
+  }
+
+  /**
+   * Which of this wallet's own pending carriers and splits the explorer says are confirmed (GET /tx/<id>/status): a carrier whose
+   * change the next claim spent is no longer in the coin listing, so the listing cannot tell that its block came, and the claim
+   * count (pickMineCoin) would stay high until the wallet marks the claim landed. A confirmed txid stays confirmed; one that is
+   * not is asked again when the wallet height changed or confirmRetryMs passed since the last answer (the explorer can be a few seconds behind the wallet), and an answer that fails keeps counting until then.
+   */
+  async #confirmedTxids(utxos = []) {
+    const height = this.view?.height ?? 0;
+    const listed = new Set(utxos.filter((u) => u.status?.confirmed === true).map((u) => u.txid));
+    const want = new Set(this.mineSplits);
+    for (const h of this.history) if (h.kind === "mine" && h.via === "self" && MINE_PENDING.has(h.status) && h.txid && !h.held) want.add(h.txid);
+    const now = Date.now();
+    const recent = (a) => a && a.height === height && now - a.at < this.confirmRetryMs;
+    const ask = [...want].filter((t) => !listed.has(t) && !this.confirmedTx.has(t) && !recent(this.unconfirmedAt.get(t)));
+    // Asked once per block and per confirmRetryMs: marked now, and cleared the moment the explorer says "confirmed". A slow or failing explorer holds the
+    // claim back for confirmLookupMs at most; answers that come later still count for the next claim.
+    for (const t of ask) this.unconfirmedAt.set(t, { height, at: now });
+    const work = (async () => {
+      for (let i = 0; i < ask.length; i += 6) {
+        await Promise.all(
+          ask.slice(i, i + 6).map(async (t) => {
+            try {
+              if ((await api.esplora.txStatus(t))?.confirmed === true) {
+                this.confirmedTx.add(t);
+                this.unconfirmedAt.delete(t);
+              } else this.unconfirmedAt.set(t, { height, at: Date.now() });
+            } catch {
+              // unknown: it keeps counting until it is asked again
+              this.unconfirmedAt.set(t, { height, at: Date.now() });
+            }
+          }),
+        );
       }
-      return { detail: "Groth16, pinned key" };
-    });
-    return envelope;
+    })();
+    let timer;
+    await Promise.race([work, new Promise((r) => (timer = setTimeout(r, this.confirmLookupMs)))]);
+    clearTimeout(timer);
+    return this.confirmedTx;
   }
 
   /** Signs (local key) or hands to Unisat, then broadcasts. Marks `handed` once bytes leave the browser. */
@@ -2062,8 +2357,10 @@ export class Session {
   /** Mining key balance from mempool.space. Only on explicit request or right before paying. */
   async checkMineBtc() {
     if (!this.minePayer) throw new Error("This wallet has no usable mining key.");
-    const sats = await this.minePayer.balance(api.esplora);
+    const all = await this.minePayer.utxos(api.esplora);
+    const sats = all.reduce((s, u) => s + u.value, 0);
     this.mineBtc = { sats, at: Date.now() };
+    this.mineCoins = { utxos: all, at: Date.now(), need: null };
     emit("btc");
     return sats;
   }
@@ -2119,6 +2416,22 @@ export class Session {
   }
 
   /**
+   * The chain tip as late as it can be known: the larger of the wallet's cached height and a fresh indexer tip from one bounded
+   * lookup (8 s at most). The cached height is the stale one in exactly the laptop-sleep case (its next sync needs a round trip),
+   * so the indexer is asked afresh; an answer that does not come falls back to the cache rather than holding anything back.
+   */
+  async #freshTip(assetId, signal) {
+    let tip = this.view?.height ?? 0;
+    try {
+      const t = (await bounded(Math.min(this.mineStepMs, 8_000), "The indexer", (sig) => api.mineAsset(assetId, { signal: sig }), signal))?.tip?.height;
+      if (Number.isSafeInteger(t)) tip = Math.max(tip, t);
+    } catch {
+      /* keep the cached height */
+    }
+    return tip;
+  }
+
+  /**
    * The claim lifecycle after a worker found `nonce` for `draft` (mining-contract.md §10.1):
    *   check   the reference Argon2id (referenceHash: hex password -> Promise<hex>, run in a Web
    *           Worker) must equal the worker's powHash, else code "pow_mismatch" (the page then
@@ -2129,13 +2442,14 @@ export class Session {
    *   bind    relay: info.mine.bindScriptHash; key: a coin of the mining key chosen now (never one
    *           bound to another pending claim); unisat: sha256 of the connected account's script
    *   record  the W-M entry, before proving: one solution, one route
-   *   prove, verify (Groth16 against R[ref]), then submit (relay) or sign and broadcast (key, unisat)
+   *   prove, verify (Groth16 against R[ref]), then submit (relay) or sign and broadcast (key, unisat);
+   *           beforeProve (optional, async) is awaited after the "prove" step shows and before the proof is built
    * route: "relay" | "key" | "unisat". Every refusal before the hand-out throws with a code and
    * leaves no entry; nothing has been paid. linkable: the user's consent to relay while the
    * relay pool is thin (the claim's carrier is then tied to the top-up address by its input,
    * privacy-trace-test.md L1); without it the relayer refuses with "pool_thin". Returns the history entry.
    */
-  async claimMine({ draft, nonce, powHash, route, referenceHash, linkable = false, onStep = () => {}, signal } = {}) {
+  async claimMine({ draft, nonce, powHash, route, referenceHash, linkable = false, onStep = () => {}, beforeProve = null, signal } = {}) {
     if (this.closed) throw new Error(LOCKED);
     if (!draft?.meta) throw new Error("Not a claim draft from prepareMine.");
     if (!["relay", "key", "unisat"].includes(route)) throw new Error(`Unknown claim route: ${route}.`);
@@ -2153,12 +2467,12 @@ export class Session {
         if (reference !== String(powHash).toLowerCase()) {
           throw mineError("pow_mismatch", "This browser's fast hash disagreed with the reference implementation, so the solution was not used and nothing was paid. Mining continues in slow mode.");
         }
-        const btcHash = String(await api.esplora.blockHash(ref)).toLowerCase();
+        const btcHash = String(await this.#refHash(ref, signal)).toLowerCase();
         const again = challengeOf({ asset: draft.asset, refHeight: ref, refHash: btcHash, reward: draft.reward, commitments: draft.commitments });
         if (btcHash !== draft.refHash || hex(again) !== hex(draft.challenge)) {
           throw mineError("refhash", `The indexer's hash of block ${int(ref)} differs from mempool.space's. Nothing was paid. Switch indexer if this repeats.`);
         }
-        const view = await api.mineAsset(assetId, { signal });
+        const view = await bounded(this.mineStepMs, "The indexer", (sig) => api.mineAsset(assetId, { signal: sig }), signal);
         const tip = view?.tip?.height;
         if (!Number.isSafeInteger(tip)) throw mineError("indexer", "The indexer did not report its tip. Nothing was paid.");
         if (view.status !== "mining") throw mineError("closed", `${ticker} is not open for mining now (${String(view.status).replace("-", " ")}). Nothing was paid.`);
@@ -2191,6 +2505,8 @@ export class Session {
       let coin = null;
       let payer = null;
       let utxos = null; // the mining key's coins a self-paid carrier may spend (none held by another pending claim)
+      let claimRate = null; // headroomRate(next-block rate), asked once for a self-paid claim: it prices the bind and the carrier
+      let boundAt = Date.now(); // when the bind step chose the rate and the coins: a claim signed much later asks for the rate again
       // The fee outputs, within the pinned fee policy (fee_policy: nothing paid, no entry).
       const feeOutputs = mineFeeOutputs(fresh.view);
       await step(onStep, "bind", async () => {
@@ -2217,14 +2533,29 @@ export class Session {
         }
         if (!this.minePayer) throw mineError("no_key", "This wallet has no usable mining key.");
         payer = this.minePayer;
-        const all = await payer.utxos(api.esplora);
+        const all = await bounded(this.mineStepMs, "The explorer", () => payer.utxos(api.esplora), signal);
         this.mineBtc = { sats: all.reduce((s, u) => s + u.value, 0), at: Date.now() };
         // A coin bound to, or spent by, another pending claim is never bound or spent again
         // (W-M): not as this claim's first input, and not as an extra input that funds it.
-        const busy = busyMineCoins(this.history);
-        utxos = all.filter((u) => !busy.has(`${u.txid}:${u.vout}`));
-        if (!utxos.length) throw mineError("no_coins", "Every coin of your mining key is bound to a pending claim. Add BTC to it, or prepare coins so several claims can be in flight.");
-        coin = pickBindUtxo(utxos);
+        // A confirmed coin goes first; an unconfirmed one only while this wallet has room in its chain (pickMineCoin).
+        claimRate = headroomRate(await bounded(this.mineStepMs, "The fee estimate", () => nextBlockRate(), signal));
+        const need = BigInt(MINE_EST_VSIZE * claimRate) + feeOutputs.reduce((s, o) => s + o.amount, 0n);
+        const confirmedTx = await this.#confirmedTxids(all);
+        this.mineSplits = new Set(pruneSplits(this.mineSplits, all, this.history, confirmedTx));
+        this.splitSpent = pruneSplitSpent(this.splitSpent, all);
+        this.history = pruneSplitMarks(this.history, all);
+        this.mineCoins = { utxos: all, at: Date.now(), need };
+        // A coin a split of this session spends is never chosen, even while the explorer still lists it.
+        const pick = pickMineCoin({ utxos: all.filter((u) => !this.splitSpent.has(coinKey(u))), history: this.history, splits: [...this.mineSplits], need, confirmed: confirmedTx });
+        if (pick.wait === "chain") {
+          throw mineError("chain_wait", `Bitcoin nodes accept about 25 unconfirmed transactions in a chain, and this wallet has ${pick.unconfirmed} waiting. Nothing was paid: this solution is paid after the next block, while it stays valid (until block ${ref + 10}).`);
+        }
+        if (pick.wait) {
+          throw mineError("no_coins", `Your mining key has ${int(pick.freeSats)} sats free; a claim needs about ${int(need)}. Add BTC or wait for claims in flight to confirm. Nothing was paid.`);
+        }
+        coin = pick.coin;
+        utxos = pick.spend;
+        boundAt = Date.now();
         bind = { bindOutpoint: outpointOf(coin.txid, coin.vout) };
         return { detail: `${int(this.mineBtc.sats)} sats on the mining key` };
       });
@@ -2235,10 +2566,17 @@ export class Session {
         if (this.history.some((h) => h.kind === "mine" && h.solutionId === solutionId)) throw mineError("solution_taken", "This solution was already handed out once (W-M). Nothing more was paid.");
         const taken = lockedNullifiers(this.history, this.view?.height ?? 0, this.view?.nullifiers ?? new Set());
         if (draft.rolled.some((n) => taken.has(String(n)))) throw Object.assign(new Error(NOTES_TAKEN), { code: "notes_taken" });
+        // Another claim (another tab) took a coin since the bind step: nothing is recorded or paid, the claim is tried again. That
+        // is the bound coin and every extra coin that funds the carrier (a coin two carriers spend is a double spend; RBF).
+        if (coin) {
+          const busy = busyMineCoins(this.history);
+          // The split (Prepare coins) holds this lock too: a coin it spent between the bind step and here is gone, whatever the listing said.
+          if ([coin, ...(utxos ?? [])].some((u) => busy.has(coinKey(u)) || this.splitSpent.has(coinKey(u)))) throw mineError("coin_busy", "Another claim took that coin a moment ago. Nothing was paid; it is tried again.");
+        }
         return this.record({
           kind: "mine", via: route === "key" ? "self" : route, ticker, assetId, amount: draft.reward.toString(), reward: draft.reward.toString(), div,
           ref, anchor: ref, lockUntil: ref + MINE_WINDOW, solutionId, commitments: draft.commitments.map(String), spends: draft.rolled.map(String),
-          coin: coin ? `${coin.txid}:${coin.vout}` : null, payerAddress: payer?.address ?? null, status: "proving",
+          coin: coin ? `${coin.txid}:${coin.vout}` : null, ...(coin ? { reservedCoins: [...new Set([coin, ...(utxos ?? [])].map((u) => `${u.txid}:${u.vout}`))] } : {}), payerAddress: payer?.address ?? null, status: "proving",
           ...(route === "relay" && linkable === true ? { linkable: true } : {}),
         });
       });
@@ -2256,7 +2594,7 @@ export class Session {
           });
           this.wallet.artifacts = { wasm: a.wasm, zkey: a.zkey };
         } else onStep({ id: "keys", status: "ok", detail: "cached", ms: 0 });
-        let envelope = await this.#proveAndCheck(onStep, () => this.wallet.finalizeClaim(draft, bind, unhex(nonceHex)), { root });
+        let envelope = await this.#proveAndCheck(onStep, () => this.wallet.finalizeClaim(draft, bind, unhex(nonceHex)), { root, beforeProve });
 
         // 5. hand it out
         if (route === "relay") {
@@ -2275,15 +2613,25 @@ export class Session {
             // The relayer's change address changed: prove again for it; the solution stays the same.
             if (e?.code !== "bind_stale" || !/^[0-9a-f]{64}$/.test(String(e.bindScriptHash ?? ""))) throw e;
             flags.handed = false;
-            envelope = await this.#proveAndCheck(onStep, () => this.wallet.finalizeClaim(draft, { bindScriptHash: unhex(e.bindScriptHash) }, unhex(nonceHex)), { root });
+            envelope = await this.#proveAndCheck(onStep, () => this.wallet.finalizeClaim(draft, { bindScriptHash: unhex(e.bindScriptHash) }, unhex(nonceHex)), { root, beforeProve });
             r = await submit(envelope);
           }
           this.update(entry, { status: "submitted", relayId: r.id, deadline: r.deadline ?? entry.lockUntil, reason: null });
           this.relayWork = this.loadRelayBalance().catch(() => {});
           onStep({ id: "queued", status: "ok", detail: "Goes out with the next block" });
         } else {
-          const feeRate = headroomRate(await nextBlockRate());
+          const feeRate = claimRate ?? headroomRate(await nextBlockRate());
           const outputs = feeOutputs.map((o) => ({ script: o.script, amount: o.amount }));
+          // The proof may end after the claim's window (a laptop that slept, or a claim the page's watchdog gave up on and that kept
+          // proving): then nothing is signed and nothing is sent. Only while nothing has left this browser.
+          if (!flags.handed) {
+            // The wallet's own height is the stale one in exactly the laptop-sleep case, so the indexer's tip is asked afresh (#freshTip).
+            const nowTip = await this.#freshTip(assetId, signal);
+            const left = mineWindowLeft(ref, nowTip, route);
+            if (left < 0 || entry.status !== "proving" || !this.history.includes(entry)) {
+              throw mineError("expired", "This solution's 12-block window closed while its proof was being built, so nothing was signed or sent and nothing was paid.");
+            }
+          }
           let r;
           if (route === "unisat") {
             onStep({ id: "sign", status: "running", detail: "Confirm in Unisat" });
@@ -2300,18 +2648,39 @@ export class Session {
             onStep({ id: "broadcast", status: "ok", detail: "In mempool" });
           } else {
             const signed = await step(onStep, "sign", async () => {
-              // RBF stays possible (the first input keeps the bind), but the rate is next-block up front.
-              // Only coins no other pending claim holds can fund it (utxos, from the bind step).
-              const { tx, fee } = planCarrierTx({ account: payer.account, utxos, envelope, outputs, firstInput: coin, feeRate, sequence: RBF_SEQUENCE });
+              // RBF stays possible (the first input keeps the bind), but the rate is next-block up front. A claim whose proof took
+              // minutes would go out at the rate of its bind step: past repriceAfterMs it asks again and signs at the higher of the two.
+              let rate = feeRate;
+              if (claimRate != null && Date.now() - boundAt > this.repriceAfterMs) {
+                try {
+                  rate = Math.max(claimRate, headroomRate(await bounded(this.mineStepMs, "The fee estimate", () => nextBlockRate(), signal)));
+                } catch {
+                  /* no fresh estimate: the bind step's rate stands */
+                }
+              }
+              // Only coins no other pending claim holds can fund it (utxos, from the bind step): a rate they do not cover ends the
+              // claim before anything is signed (a retry on the next block), never with a coin this claim does not hold.
+              let plan;
+              try {
+                plan = planCarrierTx({ account: payer.account, utxos, envelope, outputs, firstInput: coin, feeRate: rate, sequence: RBF_SEQUENCE });
+              } catch (e) {
+                if (rate > feeRate && /not enough BTC/.test(String(e?.message))) {
+                  throw mineError("no_coins", `The fee rate rose to ${rate} sat/vB while this claim was being proved, and the coins set aside for it do not cover that. Nothing was signed or sent and nothing was paid; it is tried again.`);
+                }
+                throw e;
+              }
+              const { tx, fee } = plan;
               const inputs = [];
               for (let i = 0; i < tx.inputsLength; i++) inputs.push(`${hex(tx.getInput(i).txid)}:${tx.getInput(i).index}`);
-              return { ...signLocal(tx, payer.key), fee: Number(fee), inputs, detail: `${int(Number(fee))} sats at ${feeRate} sat/vB` };
+              return { ...signLocal(tx, payer.key), fee: Number(fee), inputs, detail: `${int(Number(fee))} sats at ${rate} sat/vB` };
             });
             // W-M: the txid and the coins it spends are recorded before the carrier leaves, so a
             // broadcast whose answer is lost is followed by its txid, and its coins stay busy.
-            this.update(entry, { txid: signed.txid, txids: [signed.txid], inputs: signed.inputs, fee: signed.fee });
+            // reservedCoins narrows to the coins the carrier really spends: an extra coin it did not need is free for the next claim.
+            this.update(entry, { txid: signed.txid, txids: [signed.txid], inputs: signed.inputs, reservedCoins: [...signed.inputs], fee: signed.fee });
             flags.handed = true;
             flags.txid = signed.txid;
+            flags.hex = signed.hex;
             const { txid } = await step(onStep, "broadcast", async () => ({ txid: await api.esplora.broadcast(signed.hex), detail: "In mempool" }));
             r = { txid, fee: signed.fee };
           }
@@ -2320,6 +2689,16 @@ export class Session {
         this.wallet.locked = lockedNullifiers(this.history, this.view.height, this.view.nullifiers);
         return entry;
       } catch (e) {
+        if (route === "key" && flags.txid && flags.hex && CHAIN_LIMIT.test(String(e?.message ?? ""))) {
+          // A node refused the signed carrier for the length of its unconfirmed chain. It is held, not dropped: kept signed
+          // and sent again after each block (resendHeldClaims) until its window closes. The claim is handed out (W-M).
+          this.update(entry, {
+            status: "submitted", held: "chain", hex: flags.hex,
+            reason: `Waiting for a block: Bitcoin nodes refused a longer chain of unconfirmed transactions. It is sent again after each block until block ${int(entry.lockUntil - 2)}.`,
+          });
+          this.wallet.locked = lockedNullifiers(this.history, this.view.height, this.view.nullifiers);
+          return entry;
+        }
         if (!flags.handed) {
           // Nothing left this browser: no entry, so the notes and the solution can be used again.
           this.history = this.history.filter((h) => h !== entry);
@@ -2357,6 +2736,48 @@ export class Session {
   }
 
   /**
+   * Sends again the signed carriers a node refused for chain length (held: "chain"), oldest window first: after each new
+   * block, and once after the first sync. A carrier is let go (it keeps no signed copy) once a self-paid claim could no longer be
+   * signed for it, the two-block rule of signing (mineWindowLeft < 0), judged at the tip as late as it is known: the larger of the
+   * wallet's cached height and a fresh indexer tip (one bounded lookup), as the pre-sign check does. Returns { sent, held, dropped }.
+   */
+  async resendHeldClaims() {
+    const out = { sent: 0, held: 0, dropped: 0 };
+    if (this.closed) return out;
+    // A held carrier that landed, expired or was dropped since keeps no signed copy.
+    for (const h of this.history) if (h.kind === "mine" && h.held && !MINE_PENDING.has(h.status)) this.update(h, { held: null, hex: null });
+    const list = this.history
+      .filter((h) => h.kind === "mine" && h.held === "chain" && MINE_PENDING.has(h.status) && h.hex)
+      .sort((a, b) => (a.lockUntil ?? 0) - (b.lockUntil ?? 0));
+    // The cached height is one block behind or worse after a sleep: ask the indexer once for all of them.
+    const tip = list.length ? await this.#freshTip(list.find((h) => h.assetId)?.assetId) : 0;
+    for (const h of list) {
+      if (this.closed) break;
+      if (tip >= h.lockUntil || mineWindowLeft(h.ref, tip, "key") < 0) {
+        this.update(h, { held: null, hex: null });
+        continue;
+      }
+      try {
+        await api.esplora.broadcast(h.hex);
+        this.update(h, { held: null, hex: null, reason: null });
+        out.sent += 1;
+      } catch (e) {
+        const msg = String(e?.message ?? e);
+        if (/txn-already-in-mempool|already in block chain|txn-already-known|already in utxo set/i.test(msg)) {
+          this.update(h, { held: null, hex: null, reason: null });
+          out.sent += 1;
+        } else if (CHAIN_LIMIT.test(msg)) out.held += 1;
+        else if (await carrierRefused(e, h.txid)) {
+          this.update(h, { status: "dropped", held: null, hex: null, reason: msg });
+          out.dropped += 1;
+        } else out.held += 1;
+      }
+    }
+    if (out.dropped && this.view) this.wallet.locked = lockedNullifiers(this.history, this.view.height, this.view.nullifiers);
+    return out;
+  }
+
+  /**
    * "Prepare coins" (mining.md §8.6): splits the mining key's coins into `n` coins of `value`
    * sats each, so that n self-paid claims can be in flight at once. Signed here, then broadcast.
    * -> { txid, fee, n, value }
@@ -2374,13 +2795,62 @@ export class Session {
       if (!quote) throw new Error("No fee estimate right now. Try again in a minute.");
       each = quote.total + 330n;
     }
-    const utxos = await this.minePayer.utxos(api.esplora);
-    const { tx, fee } = planSplitTx({ account: this.minePayer.account, utxos, n, value: each, feeRate: rate });
-    const signed = signLocal(tx, this.minePayer.key);
-    const txid = await api.esplora.broadcast(signed.hex);
+    const all = await this.minePayer.utxos(api.esplora);
+    if (!all.length) throw new Error("Your mining key has no coins to split. Add BTC first.");
+    // Which of this wallet's own carriers are confirmed: an explorer lookup that can take a while, so it runs before the lock.
+    const confirmedTx = await this.#confirmedTxids(all);
+    // Select, sign and broadcast inside the spend lock, as a claim records its coin inside it. The busy coins are read here,
+    // after every await above: a claim that bound a coin while the lookups ran has it held, and the split never spends it.
+    const sent = await spendLock(async () => {
+      this.pull();
+      // A coin a claim in flight is bound to or spends is never split away: that claim's carrier would lose its input.
+      const busy = busyMineCoins(this.history);
+      let utxos = all.filter((u) => !busy.has(coinKey(u)));
+      if (!utxos.length) throw new Error("Every coin of the mining key is held by a claim in flight or by a split just sent. Wait for those to confirm, then split.");
+      // With this wallet's unconfirmed chain already full, a split may spend only confirmed coins (nodes refuse a longer chain).
+      this.mineSplits = new Set(pruneSplits(this.mineSplits, all, this.history, confirmedTx));
+      this.splitSpent = pruneSplitSpent(this.splitSpent, all);
+      this.history = pruneSplitMarks(this.history, all);
+      if (countUnconfirmed({ utxos: all, history: this.history, splits: [...this.mineSplits], confirmed: confirmedTx }) >= CHAIN_ROOM) {
+        utxos = utxos.filter(isConfirmed);
+        if (!utxos.length) throw new Error("This wallet already has about 25 unconfirmed transactions waiting, and the free coins are unconfirmed. Wait for the next block, then split.");
+      }
+      const { tx, fee } = planSplitTx({ account: this.minePayer.account, utxos, n, value: each, feeRate: rate });
+      const signed = signLocal(tx, this.minePayer.key);
+      // The spent coins are noted before the broadcast (its answer can be lost): a claim that bound one of them earlier but has not recorded yet
+      // finds it there (claimMine step 3) and is tried again with a fresh coin list. They are noted twice: in this tab's memory, and as a
+      // short-lived {kind:"split"} entry in the wallet history, which another tab of this wallet reads (busyMineCoins) for 10 minutes.
+      const at = Date.now();
+      const spent = [];
+      for (let i = 0; i < tx.inputsLength; i++) spent.push(`${hex(tx.getInput(i).txid)}:${tx.getInput(i).index}`);
+      this.record({ kind: "split", inputs: spent, at }); // before the broadcast: a refused write (storage full) sends nothing
+      for (const c of spent) this.splitSpent.set(c, at);
+      // The broadcast has no answer deadline of its own, and it runs inside the spend lock: every claim of every tab waits behind it.
+      // So it is cut off after splitBroadcastMs. A timeout is not a failure: the transaction may have gone out, so the marks above
+      // stay and the split counts as unconfirmed. The lock is released by the throw in every case.
+      const ctl = new AbortController();
+      let timer;
+      const late = new Promise((_, reject) => {
+        timer = setTimeout(() => {
+          ctl.abort();
+          reject(mineError("split_timeout", `The split got no answer in ${Math.round(this.splitBroadcastMs / 1000)} s. It may still have gone out, so the coins it spends stay set aside for 10 minutes. Check your coins again in a minute.`));
+        }, this.splitBroadcastMs);
+      });
+      let txid;
+      try {
+        txid = await Promise.race([api.esplora.broadcast(signed.hex, { signal: ctl.signal }), late]);
+      } catch (e) {
+        if (e?.code === "split_timeout") this.mineSplits.add(signed.txid);
+        throw e;
+      } finally {
+        clearTimeout(timer);
+      }
+      this.mineSplits.add(txid);
+      return { txid, fee: Number(fee) };
+    });
     this.mineBtc = null;
     emit("btc");
-    return { txid, fee: Number(fee), n, value: each };
+    return { txid: sent.txid, fee: sent.fee, n, value: each };
   }
 
   /**

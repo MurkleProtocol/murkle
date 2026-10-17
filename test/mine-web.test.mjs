@@ -138,6 +138,8 @@ const LAUNCH = await import("../web/src/views/app-launch.js");
 const WORKER = await import("../web/src/mine-worker.js");
 const { matchPath } = await import("../web/src/router.js");
 const mine = await import("../src/mine.mjs");
+const { FakeMinePayer } = await import("./fixtures/fake-mine-payer.mjs"); // imported here: a top-level await between tests lets the runner end the file's hooks early
+const { checkCarrier } = await import("../scripts/e2e-gpu-mine.mjs");
 const { MINE_FEE, MINE_WINDOW, MIN_DIFFICULTY } = await import("../src/params.mjs");
 const { feeKeysOf } = await import("../src/keys.mjs");
 const { OP, decodeEnvelope, encodeTxBody, opReturnScript, opReturnPayload, NONCE_LEN } = await import("../src/envelope.mjs");
@@ -522,7 +524,7 @@ test("capWarning: at most 10 claims left, or at most 3 times the average claims 
   assert.match(MINEVIEW.capWarning(left(15, { pendingReward: "300" })), /^Only 9 ORE claims are left/, "pendingReward wins");
   // The page gates the claim on it, before anything is checked or paid.
   const page = src("web/src/views/app-mine.js");
-  const claimFn = page.slice(page.indexOf("async function claim(sol) {"), page.indexOf("/* ----- data ----- */"));
+  const claimFn = page.slice(page.indexOf("async function claim(sol, hooks) {"), page.indexOf("/* ----- data ----- */"));
   assert.ok(claimFn.indexOf("capWarning(view)") > 0 && claimFn.indexOf("capWarning(view)") < claimFn.indexOf("s.claimMine("), "the warning comes before the claim");
   assert.match(claimFn, /sol\.capSeen = true;[^]*return paint\(\);/, "automatic claiming stops at the warning; the second click goes on");
   assert.match(page, /"Claim anyway"/);
@@ -1090,7 +1092,7 @@ test("line endings of the web track's files are kept (contract §1.2), and the n
     const s = raw(f);
     assert.equal((s.match(/\r\n/g) ?? []).length, (s.match(/\n/g) ?? []).length, `${f} stays CRLF`);
   }
-  for (const f of ["web/src/router.js", "web/src/views/token.js", "web/src/api.js", "web/src/views/app-activity.js", "web/src/mine-worker.js", "web/src/views/app-mine.js", "test/mine-web.test.mjs"]) {
+  for (const f of ["web/src/router.js", "web/src/views/token.js", "web/src/api.js", "web/src/views/app-activity.js", "web/src/mine-worker.js", "web/src/views/app-mine.js", "test/mine-web.test.mjs", "test/mine-gpu-beta.test.mjs", "test/e2e-gpu-mine.test.mjs", "test/fixtures/fake-mine-payer.mjs", "scripts/e2e-gpu-mine.mjs", "web/src/gpu/gpu-worker.js", "web/src/lab/gpu-stub-worker.js"]) {
     const s = raw(f);
     assert.ok(!s.includes("\r"), `${f} stays LF`);
     assert.ok(s.endsWith("\n"), `${f} ends with a newline`);
@@ -1102,9 +1104,9 @@ test("line endings of the web track's files are kept (contract §1.2), and the n
 /* ======================================================================================= */
 
 /** A wallet that owns one ORE note at TIP0 (so each claim rolls it in), on the fake chain. */
-async function walletWithNote(t, password, coins) {
+async function walletWithNote(t, password, coins, phrase = S.newPhrase()) {
   S.forgetWallet(); // one wallet per browser storage
-  const s = await S.createWallet(S.newPhrase(), password);
+  const s = await S.createWallet(phrase, password);
   t.after(() => S.forgetWallet());
   s.wallet.artifacts = { wasm: WASM, zkey: ZKEY };
   const view0 = { startHeight: 324_592, tree: new MerkleTree(), outputs: [], nullifiers: new Set(), height: TIP0 - 1 };
@@ -1909,8 +1911,13 @@ test("copy of the public mining pages: no banned words, no limit framing, no pro
   const M = await import("../web/src/share/mined.js");
   const MINE = await import("../web/src/views/mine.js");
   const code = (f) => src(f).replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:"'`])\/\/.*$/gm, "$1");
+  // The graphics-card section (gpuTabPanel, gpuTabNote) and GPU_TEXT state measured rates "per block"; they get their own check
+  // below (the same banned words and the limit words, and "per block" only as a measured rate, never a cap on claims).
+  const whole = code("web/src/views/mine.js");
+  const minePage = whole.replace(/export function gpuTabPanel[\s\S]*?\n\}\n/, "");
+  assert.ok(minePage.length < whole.length, "the graphics-card section was set aside for its own check");
   const texts = [
-    code("web/src/views/mine.js"), code("web/src/share/mined.js"), code("web/src/share/mine-fee.js"),
+    minePage, code("web/src/share/mined.js").replace(/export function gpuTabNote[\s\S]*?\n\}\n/, ""), code("web/src/share/mine-fee.js"),
     M.speedNote(murk()), String(M.mineBlock(murk())), String(M.minedCard(murk())), String(MINE.featuredCard(murk())), String(MINE.costPanel({ rate: 3 })), String(MINE.speedPanel(murk())),
     M.gpuSpeedNote(murk()), String(MINE.gpuPanel(murk(), { network: "mainnet", hrp: "murk" })), String(MINE.gpuPanel(murk(), { network: "signet", hrp: "mrk" })),
     ...MINE.HOW_STEPS.flat(),
@@ -1918,6 +1925,20 @@ test("copy of the public mining pages: no banned words, no limit framing, no pro
   for (const re of [/anonymous/i, /trustless/i, /untraceable/i, /audited/i, /mixer/i, /\bsecure/i, /invisible/i, /\blimit/i, /per day/i, /per block/i, /proving key/i, /single-party/i, new RegExp(String.fromCharCode(91, 0x400, 45, 0x4ff, 93))]) {
     assert.doesNotMatch(texts, re, String(re));
   }
+  // The graphics card in the tab (beta): the /mine section, its per-difficulty sentence, the page's whole GPU_TEXT and the source
+  // of the section. "per block" may only state a measured rate, never a cap.
+  const GPU = MINEVIEW.GPU_TEXT;
+  const gpuTexts = [
+    String(MINE.gpuTabPanel(murk(), { rate: 3 })), String(MINE.gpuTabPanel(null)), String(MINE.gpuTabPanel(murk())), M.gpuTabNote(murk()), M.gpuTabNote(null),
+    whole.match(/export function gpuTabPanel[\s\S]*?\n\}\n/)[0], code("web/src/share/mined.js").match(/export function gpuTabNote[\s\S]*?\n\}\n/)[0],
+    ...Object.entries(GPU).filter(([k]) => k !== "coins" && k !== "rate").map(([, v]) => (typeof v === "function" ? v("Name", "1.0 kH/s") : v)),
+    GPU.coins({ sats: 10, coins: 2, ready: 1, unconfirmed: 0, busy: 1, claimsCovered: 3 }, 2000), GPU.rate("12.3", 22_000), GPU.failed("it stopped."), GPU.banned("it was wrong."),
+  ].join("\n");
+  for (const re of [/anonymous/i, /trustless/i, /untraceable/i, /audited/i, /mixer/i, /\bsecure/i, /invisible/i, /\blimit/i, /per day/i, /proving key/i, /single-party/i, /\bcaps?\b/i, /\bcapped\b/i, /\bfree\b/i, /\bsponsor/i, new RegExp(String.fromCharCode(91, 0x400, 45, 0x4ff, 93))]) {
+    assert.doesNotMatch(gpuTexts, re, String(re));
+  }
+  assert.doesNotMatch(gpuTexts, /(at most|no more than|only up to|maximum of|capped at|limited to)[^.]{0,40}(claims?|solutions?)[^.]{0,20}per block/i, "no cap on solutions or claims per block");
+  assert.match(gpuTexts, /per block/, "the measured rate is stated per block");
 });
 
 test("the landing page and /mints do not pull in the fee rules: funding.mjs is imported by mine-fee.js, which only /mine loads", () => {
@@ -2131,4 +2152,1050 @@ test("/mine GPU section on a phone: the copy button sits beside the command, out
   assert.match(css, /@media \(max-width: 479px\) \{ \.mi-cmd pre \{ white-space: pre-wrap; overflow-wrap: anywhere; \} \}/, "on a phone a command wraps instead of hiding behind a sideways scroll");
   assert.match(css, /@media \(max-width: 479px\) \{ \.mi-gpu \.lead \{ font-size: 16px; line-height: 24px; \} \}/, "only the GPU intro, not every .lead");
   assert.doesNotMatch(css.replace(/\.mi-gpu \.lead/g, ""), /@media[^{]*\{ *\.lead \{/);
+});
+
+/* ======================================================================================= */
+/* many claims from one wallet: confirmed coins first, the chain wait, held carriers        */
+/* ======================================================================================= */
+
+/** Wires the fake chain's listing and broadcast routes to a FakeMinePayer (Bitcoin Core's chain limit included). */
+function usePayer(p, attempts = []) {
+  setRoute(/\/address\/([a-z0-9]+)\/utxo$/, ({ m }) => reply(200, m[1] === p.miningAddress ? p.listing() : []));
+  setRoute(/\/api\/tx$/, async ({ init }) => {
+    attempts.push(init.body);
+    net.broadcasts.push(init.body);
+    const a = await p.answer("https://mempool.space/signet/api/tx", "POST", init.body);
+    return reply(a.status, a.body);
+  });
+  return attempts;
+}
+/** One claim of a fresh draft on the key route; the page holds a found solution's notes, so does this. */
+async function claimOnce(s, chain, extra = {}) {
+  const d = s.prepareMine(chain.view());
+  s.holdDraft(d);
+  return s.claimMine({ ...solve(d), route: "key", ...extra });
+}
+
+test("many claims from one wallet and one coin: 24 go out in a block, the 25th waits (chain_wait, nothing recorded), and goes out after the next block", async (t) => {
+  const { s, chain } = await walletWithNote(t, "correct horse battery staple 30", []);
+  const payer = new FakeMinePayer({ miningAddress: s.minePayer.address, limit: 25 });
+  payer.seed([400_000], { height: TIP0 - 5 });
+  usePayer(payer);
+  assert.equal(S.CHAIN_ROOM, 24);
+
+  const txids = [];
+  for (let i = 0; i < 24; i++) {
+    const e = await claimOnce(s, chain);
+    assert.equal(e.status, "submitted", `claim ${i + 1}`);
+    txids.push(e.txid);
+  }
+  assert.equal(payer.accepted.length, 24, "every claim reached the (fake) network; Core would have taken one more");
+  assert.equal(new Set(txids).size, 24);
+  // each carrier is a bound MINE carrier that pays the platform its 500 sats
+  for (const raw of payer.accepted.slice(0, 3)) {
+    const c = checkCarrier(raw);
+    assert.deepEqual(c.problems, []);
+  }
+  const before = { history: s.history.filter((h) => h.kind === "mine").length, broadcasts: net.broadcasts.length };
+  const d25 = s.prepareMine(chain.view());
+  s.holdDraft(d25);
+  const err = await s.claimMine({ ...solve(d25), route: "key" }).then(() => null, (e) => e);
+  assert.equal(err?.code, "chain_wait");
+  assert.match(err.message, /about 25 unconfirmed transactions in a chain, and this wallet has 24 waiting\. Nothing was paid: this solution is paid after the next block, while it stays valid \(until block 330,?010\)\./);
+  assert.equal(err.entry, undefined, "nothing was handed out");
+  assert.deepEqual({ history: s.history.filter((h) => h.kind === "mine").length, broadcasts: net.broadcasts.length }, before, "nothing recorded, nothing sent");
+  // the page keeps the solution: a wait code is not final
+  assert.equal(MINEVIEW.FINAL_CLAIM_CODES.has("chain_wait"), false);
+  assert.equal(MINEVIEW.WAIT_CODES.has("chain_wait"), true);
+  assert.equal(MINEVIEW.onClaimError(err, null).status, "found");
+
+  // a block: the last change is confirmed, so the same solution is paid now (a confirmed coin starts its own chain)
+  payer.confirmAll(TIP0 + 1);
+  chain.tip = TIP0 + 1;
+  s.holdDraft(d25);
+  const e25 = await s.claimMine({ ...solve(d25), route: "key" });
+  assert.equal(e25.status, "submitted");
+  assert.equal(payer.accepted.length, 25);
+  assert.equal(payer.mempool.size, 1, "the confirmed coin started a new chain of one");
+});
+
+test("a node's chain refusal holds the signed carrier: the claim is handed out, its coin stays busy, it is sent again after a block, and not after its window", async (t) => {
+  const { s, chain } = await walletWithNote(t, "correct horse battery staple 31", []);
+  const payer = new FakeMinePayer({ miningAddress: s.minePayer.address, limit: 2 });
+  payer.seed([300_000], { height: TIP0 - 5 });
+  const attempts = usePayer(payer);
+  for (let i = 0; i < 2; i++) assert.equal((await claimOnce(s, chain)).status, "submitted");
+  const held = await claimOnce(s, chain);
+  assert.equal(attempts.length, 3, "the third carrier was tried and refused");
+  assert.equal(payer.accepted.length, 2);
+  assert.equal(held.status, "submitted");
+  assert.equal(held.held, "chain");
+  assert.match(held.hex, /^[0-9a-f]+$/);
+  assert.equal(held.txid, checkCarrier(held.hex).txid, "the kept hex is the carrier whose txid was recorded");
+  assert.match(held.reason, /^Waiting for a block: Bitcoin nodes refused a longer chain of unconfirmed transactions\. It is sent again after each block until block 330,?010\.$/);
+  assert.ok(S.busyMineCoins(s.history).has(held.coin), "its coin stays busy");
+  assert.ok(S.MINE_PENDING.has(held.status));
+  assert.equal(MINEVIEW.waitingCount([], s.history), 1, "the page counts it as waiting to be paid");
+  // before a block it is refused again and kept
+  assert.deepEqual(await s.resendHeldClaims(), { sent: 0, held: 1, dropped: 0 });
+  assert.equal(held.held, "chain");
+  assert.ok(held.hex);
+  // after a block its parent is confirmed: it goes out and the entry is clean
+  payer.confirmAll(TIP0 + 1);
+  assert.deepEqual(await s.resendHeldClaims(), { sent: 1, held: 0, dropped: 0 });
+  assert.deepEqual([held.held, held.hex, held.reason, held.status], [null, null, null, "submitted"]);
+  assert.equal(payer.accepted.length, 3);
+  assert.ok(payer.mempool.has(held.txid));
+  assert.deepEqual(await s.resendHeldClaims(), { sent: 0, held: 0, dropped: 0 }, "nothing left to send");
+  // a held carrier that landed (or expired) meanwhile keeps no signed copy
+  Object.assign(held, { held: "chain", hex: "aa", status: "landed" });
+  await s.resendHeldClaims();
+  assert.deepEqual([held.held, held.hex], [null, null]);
+
+});
+
+test("a held carrier whose window has closed is let go, not sent; one a node refuses for another reason is dropped and frees its coin", async (t) => {
+  const w = await walletWithNote(t, "correct horse battery staple 32", []);
+  const p3 = new FakeMinePayer({ miningAddress: w.s.minePayer.address, limit: 1 });
+  p3.seed([300_000], { height: TIP0 - 5 });
+  usePayer(p3);
+  await claimOnce(w.s, w.chain);
+  const h2 = await claimOnce(w.s, w.chain);
+  assert.equal(h2.held, "chain");
+  const calls = p3.calls.length;
+  w.s.view = { ...w.s.view, height: h2.lockUntil };
+  assert.deepEqual(await w.s.resendHeldClaims(), { sent: 0, held: 0, dropped: 0 });
+  assert.equal(p3.calls.length, calls, "no broadcast once tip >= lockUntil");
+  assert.deepEqual([h2.held, h2.hex], [null, null]);
+
+  // a refusal that is not about the chain still drops a held carrier the explorer does not know
+  const w4 = await walletWithNote(t, "correct horse battery staple 33", []);
+  const p4 = new FakeMinePayer({ miningAddress: w4.s.minePayer.address, limit: 1 });
+  p4.seed([300_000], { height: TIP0 - 5 });
+  usePayer(p4);
+  await claimOnce(w4.s, w4.chain);
+  const h4 = await claimOnce(w4.s, w4.chain);
+  assert.equal(h4.held, "chain");
+  p4.failNext = new Error("POST /tx: 400 sendrawtransaction RPC error: bad-txns-inputs-missingorspent");
+  setRoute(/\/api\/tx$/, async ({ init }) => {
+    const a = await p4.answer("https://mempool.space/signet/api/tx", "POST", init.body);
+    return reply(a.status, a.body);
+  });
+  const r = await w4.s.resendHeldClaims();
+  assert.equal(r.dropped, 1);
+  assert.deepEqual([h4.status, h4.held, h4.hex], ["dropped", null, null]);
+  assert.ok(!S.busyMineCoins(w4.s.history).has(h4.coin), "a dropped claim frees its coin");
+});
+
+test("the coin is checked again inside the lock: a claim that lost its coin to another claim meanwhile records nothing and pays nothing (coin_busy)", async (t) => {
+  const { s, chain } = await walletWithNote(t, "correct horse battery staple 34", []);
+  const payer = new FakeMinePayer({ miningAddress: s.minePayer.address });
+  payer.seed([300_000], { height: TIP0 - 5 });
+  usePayer(payer);
+  const d = s.prepareMine(chain.view());
+  s.holdDraft(d);
+  const coin = payer.listing()[0];
+  const mineCount = () => s.history.filter((h) => h.kind === "mine").length;
+  const before = mineCount();
+  // another tab's claim takes the coin after this claim picked it and before it records
+  const onStep = (st) => {
+    if (st.id === "bind" && st.status === "ok") s.history.push({ kind: "mine", id: "other-tab", via: "self", status: "proving", ref: TIP0, lockUntil: TIP0 + 12, spends: [], commitments: [], coin: `${coin.txid}:${coin.vout}`, at: Date.now() });
+  };
+  const err = await s.claimMine({ ...solve(d), route: "key", onStep }).then(() => null, (e) => e);
+  assert.equal(err?.code, "coin_busy");
+  assert.match(err.message, /^Another claim took that coin a moment ago\. Nothing was paid; it is tried again\.$/);
+  assert.equal(mineCount(), before + 1, "only the other tab's entry is there");
+  assert.equal(payer.calls.length, 0, "nothing was broadcast");
+  assert.equal(MINEVIEW.FINAL_CLAIM_CODES.has("coin_busy"), false);
+  assert.equal(MINEVIEW.WAIT_CODES.has("coin_busy"), true);
+});
+
+test("Prepare coins never splits away the coin a claim in flight is bound to (the claim is proving, the coin is still listed unspent)", async (t) => {
+  const { s, chain } = await walletWithNote(t, "correct horse battery staple 35", []);
+  const payer = new FakeMinePayer({ miningAddress: s.minePayer.address });
+  payer.seed([400_000], { height: TIP0 - 5 });
+  usePayer(payer);
+  const d = s.prepareMine(chain.view());
+  s.holdDraft(d);
+  const coin = payer.listing()[0];
+  let splitErr = null;
+  let splitDone = false;
+  let during = null;
+  // the claim is recorded (its coin is busy) and proving; the user clicks Split now
+  const onStep = async (st) => {
+    if (st.id === "keys" && !splitDone) {
+      splitDone = true;
+      during = { busy: S.busyMineCoins(s.history).has(`${coin.txid}:${coin.vout}`), unspent: payer.listing().some((u) => u.txid === coin.txid) };
+      const before = net.broadcasts.length;
+      splitErr = await s.prepareCoins(3).then(() => null, (e) => e);
+      during.broadcasts = net.broadcasts.length - before;
+    }
+  };
+  const entry = await s.claimMine({ ...solve(d), route: "key", onStep });
+  assert.deepEqual(during, { busy: true, unspent: true, broadcasts: 0 }, "the coin was busy and still listed; the split sent nothing");
+  assert.match(splitErr?.message ?? "", /held by a claim in flight/);
+  assert.equal(entry.status, "submitted", "the claim was paid from its coin");
+  assert.deepEqual(entry.inputs, [`${coin.txid}:${coin.vout}`]);
+});
+
+test("Prepare coins spends only confirmed coins once the wallet's unconfirmed chain is full", async (t) => {
+  const { s } = await walletWithNote(t, "correct horse battery staple 36", []);
+  const payer = new FakeMinePayer({ miningAddress: s.minePayer.address });
+  const confirmedId = payer.seed([400_000], { height: TIP0 - 5 });
+  payer.seed([900_000], { height: null }); // unconfirmed, and the largest: the split would take it first
+  usePayer(payer);
+  const hist = [];
+  for (let i = 0; i < S.CHAIN_ROOM; i++) hist.push({ kind: "mine", id: `p${i}`, via: "self", status: "submitted", ref: TIP0, lockUntil: TIP0 + 12, spends: [], commitments: [], txid: String(i).padStart(64, "a"), coin: `${"c".repeat(63)}${i % 10}:0`, at: Date.now() });
+  s.history.push(...hist);
+  const r = await s.prepareCoins(2);
+  const split = btc.Transaction.fromRaw(Buffer.from(net.broadcasts.at(-1), "hex"), { allowUnknownOutputs: true });
+  assert.deepEqual(Array.from({ length: split.inputsLength }, (_, i) => hex(split.getInput(i).txid)), [confirmedId], "the confirmed coin only");
+  assert.equal(r.n, 2);
+});
+
+const inc = (markup, text) => String(markup).includes(text); // static template text is not escaped, so the raw words are looked for
+
+test("/mine: the graphics-card-in-the-tab section holds the measured numbers exactly, the not-measured list and the re-check paragraph, and computes its times at the live difficulty", async () => {
+  const MINE = await import("../web/src/views/mine.js");
+  const M = await import("../web/src/share/mined.js");
+  assert.equal(M.WEBGPU_CHROME_4090, 95_000);
+  assert.deepEqual(M.WEBGPU_RUN, [["RTX 4090", 90_800], ["RTX 3090", 51_800], ["RTX 3060", 31_800]], "Node, 4 GiB");
+  assert.equal(M.WEBGPU_RUN_CHECKED_3090, 44_500);
+  assert.deepEqual(M.WEBGPU_8GIB, [["RTX 4090", 103_000], ["RTX 3060", 35_900]]);
+  const panel = String(MINE.gpuTabPanel(murk({ difficulty: "3600000" }), { rate: 1 }));
+  assert.match(panel, /id="gpu-tab-h"/);
+  assert.ok(inc(panel, "GRAPHICS CARD IN THE BROWSER"));
+  assert.ok(inc(panel, "Mine with your graphics card in this tab (beta)"));
+  assert.ok(inc(panel, "On the Mine page, tick \"Use the graphics card (beta)\" and this tab searches with your graphics card as well as the processor. It runs on WebGPU, which current Chrome and Edge have on desktop computers. It is off by default and is off again after every reload."));
+  const measured = panel.match(/<p[^>]*data-gpu-tab-measured[^>]*>([\s\S]*?)<\/p>/)[1];
+  for (const n of ["95,000", "90,800", "51,800", "31,800", "44,500", "103,000", "35,900", "1,000"]) assert.ok(measured.includes(n), `${n} is stated`);
+  for (const n of ["72,000", "45,000", "28,000"]) assert.ok(!measured.includes(n), `${n} (an 8 GiB or older figure) is gone`);
+  assert.ok(inc(measured, "Measured on Linux with NVIDIA cards, 1 hash per workgroup and 4 GiB of graphics memory in use: one RTX 4090 computed about 95,000 hashes per second in Chrome and about 90,800 measured with the same code outside the browser; an RTX 3090 gave about 51,800 and an RTX 3060 about 31,800 there. A full mining run with every answer re-checked, measured outside the browser, gave about 44,500 on the RTX 3090. With 8 GiB, which suits cards with spare memory, the RTX 4090 was faster (about 103,000) and so was the RTX 3060 (about 35,900). The page uses 4 GiB unless you pick another size beside the box. A desktop browser tab without the graphics card does about 1,000."));
+  // 3,600,000 / 90,800 = 40 s, / 31,800 = 113 s, / 1,000 = 3,600 s
+  assert.equal(M.durationText(3_600_000 / 90_800), "about 40 seconds");
+  assert.equal(M.durationText(3_600_000 / 31_800), "about 2 minutes");
+  assert.equal(M.durationText(3_600_000 / 1_000), "about 1 hour");
+  assert.ok(inc(measured, "At difficulty 3,600,000 that is about 40 seconds per solution on an RTX 4090 and about 2 minutes on an RTX 3060, against about 1 hour for the processor alone."));
+  assert.equal(M.gpuTabNote(null), "Expected time per solution = difficulty / hashes per second.");
+  const unmeasured = panel.match(/<p[^>]*data-gpu-tab-unmeasured[^>]*>([\s\S]*?)<\/p>/)[1];
+  assert.ok(inc(unmeasured, "Not measured yet: Windows (where Chrome draws on Direct3D 12), macOS, AMD and Intel graphics, phones, and how fast a hidden or background tab mines. Keep the tab open and in front."));
+  const checks = panel.match(/<p[^>]*data-gpu-tab-checks[^>]*>([\s\S]*?)<\/p>/)[1];
+  assert.ok(inc(checks, "The graphics card's answers are never used as they are. Before it mines, it must reproduce a set of known answers. While it mines, every solution it reports and one random answer about every second are computed again on the processor. Before a claim is paid, the wallet checks the solution once more with the reference code. One wrong answer turns the graphics card off for the page, and nothing is paid for it."));
+  // payments: about 15 solutions a block for an RTX 4090 at this difficulty (600 x 90,800 / 3,600,000 = 15.1), and the claim cost at 1 sat/vB (1,868 sats)
+  const pay = panel.match(/<p[^>]*data-gpu-tab-pay[^>]*>([\s\S]*?)<\/p>/)[1];
+  assert.ok(inc(pay, "A graphics card finds many solutions per block: about 15 for an RTX 4090 at difficulty 3,600,000. Each one is a claim paid from your mining address, about "));
+  assert.ok(pay.includes("1,868"), "684 vB at 2 sat/vB (1 + 25%, rounded up) plus the 500-sat service fee");
+  assert.ok(inc(pay, " each. Bitcoin nodes accept only about 25 unconfirmed transactions in a chain, so the wallet pays from confirmed coins first and keeps the rest waiting for the next block, while they stay valid. The Split button on the Mine page makes coins so fewer claims wait. Solutions that wait are kept only while the tab stays open."));
+  assert.match(panel, /href="\/app\/mine\?t=MURK"/);
+  assert.ok(inc(panel, "Open the Mine page"));
+  // without a difficulty or a rate nothing is invented
+  const bare = String(MINE.gpuTabPanel(null));
+  assert.ok(inc(bare, "A graphics card finds many solutions per block."));
+  assert.ok(inc(bare, "paid from your mining address, the claim cost above each."));
+  assert.ok(inc(bare, "Expected time per solution = difficulty / hashes per second."));
+  assert.match(bare, /href="\/app\/mine\?t=MURK"/);
+});
+
+test("/app/mine strings of the graphics-card box: GPU_TEXT holds the spec's words word for word, and MINE_TEXT is untouched", () => {
+  const G = MINEVIEW.GPU_TEXT;
+  assert.equal(G.label, "Use the graphics card (beta)");
+  assert.equal(G.unsupported, "WebGPU is not available in this browser, so the graphics card cannot be used here. Current Chrome or Edge on a desktop computer have it. Mining with the processor works as before.");
+  assert.equal(G.off, "Off. The graphics card is used only after you tick the box, and the box is unticked again after a reload.");
+  assert.equal(G.tabNote, "Keep this tab open and in front: how fast a hidden or background tab mines is not measured yet. Solutions waiting for a block are kept only while this tab is open.");
+  assert.equal(G.unisatNote, "Unisat asks you to confirm every claim; with the graphics card that can be every minute or so. The built-in mining key pays without asking.");
+  assert.equal(G.lanes("900 H/s", "72.0 kH/s"), "processor 900 H/s · graphics card 72.0 kH/s");
+  assert.equal(G.waiting(3), "3 waiting to be paid");
+  assert.equal(G.chip, "Waiting for a block");
+  assert.equal(G.chipCoins, "Waiting for coins");
+  assert.equal(G.coinsNone, "Check balance to see its coins.");
+  assert.equal(G.coins({ sats: 120_000, coins: 3, ready: 2, unconfirmed: 1, busy: 0, claimsCovered: 46 }, 2552), "Mining key: 120,000 sats in 3 coins: 2 ready now, 1 unconfirmed, 0 held by claims in flight. Enough for about 46 claims at ~2,552 sats each.");
+  assert.equal(G.rate("12.0", 22_416), "With the graphics card this tab finds about 12.0 solutions per block, about 22,416 sats per block at today's cost. Confirmed coins pay at once; once 24 of this wallet's transactions are unconfirmed, the rest wait for the next block and are paid then while still valid. More coins mean fewer waits.");
+  assert.equal(G.chain, "Bitcoin nodes accept about 25 unconfirmed transactions in one chain; claims beyond that wait for the next block.");
+  // the contract strings are not edited
+  assert.ok(Object.keys(SHARED.MINE_TEXT).length > 5);
+  assert.equal(JSON.stringify(SHARED.MINE_TEXT).includes("graphics card"), false);
+});
+
+/* ======================================================================================= */
+/* a proof that ends badly, claims after a block, and the coins inside the lock             */
+/* ======================================================================================= */
+
+/** Fake `error` / `unhandledrejection` event target on globalThis, as a page has it; Node has none. */
+function fakePageEvents() {
+  const had = { add: globalThis.addEventListener, remove: globalThis.removeEventListener };
+  let listeners = []; // [type, fn]: the same function may listen to two types
+  globalThis.addEventListener = (type, fn) => listeners.push([type, fn]);
+  globalThis.removeEventListener = (type, fn) => (listeners = listeners.filter(([t, f]) => !(t === type && f === fn)));
+  return {
+    count: () => listeners.length,
+    fire: (type, ev) => { for (const [t, fn] of [...listeners]) if (t === type) fn(ev); },
+    restore: () => {
+      if (had.add) globalThis.addEventListener = had.add; else delete globalThis.addEventListener;
+      if (had.remove) globalThis.removeEventListener = had.remove; else delete globalThis.removeEventListener;
+    },
+  };
+}
+const mineEntries = (s) => s.history.filter((h) => h.kind === "mine");
+const settledWithin = (p, ms, otherwise) => Promise.race([p, new Promise((r) => setTimeout(() => r(otherwise), ms))]);
+
+test("a proof that runs out of memory is a refusal with code prove_memory: no entry, nothing sent, the notes and the coin are free, and the same solution is claimed again", async (t) => {
+  const { s, chain } = await walletWithNote(t, "correct horse battery staple 40", []);
+  const payer = new FakeMinePayer({ miningAddress: s.minePayer.address });
+  payer.seed([400_000], { height: TIP0 - 5 });
+  usePayer(payer);
+  const d = s.prepareMine(chain.view());
+  s.holdDraft(d);
+  const real = s.wallet.finalizeClaim.bind(s.wallet);
+  const memory = "WebAssembly.Memory(): could not allocate memory";
+  // 1. the prover rejects
+  s.wallet.finalizeClaim = async () => { throw new RangeError(memory); };
+  const steps = [];
+  const e1 = await s.claimMine({ ...solve(d), route: "key", onStep: (x) => steps.push(`${x.id}:${x.status}`) }).then(() => null, (e) => e);
+  assert.equal(e1?.code, "prove_memory");
+  assert.match(e1.message, /^The browser ran out of memory while proving, so nothing was sent and nothing was paid\./);
+  assert.equal(e1.cause?.message, memory);
+  assert.equal(e1.entry, undefined, "nothing was handed out");
+  assert.deepEqual(mineEntries(s), [], "no entry is left");
+  assert.equal(payer.calls.length, 0, "nothing was broadcast");
+  assert.ok(steps.includes("prove:fail"));
+  assert.equal(s.busy, 0);
+  assert.equal(MINEVIEW.FINAL_CLAIM_CODES.has("prove_memory"), false);
+  const f = { key: "k", status: "found" };
+  const again = MINEVIEW.applyClaimFailure(f, e1, null, "key");
+  assert.deepEqual([f.status, f.wait, again.retryInMs], ["found", true, MINEVIEW.PROVE_RETRY_MS], "the page keeps the solution and tries it again");
+
+  // 2. the prover never answers and its thread's error reaches the page as an uncaught error event (what the first box run showed)
+  const ev = fakePageEvents();
+  try {
+    s.holdDraft(d);
+    s.wallet.finalizeClaim = () => new Promise(() => {});
+    let tripped = false;
+    const pending = s.claimMine({
+      ...solve(d), route: "key",
+      onStep: (x) => {
+        if (x.id === "prove" && x.status === "running" && !tripped) {
+          tripped = true;
+          assert.equal(ev.count(), 2, "an error and an unhandledrejection listener while the proof runs");
+          queueMicrotask(() => ev.fire("error", { message: `Uncaught RangeError: ${memory}` }));
+        }
+      },
+    }).then(() => null, (e) => e);
+    const e2 = await settledWithin(pending, 5000, "HANG");
+    assert.notEqual(e2, "HANG", "the claim does not stay in Proving for ever");
+    assert.equal(e2.code, "prove_memory");
+    assert.deepEqual(mineEntries(s), []);
+    assert.equal(ev.count(), 0, "the listeners are removed again");
+    assert.equal(payer.calls.length, 0);
+    // an unrelated error event does not touch a proof that is running
+    s.holdDraft(d);
+    let end;
+    s.wallet.finalizeClaim = () => new Promise((_, rej) => (end = rej));
+    let running = false;
+    const other = s.claimMine({ ...solve(d), route: "key", onStep: (x) => { if (x.id === "prove" && x.status === "running") running = true; } }).then(() => "settled", () => "failed");
+    for (let i = 0; i < 400 && !running; i++) await new Promise((r) => setTimeout(r, 5));
+    assert.ok(running, "the proof started");
+    ev.fire("error", { message: "ResizeObserver loop limit exceeded" });
+    ev.fire("unhandledrejection", { reason: new Error("something else") });
+    assert.equal(await settledWithin(other, 60, "still proving"), "still proving");
+    end(new Error("test over"));
+    assert.equal(await other, "failed");
+  } finally {
+    ev.restore();
+  }
+  assert.deepEqual(mineEntries(s), [], "nothing was handed out");
+  // 3. the solution is still good: with a working prover the same draft and nonce are claimed
+  s.wallet.finalizeClaim = real;
+  s.holdDraft(d);
+  const ok = await s.claimMine({ ...solve(d), route: "key" });
+  assert.equal(ok.status, "submitted");
+  assert.equal(payer.accepted.length, 1);
+});
+
+test("after a block the claims go out again: 24 earlier carriers are confirmed (their change is spent, so no coin listing shows it) and stop counting at once, asked once per block", async (t) => {
+  const { s, chain } = await walletWithNote(t, "correct horse battery staple 42", []);
+  const payer = new FakeMinePayer({ miningAddress: s.minePayer.address, limit: 25 });
+  payer.seed([900_000], { height: TIP0 - 5 });
+  usePayer(payer);
+  const asked = [];
+  setRoute(/\/tx\/([0-9a-f]{64})\/status$/, async ({ m }) => {
+    asked.push(m[1]);
+    const a = await payer.answer(`https://mempool.space/signet/api/tx/${m[1]}/status`, "GET");
+    return reply(a.status, a.body);
+  });
+  // 24 claims of this wallet went out earlier (their carriers chain on each other; their coins are spent, so the listing shows none of them)
+  const old = Array.from({ length: S.CHAIN_ROOM }, (_, i) => ({ kind: "mine", id: `old${i}`, via: "self", status: "submitted", ref: TIP0 - 3, lockUntil: TIP0 + 9, spends: [], commitments: [], txid: (0xa000 + i).toString(16).padStart(64, "0"), coin: `${"c".repeat(63)}${(i % 10).toString(16)}:${i}`, at: Date.now() }));
+  s.history.push(...old);
+  // before the block the wallet's chain is full: the first claim (a confirmed coin starts its own chain) is fine, the second has to wait
+  const first = await claimOnce(s, chain);
+  assert.equal(first.status, "submitted");
+  const dBlocked = s.prepareMine(chain.view());
+  s.holdDraft(dBlocked);
+  const blocked = await s.claimMine({ ...solve(dBlocked), route: "key" }).then(() => null, (e) => e);
+  assert.equal(blocked?.code, "chain_wait", "24 earlier carriers and one new: the chain is full");
+  // the block: every carrier is in it, and the wallet is at the new height
+  const oldIds = new Set(old.map((o) => o.txid));
+  for (const id of oldIds) payer.mined.set(id, TIP0 + 1);
+  payer.confirmAll(TIP0 + 1);
+  chain.tip = TIP0 + 1;
+  s.view = { ...s.view, height: TIP0 + 1 };
+  asked.length = 0;
+  // the claim that waited goes out, and so do the ones behind it, each on the previous change (an unconfirmed coin)
+  s.holdDraft(dBlocked);
+  const sent = [await s.claimMine({ ...solve(dBlocked), route: "key" })];
+  for (let i = 0; i < 3; i++) sent.push(await claimOnce(s, chain));
+  assert.deepEqual(sent.map((e) => e.status), ["submitted", "submitted", "submitted", "submitted"], "none of them waits for the next block");
+  assert.equal(payer.accepted.length, 5);
+  assert.equal(checkCarrier(payer.accepted[1]).nonce, "0900000000000000", "the harness reads the solution's nonce from the carrier");
+  const olds = asked.filter((id) => oldIds.has(id));
+  assert.equal(olds.length, 24, "each old carrier was asked about once in this block");
+  assert.equal(new Set(asked).size, asked.length, "no carrier was asked twice in the same block");
+  // a confirmed txid stays confirmed: the next block asks about none of them again
+  asked.length = 0;
+  s.view = { ...s.view, height: TIP0 + 2 };
+  chain.tip = TIP0 + 2;
+  await claimOnce(s, chain);
+  assert.equal(asked.filter((id) => oldIds.has(id)).length, 0);
+});
+
+test("a status lookup that fails or hangs keeps the carrier counting and never holds a claim for long; a late answer counts for the next claim; a block later it is asked again", async (t) => {
+  const { s, chain } = await walletWithNote(t, "correct horse battery staple 43", []);
+  const payer = new FakeMinePayer({ miningAddress: s.minePayer.address });
+  payer.seed([900_000], { height: TIP0 - 5 });
+  usePayer(payer);
+  const hist = Array.from({ length: S.CHAIN_ROOM }, (_, i) => ({ kind: "mine", id: `p${i}`, via: "self", status: "submitted", ref: TIP0 - 3, lockUntil: TIP0 + 9, spends: [], commitments: [], txid: (0xb000 + i).toString(16).padStart(64, "0"), coin: `${"d".repeat(63)}${(i % 10).toString(16)}:${i}`, at: Date.now() }));
+  s.history.push(...hist);
+  s.confirmLookupMs = 80;
+  let answer = "fail";
+  let late = null;
+  const asked = [];
+  setRoute(/\/tx\/([0-9a-f]{64})\/status$/, ({ m }) => {
+    asked.push(m[1]);
+    return answer === "fail" ? reply(404, "Transaction not found") : reply(200, { confirmed: true, block_height: TIP0 });
+  });
+  await claimOnce(s, chain); // the confirmed coin starts its own chain
+  const d = s.prepareMine(chain.view());
+  s.holdDraft(d);
+  const err = await s.claimMine({ ...solve(d), route: "key" }).then(() => null, (e) => e);
+  assert.equal(err?.code, "chain_wait", "the lookups failed: the old carriers keep counting");
+  const n = asked.length;
+  assert.ok(n >= 24);
+  s.holdDraft(d);
+  await s.claimMine({ ...solve(d), route: "key" }).then(() => null, () => null);
+  assert.equal(asked.length, n, "not asked again within the same block");
+  answer = "ok";
+  s.view = { ...s.view, height: TIP0 + 1 };
+  s.holdDraft(d);
+  const ok = await s.claimMine({ ...solve(d), route: "key" });
+  assert.equal(ok.status, "submitted", "a block later the answer is read and the chain has room");
+
+  // an explorer that does not answer at all: the next block's claim waits about confirmLookupMs, not for ever
+  const w2 = await walletWithNote(t, "correct horse battery staple 45", []);
+  const p2 = new FakeMinePayer({ miningAddress: w2.s.minePayer.address });
+  p2.seed([900_000], { height: TIP0 - 5 });
+  usePayer(p2);
+  w2.s.confirmLookupMs = 80;
+  w2.s.history.push(...hist.map((h, i) => ({ ...h, id: `q${i}`, txid: (0xc000 + i).toString(16).padStart(64, "0") })));
+  setRoute(/\/tx\/([0-9a-f]{64})\/status$/, ({ m }) => new Promise((resolve) => (late ??= []).push(() => resolve(reply(200, { confirmed: true, block_height: TIP0 })))));
+  await claimOnce(w2.s, w2.chain);
+  const dd = w2.s.prepareMine(w2.chain.view());
+  w2.s.holdDraft(dd);
+  const t0 = Date.now();
+  const stalled = await settledWithin(w2.s.claimMine({ ...solve(dd), route: "key" }).then(() => null, (e) => e), 5000, "HANG");
+  assert.notEqual(stalled, "HANG", "the claim is not held by a hanging explorer");
+  assert.ok(Date.now() - t0 < 4000);
+  assert.equal(stalled?.code, "chain_wait");
+  // the answers arrive late: they count for the next claim in the same block
+  for (const fn of late ?? []) fn();
+  await new Promise((r) => setTimeout(r, 50));
+  w2.s.holdDraft(dd);
+  const after = await w2.s.claimMine({ ...solve(dd), route: "key" });
+  assert.equal(after.status, "submitted");
+});
+
+test("an explorer a few seconds behind the wallet: unconfirmed at height H, confirmed 20 s later at the same H, the next claim counts the carriers as confirmed", async (t) => {
+  const { s, chain } = await walletWithNote(t, "correct horse battery staple 46", []);
+  const payer = new FakeMinePayer({ miningAddress: s.minePayer.address });
+  payer.seed([900_000], { height: TIP0 - 5 });
+  usePayer(payer);
+  const hist = Array.from({ length: S.CHAIN_ROOM }, (_, i) => ({ kind: "mine", id: `r${i}`, via: "self", status: "submitted", ref: TIP0 - 3, lockUntil: TIP0 + 9, spends: [], commitments: [], txid: (0xd000 + i).toString(16).padStart(64, "0"), coin: `${"f".repeat(63)}${(i % 10).toString(16)}:${i}`, at: Date.now() }));
+  s.history.push(...hist);
+  let answer = "behind";
+  const asked = [];
+  setRoute(/\/tx\/([0-9a-f]{64})\/status$/, ({ m }) => {
+    asked.push(m[1]);
+    return answer === "behind" ? reply(200, { confirmed: false }) : reply(200, { confirmed: true, block_height: TIP0 });
+  });
+  await claimOnce(s, chain); // the confirmed coin starts its own chain
+  const d = s.prepareMine(chain.view());
+  s.holdDraft(d);
+  const err = await s.claimMine({ ...solve(d), route: "key" }).then(() => null, (e) => e);
+  assert.equal(err?.code, "chain_wait", "the explorer still says unconfirmed: the 24 carriers keep counting");
+  const n = asked.length;
+  assert.ok(n >= 24);
+  // the explorer catches up, but a retry right away does not ask again
+  answer = "caught up";
+  s.holdDraft(d);
+  const again = await s.claimMine({ ...solve(d), route: "key" }).then(() => null, (e) => e);
+  assert.equal(again?.code, "chain_wait");
+  assert.equal(asked.length, n, "not asked again within the retry window");
+  // 20 s later, still the same height: asked again, confirmed, and the claim goes out
+  for (const v of s.unconfirmedAt.values()) v.at -= 20_000;
+  s.holdDraft(d);
+  const ok = await s.claimMine({ ...solve(d), route: "key" });
+  assert.equal(ok.status, "submitted", "the carriers count as confirmed at the same height");
+  assert.ok(asked.length >= n + 24, "every carrier was asked again");
+  assert.ok(hist.every((h) => s.confirmedTx.has(h.txid)));
+});
+
+test("beforeProve is awaited after the prove step shows and before the proof is built", async (t) => {
+  const { s, chain } = await walletWithNote(t, "correct horse battery staple 48", []);
+  const payer = new FakeMinePayer({ miningAddress: s.minePayer.address });
+  payer.seed([900_000], { height: TIP0 - 5 });
+  usePayer(payer);
+  const d = s.prepareMine(chain.view());
+  s.holdDraft(d);
+  const order = [];
+  const onStep = (st) => {
+    if (st.id === "prove" || st.id === "verify") order.push(`${st.id}:${st.status}`);
+  };
+  const beforeProve = async () => {
+    order.push("before:start");
+    await new Promise((r) => setTimeout(r, 60));
+    order.push("before:end");
+  };
+  const ok = await s.claimMine({ ...solve(d), route: "key", onStep, beforeProve });
+  assert.equal(ok.status, "submitted");
+  assert.deepEqual(order.slice(0, 4), ["prove:running", "before:start", "before:end", "prove:ok"]);
+});
+
+test("the extra coins that fund a claim are busy from the moment it is recorded, before it signs", async (t) => {
+  const { s, chain } = await walletWithNote(t, "correct horse battery staple 47", []);
+  const payer = new FakeMinePayer({ miningAddress: s.minePayer.address });
+  payer.seed([1_000, 1_200, 900], { height: TIP0 - 5 }); // none alone covers a claim, together they do
+  usePayer(payer);
+  const d = s.prepareMine(chain.view());
+  s.holdDraft(d);
+  const all = payer.listing().map((c) => `${c.txid}:${c.vout}`);
+  let seen = null;
+  const onStep = (st) => {
+    if (st.id === "prove" && st.status === "running") seen = S.busyMineCoins(s.history);
+  };
+  const ok = await s.claimMine({ ...solve(d), route: "key", onStep });
+  assert.equal(ok.status, "submitted");
+  assert.equal(ok.inputs.length, 3);
+  assert.ok(seen, "the prove step ran");
+  for (const k of all) assert.ok(seen.has(k), `${k} is busy while the claim proves`);
+  assert.equal(ok.reservedCoins.length, 3);
+});
+
+test("inside the lock every coin that funds the carrier is checked, not only the bound one: an extra coin another claim took meanwhile is coin_busy, nothing is recorded or sent", async (t) => {
+  const { s, chain } = await walletWithNote(t, "correct horse battery staple 44", []);
+  const payer = new FakeMinePayer({ miningAddress: s.minePayer.address });
+  payer.seed([1_000, 1_200, 900], { height: TIP0 - 5 }); // together enough for one claim, none alone: the carrier spends all three
+  usePayer(payer);
+  const d = s.prepareMine(chain.view());
+  s.holdDraft(d);
+  const extra = payer.listing().find((c) => c.value === 900);
+  const before = mineEntries(s).length;
+  const onStep = (st) => {
+    if (st.id === "bind" && st.status === "ok") s.history.push({ kind: "mine", id: "other-tab", via: "self", status: "proving", ref: TIP0, lockUntil: TIP0 + 12, spends: [], commitments: [], coin: `${"e".repeat(64)}:0`, inputs: [`${extra.txid}:${extra.vout}`], at: Date.now() });
+  };
+  const err = await s.claimMine({ ...solve(d), route: "key", onStep }).then(() => null, (e) => e);
+  assert.equal(err?.code, "coin_busy");
+  assert.equal(mineEntries(s).length, before + 1, "only the other tab's entry is there");
+  assert.equal(payer.calls.length, 0, "nothing was broadcast");
+  // without the other claim the same claim spends all three coins
+  s.history = s.history.filter((h) => h.id !== "other-tab");
+  s.holdDraft(d);
+  const ok = await s.claimMine({ ...solve(d), route: "key" });
+  assert.equal(ok.status, "submitted");
+  assert.equal(ok.inputs.length, 3);
+});
+
+/* ======================================================================================= */
+/* money rules: a late proof signs nothing, the split holds the lock, reserved coins narrow */
+/* ======================================================================================= */
+
+test("a proof that ends after the claim's window signs and sends nothing (a laptop that slept; a claim the watchdog gave up on): key and Unisat routes", async (t) => {
+  // Key route. The window closes while the proof runs: the wallet is at ref + 11 when the proof ends (a self-paid claim needs tip <= ref + 10).
+  const { s, chain } = await walletWithNote(t, "correct horse battery staple 60", []);
+  const payer = new FakeMinePayer({ miningAddress: s.minePayer.address });
+  payer.seed([400_000], { height: TIP0 - 5 });
+  usePayer(payer);
+  const d = s.prepareMine(chain.view());
+  s.holdDraft(d);
+  const steps = [];
+  const sentBefore = net.broadcasts.length;
+  const sleep = (st) => {
+    steps.push(`${st.id}:${st.status}`);
+    if (st.id === "verify" && st.status === "ok") s.view = { ...s.view, height: TIP0 + 11 };
+  };
+  const err = await s.claimMine({ ...solve(d), route: "key", onStep: sleep }).then(() => null, (e) => e);
+  assert.equal(err?.code, "expired");
+  assert.match(err.message, /window closed while its proof was being built, so nothing was signed or sent and nothing was paid\.$/);
+  assert.equal(err.entry, undefined, "nothing was handed out");
+  assert.deepEqual(mineEntries(s), [], "no entry is left");
+  assert.equal(payer.calls.length, 0, "nothing was broadcast");
+  assert.equal(net.broadcasts.length, sentBefore);
+  assert.ok(!steps.includes("sign:running"), "the sign step never started");
+  assert.equal(S.busyMineCoins(s.history).size, 0, "the coin is free again");
+  assert.equal(MINEVIEW.FINAL_CLAIM_CODES.has("expired"), true, "the page drops the solution");
+  // The last block of the window still pays: at ref + 10 the same claim goes out.
+  s.view = { ...s.view, height: TIP0 };
+  const d2 = s.prepareMine(chain.view());
+  s.holdDraft(d2);
+  const last = (st) => { if (st.id === "verify" && st.status === "ok") s.view = { ...s.view, height: TIP0 + 10 }; };
+  const ok = await s.claimMine({ ...solve(d2), route: "key", onStep: last });
+  assert.equal(ok.status, "submitted");
+  assert.equal(payer.accepted.length, 1);
+
+  // An entry that is no longer proving (ended as expired meanwhile) is not signed either.
+  s.view = { ...s.view, height: TIP0 };
+  const d3 = s.prepareMine(chain.view());
+  s.holdDraft(d3);
+  const callsBefore = payer.calls.length;
+  const ended = (st) => {
+    if (st.id === "verify" && st.status === "ok") mineEntries(s).find((h) => h.status === "proving").status = "expired";
+  };
+  payer.seed([400_000], { height: TIP0 - 5 });
+  const err3 = await s.claimMine({ ...solve(d3, "0b00000000000000"), route: "key", onStep: ended }).then(() => null, (e) => e);
+  assert.equal(err3?.code, "expired");
+  assert.equal(payer.calls.length, callsBefore, "nothing was broadcast");
+
+  // Unisat route: the same, and Unisat is never asked to sign.
+  const u = await walletWithNote(t, "correct horse battery staple 61", []);
+  const uniScript = funding.btcAccount(new Uint8Array(32).fill(9)).script;
+  let asked = 0;
+  u.s.unisat = { kind: "unisat", address: funding.addressOf(uniScript), account: { script: uniScript }, checkAccount: async () => {}, carry: async () => { asked++; throw new Error("must not be asked"); } };
+  const du = u.s.prepareMine(u.chain.view());
+  u.s.holdDraft(du);
+  const erru = await u.s.claimMine({ ...solve(du), route: "unisat", onStep: (st) => { if (st.id === "verify" && st.status === "ok") u.s.view = { ...u.s.view, height: TIP0 + 11 }; } }).then(() => null, (e) => e);
+  assert.equal(erru?.code, "expired");
+  assert.equal(asked, 0, "Unisat was not asked to sign");
+  assert.deepEqual(mineEntries(u.s), []);
+});
+
+test("Prepare coins runs inside the spend lock and reads the busy coins after the confirmation lookups: a claim that binds a coin meanwhile never has it split away", async (t) => {
+  const { s } = await walletWithNote(t, "correct horse battery staple 62", []);
+  const payer = new FakeMinePayer({ miningAddress: s.minePayer.address });
+  const bigId = payer.seed([400_000], { height: TIP0 - 5 });
+  const smallId = payer.seed([300_000], { height: TIP0 - 5 });
+  usePayer(payer);
+  // a real mutex stands in for navigator.locks, and records whether the split's broadcast happens inside it
+  let held = false;
+  let queue = Promise.resolve();
+  const inLock = [];
+  const locks = { request: (_name, fn) => (queue = queue.then(async () => { held = true; try { return await fn(); } finally { held = false; } })) };
+  const had = Object.getOwnPropertyDescriptor(globalThis.navigator, "locks");
+  Object.defineProperty(globalThis.navigator, "locks", { value: locks, configurable: true });
+  t.after(() => { if (had) Object.defineProperty(globalThis.navigator, "locks", had); else delete globalThis.navigator.locks; });
+  setRoute(/\/api\/tx$/, async ({ init }) => {
+    inLock.push(held);
+    net.broadcasts.push(init.body);
+    const a = await payer.answer("https://mempool.space/signet/api/tx", "POST", init.body);
+    return reply(a.status, a.body);
+  });
+  // an earlier carrier of this wallet is still unconfirmed, so the split asks the explorer about it; while that answer is out, a claim binds the big coin
+  const big = payer.listing().find((c) => c.txid === bigId);
+  s.history.push({ kind: "mine", id: "old", via: "self", status: "submitted", ref: TIP0 - 3, lockUntil: TIP0 + 9, spends: [], commitments: [], txid: "ab".repeat(32), coin: `${"c".repeat(64)}:0`, at: Date.now() });
+  setRoute(/\/tx\/([0-9a-f]{64})\/status$/, () => {
+    s.history.push({ kind: "mine", id: "binds-meanwhile", via: "self", status: "proving", ref: TIP0, lockUntil: TIP0 + 12, spends: [], commitments: [], coin: `${big.txid}:${big.vout}`, reservedCoins: [`${big.txid}:${big.vout}`], at: Date.now() });
+    return reply(200, { confirmed: false });
+  });
+  const r = await s.prepareCoins(2);
+  const split = btc.Transaction.fromRaw(Buffer.from(net.broadcasts.at(-1), "hex"), { allowUnknownOutputs: true });
+  const spent = Array.from({ length: split.inputsLength }, (_, i) => `${hex(split.getInput(i).txid)}:${split.getInput(i).index}`);
+  assert.ok(!spent.includes(`${big.txid}:${big.vout}`), "the coin the claim bound meanwhile is not spent by the split");
+  assert.deepEqual(spent, [`${smallId}:0`]);
+  assert.equal(r.n, 2);
+  assert.deepEqual(inLock, [true], "the split was broadcast inside the spend lock");
+  // and when that was the only coin, the split refuses instead of spending it
+  const w = await walletWithNote(t, "correct horse battery staple 63", []);
+  const p2 = new FakeMinePayer({ miningAddress: w.s.minePayer.address });
+  const only = p2.seed([400_000], { height: TIP0 - 5 });
+  usePayer(p2);
+  w.s.history.push({ kind: "mine", id: "old", via: "self", status: "submitted", ref: TIP0 - 3, lockUntil: TIP0 + 9, spends: [], commitments: [], txid: "cd".repeat(32), coin: `${"c".repeat(64)}:0`, at: Date.now() });
+  setRoute(/\/tx\/([0-9a-f]{64})\/status$/, () => {
+    w.s.history.push({ kind: "mine", id: "binds-meanwhile", via: "self", status: "proving", ref: TIP0, lockUntil: TIP0 + 12, spends: [], commitments: [], coin: `${only}:0`, at: Date.now() });
+    return reply(200, { confirmed: false });
+  });
+  const before = net.broadcasts.length;
+  const err = await w.s.prepareCoins(2).then(() => null, (e) => e);
+  assert.match(err?.message ?? "", /held by a claim in flight/);
+  assert.equal(net.broadcasts.length, before, "nothing was broadcast");
+});
+
+test("after a carrier is signed, reservedCoins are exactly the coins it spends: a coin it did not need is free for the next claim", async (t) => {
+  const { s, chain } = await walletWithNote(t, "correct horse battery staple 64", []);
+  const payer = new FakeMinePayer({ miningAddress: s.minePayer.address });
+  payer.seed([1_500, 1_400, 900, 800], { height: TIP0 - 5 }); // none alone covers a claim; the bind step reserves all four
+  usePayer(payer);
+  const d = s.prepareMine(chain.view());
+  s.holdDraft(d);
+  const all = payer.listing().map((c) => `${c.txid}:${c.vout}`);
+  let reservedAtProve = null;
+  const onStep = (st) => {
+    if (st.id === "prove" && st.status === "running") reservedAtProve = [...mineEntries(s)[0].reservedCoins];
+  };
+  const entry = await s.claimMine({ ...solve(d), route: "key", onStep });
+  assert.equal(entry.status, "submitted");
+  assert.deepEqual([...reservedAtProve].sort(), [...all].sort(), "reserved before signing: every coin that may fund it");
+  assert.ok(entry.inputs.length < all.length, "the carrier needed fewer coins than were reserved");
+  assert.deepEqual(entry.reservedCoins, entry.inputs, "after signing: only the coins it spends");
+  const spare = all.filter((c) => !entry.inputs.includes(c));
+  assert.ok(spare.length > 0);
+  for (const c of spare) assert.ok(!S.busyMineCoins(s.history).has(c), `${c} is free again`);
+  for (const c of entry.inputs) assert.ok(S.busyMineCoins(s.history).has(c), `${c} stays busy`);
+});
+
+test("a stale wallet height does not hide a closed window: the guard asks the indexer for its tip (the wallet's own sync needs a round trip after a sleep)", async (t) => {
+  const { s, chain } = await walletWithNote(t, "correct horse battery staple 70", []);
+  const payer = new FakeMinePayer({ miningAddress: s.minePayer.address });
+  payer.seed([400_000], { height: TIP0 - 5 });
+  usePayer(payer);
+  const d = s.prepareMine(chain.view());
+  s.holdDraft(d);
+  const sentBefore = net.broadcasts.length;
+  // the proof ends; the wallet still says TIP0, the indexer already says ref + 11
+  const sleep = (st) => {
+    if (st.id === "verify" && st.status === "ok") chain.tip = TIP0 + 11;
+  };
+  const err = await s.claimMine({ ...solve(d), route: "key", onStep: sleep }).then(() => null, (e) => e);
+  assert.equal(s.view.height, TIP0, "the wallet's cached height was never touched");
+  assert.equal(err?.code, "expired");
+  assert.deepEqual(mineEntries(s), []);
+  assert.equal(payer.calls.length, 0, "nothing was signed or broadcast");
+  assert.equal(net.broadcasts.length, sentBefore);
+  // an indexer that does not answer falls back to the wallet's height: the claim is not held back
+  chain.tip = TIP0;
+  const d2 = s.prepareMine(chain.view());
+  s.holdDraft(d2);
+  const down = (st) => {
+    if (st.id === "verify" && st.status === "ok") setRoute(/^\/api\/mine\/(\w+)$/, () => reply(500, { error: { code: "internal", message: "boom" } }));
+  };
+  s.mineStepMs = 2000;
+  const ok = await s.claimMine({ ...solve(d2), route: "key", onStep: down });
+  assert.equal(ok.status, "submitted", "a failed lookup does not block the claim");
+});
+
+test("a claim step that gets no answer in time ends as a retry (code indexer): nothing is recorded or paid, the signal is aborted", async (t) => {
+  const { s, chain } = await walletWithNote(t, "correct horse battery staple 71", []);
+  const payer = new FakeMinePayer({ miningAddress: s.minePayer.address });
+  payer.seed([400_000], { height: TIP0 - 5 });
+  usePayer(payer);
+  const d = s.prepareMine(chain.view());
+  s.holdDraft(d);
+  setRoute(/^\/api\/mine\/(\w+)$/, () => new Promise(() => {})); // the indexer never answers
+  s.mineStepMs = 60;
+  const started = Date.now();
+  const err = await s.claimMine({ ...solve(d), route: "key" }).then(() => null, (e) => e);
+  assert.equal(err?.code, "indexer");
+  assert.match(err.message, /^The indexer did not answer in 0 s\. Nothing was paid; the claim is tried again after the next block\.$/);
+  assert.ok(Date.now() - started < 1500, "it did not wait for the indexer");
+  assert.equal(MINEVIEW.RETRY_CODES.has("indexer"), true, "the page keeps the solution and tries it again");
+  assert.deepEqual(mineEntries(s), []);
+  assert.equal(payer.calls.length, 0);
+});
+
+test("the reference block's hash is asked once while it lies 6 deep, and every time while it is shallow (a reorg of a shallow block must be seen)", async (t) => {
+  const { s, chain } = await walletWithNote(t, "correct horse battery staple 72", []);
+  const payer = new FakeMinePayer({ miningAddress: s.minePayer.address });
+  payer.seed([400_000], { height: TIP0 - 5 });
+  usePayer(payer);
+  let asked = 0;
+  setRoute(/\/block-height\/(\d+)$/, ({ m }) => (asked++, reply(200, BLOCK_HASH(Number(m[1])))));
+  const d = s.prepareMine(chain.view());
+  s.holdDraft(d);
+  await s.claimMine({ ...solve(d), route: "key" }).catch(() => {});
+  assert.equal(asked, 1);
+  // shallow: asked again for a second solution of the same block
+  s.releaseDraft(d);
+  await s.claimMine({ ...solve(d, "0a00000000000000"), route: "key" }).catch(() => {});
+  assert.equal(asked, 2, "a block at the tip is asked every time");
+  // 6 deep: asked once more, then answered from memory
+  s.view = { ...s.view, height: TIP0 + 6 };
+  chain.tip = TIP0 + 6;
+  for (const nonce of ["0b00000000000000", "0c00000000000000", "0d00000000000000"]) {
+    s.releaseDraft(d);
+    await s.claimMine({ ...solve(d, nonce), route: "key" }).catch(() => {});
+  }
+  assert.equal(asked, 3, "one more lookup for the 3 claims of a deep block");
+});
+
+test("Split takes the lock between a claim's bind step and its record: the claim finds the coin gone (coin_busy), records nothing, and goes out on the next try with a fresh coin list", async (t) => {
+  const { s, chain } = await walletWithNote(t, "correct horse battery staple 73", []);
+  const payer = new FakeMinePayer({ miningAddress: s.minePayer.address });
+  payer.seed([400_000], { height: TIP0 - 5 });
+  usePayer(payer);
+  // a mutex stands in for navigator.locks; the first request after the bind step runs the split first, as if it had taken the lock a moment earlier
+  let queue = Promise.resolve();
+  let splitFirst = false;
+  let inSplit = false;
+  const locks = {
+    request: (_name, fn) => {
+      if (inSplit) return fn();
+      const run = queue.then(async () => {
+        if (splitFirst) {
+          splitFirst = false;
+          inSplit = true;
+          try { await s.prepareCoins(2); } finally { inSplit = false; }
+        }
+        return fn();
+      });
+      queue = run.catch(() => {});
+      return run;
+    },
+  };
+  const had = Object.getOwnPropertyDescriptor(globalThis.navigator, "locks");
+  Object.defineProperty(globalThis.navigator, "locks", { value: locks, configurable: true });
+  t.after(() => { if (had) Object.defineProperty(globalThis.navigator, "locks", had); else delete globalThis.navigator.locks; });
+  const d = s.prepareMine(chain.view());
+  s.holdDraft(d);
+  const bound = (st) => { if (st.id === "bind" && st.status === "ok") splitFirst = true; };
+  const sentBefore = net.broadcasts.length;
+  const err = await s.claimMine({ ...solve(d), route: "key", onStep: bound }).then(() => null, (e) => e);
+  assert.equal(err?.code, "coin_busy");
+  assert.equal(net.broadcasts.length, sentBefore + 1, "only the split was broadcast");
+  assert.deepEqual(mineEntries(s), [], "the claim recorded nothing: the solution is not used up");
+  assert.equal(s.splitSpent.size, 1, "the split's input is remembered");
+  // the page tries again: a coin of the split is bound
+  s.holdDraft(d);
+  const ok = await s.claimMine({ ...solve(d), route: "key" });
+  assert.equal(ok.status, "submitted");
+  assert.ok(!ok.inputs.some((i) => s.splitSpent.has(i)), "the carrier spends none of the split's inputs");
+});
+
+test("pruneSplitSpent: forgotten after 10 minutes, or after 2 minutes while the explorer still lists the coin (the split never went out)", () => {
+  const m = new Map([["a:0", 0], ["b:0", 0], ["c:0", 0]]);
+  const listed = [{ txid: "b", vout: 0 }];
+  assert.deepEqual([...S.pruneSplitSpent(m, listed, 60_000).keys()], ["a:0", "b:0", "c:0"], "within 2 minutes all stay");
+  assert.deepEqual([...S.pruneSplitSpent(m, listed, 130_000).keys()], ["a:0", "c:0"], "a listed coin goes after 2 minutes");
+  assert.deepEqual([...S.pruneSplitSpent(m, listed, 601_000).keys()], [], "all go after 10 minutes");
+});
+
+/* ======================================================================================= */
+/* security audit, money-adjacent lows: held carriers, the split's lock, the shared split   */
+/* mark, the fee rate at signing                                                            */
+/* ======================================================================================= */
+
+/** A wallet with one coin, one claim sent and the next one held for chain length (limit 1): -> { s, chain, payer, held }. */
+async function heldClaim(t, password) {
+  const w = await walletWithNote(t, password, []);
+  const payer = new FakeMinePayer({ miningAddress: w.s.minePayer.address, limit: 1 });
+  payer.seed([300_000], { height: TIP0 - 5 });
+  usePayer(payer);
+  await claimOnce(w.s, w.chain);
+  const held = await claimOnce(w.s, w.chain);
+  assert.equal(held.held, "chain");
+  return { ...w, payer, held };
+}
+
+test("a held carrier is let go by the two-block rule at the freshest tip: a stale cached height cannot keep one that signing would refuse", async (t) => {
+  // The wallet still says ref; the indexer already says ref + 11 (a self-paid claim needs tip <= ref + 10): nothing is sent.
+  const a = await heldClaim(t, "correct horse battery staple 90");
+  const calls = a.payer.calls.length;
+  a.chain.tip = a.held.ref + 11;
+  assert.equal(a.s.view.height, TIP0, "the cached height is old");
+  assert.deepEqual(await a.s.resendHeldClaims(), { sent: 0, held: 0, dropped: 0 });
+  assert.equal(a.payer.calls.length, calls, "no broadcast");
+  assert.deepEqual([a.held.held, a.held.hex], [null, null], "no signed copy is kept");
+  assert.ok(S.MINE_PENDING.has(a.held.status), "the entry itself stays pending until its window is over");
+
+  // ref + 10 is the last tip a self-paid claim is signed at: the stale cache and the fresh tip together still send it.
+  const b = await heldClaim(t, "correct horse battery staple 91");
+  b.payer.confirmAll(TIP0 + 1);
+  b.chain.tip = b.held.ref + 10;
+  assert.deepEqual(await b.s.resendHeldClaims(), { sent: 1, held: 0, dropped: 0 });
+  assert.deepEqual([b.held.held, b.held.hex], [null, null]);
+
+  // An indexer that does not answer: the cached height decides, with the same rule (ref + 11 is over, not only ref + 12).
+  const c = await heldClaim(t, "correct horse battery staple 92");
+  c.s.mineStepMs = 2000;
+  setRoute(/^\/api\/mine\/(\w+)$/, () => reply(500, { error: { code: "internal", message: "boom" } }));
+  const callsC = c.payer.calls.length;
+  c.s.view = { ...c.s.view, height: c.held.ref + 11 };
+  assert.deepEqual(await c.s.resendHeldClaims(), { sent: 0, held: 0, dropped: 0 });
+  assert.equal(c.payer.calls.length, callsC);
+  assert.deepEqual([c.held.held, c.held.hex], [null, null]);
+  // and at ref + 10 on the cache alone it still sends
+  const d = await heldClaim(t, "correct horse battery staple 93");
+  d.s.mineStepMs = 2000;
+  d.payer.confirmAll(TIP0 + 1);
+  setRoute(/^\/api\/mine\/(\w+)$/, () => reply(500, { error: { code: "internal", message: "boom" } }));
+  d.s.view = { ...d.s.view, height: d.held.ref + 10 };
+  assert.deepEqual(await d.s.resendHeldClaims(), { sent: 1, held: 0, dropped: 0 });
+});
+
+test("Prepare coins cuts off a broadcast that never answers: the spend lock is released, the split's coins stay set aside (it may have gone out) and the request is aborted", { timeout: 30_000 }, async (t) => {
+  const { s } = await walletWithNote(t, "correct horse battery staple 94", []);
+  const payer = new FakeMinePayer({ miningAddress: s.minePayer.address });
+  const only = payer.seed([400_000], { height: TIP0 - 5 });
+  usePayer(payer);
+  // a real mutex stands in for navigator.locks; it reports whether the lock is held, and whether a next request gets it
+  let held = false;
+  let queue = Promise.resolve();
+  const locks = {
+    request: (_name, fn) => {
+      const run = queue.then(async () => { held = true; try { return await fn(); } finally { held = false; } });
+      queue = run.catch(() => {});
+      return run;
+    },
+  };
+  const had = Object.getOwnPropertyDescriptor(globalThis.navigator, "locks");
+  Object.defineProperty(globalThis.navigator, "locks", { value: locks, configurable: true });
+  t.after(() => { if (had) Object.defineProperty(globalThis.navigator, "locks", had); else delete globalThis.navigator.locks; });
+  let signal = null;
+  let heldDuringBroadcast = null;
+  setRoute(/\/api\/tx$/, ({ init }) => {
+    signal = init.signal;
+    heldDuringBroadcast = held;
+    return new Promise(() => {}); // the explorer never answers
+  });
+  assert.equal(s.splitBroadcastMs, 30_000, "about 30 s by default");
+  s.splitBroadcastMs = 80;
+  const started = Date.now();
+  const err = await s.prepareCoins(2).then(() => null, (e) => e);
+  assert.equal(err?.code, "split_timeout");
+  assert.match(err.message, /^The split got no answer in 0 s\. It may still have gone out, so the coins it spends stay set aside for 10 minutes\./);
+  assert.ok(Date.now() - started < 5000, "it did not wait for the explorer");
+  assert.equal(heldDuringBroadcast, true, "the broadcast ran inside the lock");
+  assert.equal(held, false, "the lock is released");
+  assert.equal(await locks.request("probe", async () => 7), 7, "the next request for the lock is served");
+  assert.equal(signal?.aborted, true, "the request was aborted");
+  assert.deepEqual([...s.splitSpent.keys()], [`${only}:0`], "the in-memory marks stay");
+  const marks = s.history.filter((h) => h.kind === "split");
+  assert.equal(marks.length, 1, "and so does the shared one");
+  assert.deepEqual(marks[0].inputs, [`${only}:0`]);
+  assert.equal(s.mineSplits.size, 1, "the split counts as unconfirmed: it may be in the mempool");
+  assert.ok(S.busyMineCoins(s.history).has(`${only}:0`));
+  // a second try is refused at once, from the marks, not by waiting on the lock again
+  const again = await s.prepareCoins(2).then(() => null, (e) => e);
+  assert.match(again?.message ?? "", /held by a claim in flight or by a split just sent/);
+});
+
+test("split marks: busyMineCoins holds a split's inputs for 10 minutes, pruneSplitMarks ages them out, and a mark is never an activity row", async (t) => {
+  const mark = { kind: "split", id: "m1", inputs: ["a:0", "b:1"], at: 1_000_000 };
+  const claim = { kind: "mine", id: "c1", status: "proving", coin: "c:0", reservedCoins: ["c:0"] };
+  assert.deepEqual([...S.busyMineCoins([mark, claim], 1_000_000 + 599_000)].sort(), ["a:0", "b:1", "c:0"], "within 10 minutes");
+  assert.deepEqual([...S.busyMineCoins([mark, claim], 1_000_000 + 600_000)], ["c:0"], "after 10 minutes only the claim holds");
+  assert.deepEqual([...S.busyMineCoins([{ ...mark, inputs: undefined }], 1_000_000)], [], "a mark with no inputs holds nothing");
+  const hist = [mark, claim];
+  assert.equal(S.pruneSplitMarks(hist, null, 1_000_000 + 599_000), hist, "nothing to drop: the same array");
+  assert.deepEqual(S.pruneSplitMarks(hist, null, 1_000_000 + 601_000), [claim], "gone after 10 minutes");
+  const listed = [{ txid: "b", vout: 1 }];
+  assert.equal(S.pruneSplitMarks(hist, listed, 1_000_000 + 60_000), hist, "a listed coin stays held within 2 minutes");
+  assert.deepEqual(S.pruneSplitMarks(hist, listed, 1_000_000 + 130_000), [claim], "listed after 2 minutes: the split never went out");
+  assert.equal(S.pruneSplitMarks(hist, [{ txid: "z", vout: 0 }], 1_000_000 + 130_000), hist, "not listed: the split went out, the mark stays");
+  // the wallet: a mark is bookkeeping
+  const { s } = await walletWithNote(t, "correct horse battery staple 95", []);
+  s.history.push({ ...mark, at: Date.now() });
+  assert.ok(!s.activity().some((h) => h.kind === "split"));
+  await s.refreshHistory();
+  assert.equal(s.history.filter((h) => h.kind === "split").length, 1, "a young mark survives a refresh and gets no status");
+  assert.equal(s.history.find((h) => h.kind === "split").status, undefined);
+  s.history.find((h) => h.kind === "split").at = Date.now() - 601_000;
+  await s.refreshHistory();
+  assert.equal(s.history.filter((h) => h.kind === "split").length, 0, "an old one is pruned");
+});
+
+test("two tabs: a split sent in one tab holds its coins in the other through the shared history, so a claim that bound a coin before the split records nothing (coin_busy)", async (t) => {
+  const phrase = S.newPhrase();
+  const { s, chain } = await walletWithNote(t, "correct horse battery staple 96", [], phrase);
+  const payer = new FakeMinePayer({ miningAddress: s.minePayer.address });
+  const big = payer.seed([400_000], { height: TIP0 - 5 });
+  usePayer(payer);
+  // the same wallet in a second tab: its own session over the vault as stored now
+  const vault = JSON.parse(JSON.stringify(s.vault));
+  const tabB = new S.Session({ phrase, key: s.key.slice(), data: keystore.openData(s.key, vault), vault });
+  tabB.view = s.view;
+  // tab B's split takes the lock between tab A's bind step and A's record
+  let splitFirst = false;
+  const locks = {
+    request: async (_name, fn) => {
+      if (splitFirst) {
+        splitFirst = false;
+        await tabB.prepareCoins(2);
+      }
+      return fn();
+    },
+  };
+  const had = Object.getOwnPropertyDescriptor(globalThis.navigator, "locks");
+  Object.defineProperty(globalThis.navigator, "locks", { value: locks, configurable: true });
+  t.after(() => { if (had) Object.defineProperty(globalThis.navigator, "locks", had); else delete globalThis.navigator.locks; });
+  const d = s.prepareMine(chain.view());
+  s.holdDraft(d);
+  const sentBefore = net.broadcasts.length;
+  const err = await s.claimMine({ ...solve(d), route: "key", onStep: (st) => { if (st.id === "bind" && st.status === "ok") splitFirst = true; } }).then(() => null, (e) => e);
+  assert.equal(err?.code, "coin_busy");
+  assert.equal(s.splitSpent.size, 0, "tab A never ran the split: only the shared mark can tell it");
+  assert.equal(tabB.splitSpent.size, 1);
+  assert.deepEqual(mineEntries(s), [], "nothing recorded: the solution is not used up");
+  assert.equal(net.broadcasts.length, sentBefore + 1, "only the split was broadcast");
+  const marks = s.history.filter((h) => h.kind === "split");
+  assert.equal(marks.length, 1);
+  assert.deepEqual(marks[0].inputs, [`${big}:0`]);
+  assert.ok(S.busyMineCoins(s.history).has(`${big}:0`));
+  assert.ok(!s.activity().some((h) => h.kind === "split"));
+  // the page tries the claim again: it binds a coin of the split
+  s.holdDraft(d);
+  const ok = await s.claimMine({ ...solve(d), route: "key" });
+  assert.equal(ok.status, "submitted");
+  assert.ok(!ok.inputs.includes(`${big}:0`), "the carrier spends none of the split's inputs");
+});
+
+/** One self-paid claim whose fee estimate changes while it proves: -> { err, entry, steps (the sign step's detail), payer, s }. */
+async function repriceRun(t, password, { coin = 400_000, after, fresh }) {
+  const { s, chain } = await walletWithNote(t, password, []);
+  const payer = new FakeMinePayer({ miningAddress: s.minePayer.address });
+  payer.seed([coin], { height: TIP0 - 5 });
+  usePayer(payer);
+  s.repriceAfterMs = after;
+  if (fresh === "hang") s.mineStepMs = 150;
+  const d = s.prepareMine(chain.view());
+  s.holdDraft(d);
+  const steps = [];
+  const onStep = (st) => {
+    if (st.id === "prove" && st.status === "running") {
+      if (fresh === "hang") setRoute(/\/v1\/fees\/recommended$/, () => new Promise(() => {}));
+      else setRoute(/\/v1\/fees\/recommended$/, () => reply(200, { fastestFee: fresh, halfHourFee: 1 }));
+    }
+    if (st.id === "sign" && st.status === "ok") steps.push(st.detail);
+  };
+  let entry = null;
+  const err = await s.claimMine({ ...solve(d), route: "key", onStep }).then((e) => ((entry = e), null), (e) => e);
+  return { err, entry, steps, payer, s };
+}
+
+test("a claim that proved for minutes signs at the higher of its bind rate and a fresh next-block rate; coins that do not cover it end the claim as a retry, nothing signed or sent", async (t) => {
+  const bindRate = headroomRate(2); // installChain's fastestFee is 2
+  assert.equal(bindRate, 3);
+  // fresh rate 40 -> 50 sat/vB: after the repricing delay it is used
+  const up = await repriceRun(t, "correct horse battery staple 97", { after: 0, fresh: 40 });
+  assert.equal(up.err, null, up.err?.message);
+  assert.match(up.steps[0], /at 50 sat\/vB$/);
+  assert.ok(up.entry.fee >= 600 * 50, `fee ${up.entry.fee}`);
+  // before the delay has passed the bind step's rate stands
+  const young = await repriceRun(t, "correct horse battery staple 98", { after: 600_000, fresh: 40 });
+  assert.equal(young.err, null);
+  assert.match(young.steps[0], /at 3 sat\/vB$/);
+  assert.ok(young.entry.fee < 3_000);
+  // a lower fresh rate never lowers it
+  const down = await repriceRun(t, "correct horse battery staple 99", { after: 0, fresh: 1 });
+  assert.equal(down.err, null);
+  assert.match(down.steps[0], /at 3 sat\/vB$/);
+  // an estimate that does not answer: the bind rate stands
+  const hang = await repriceRun(t, "correct horse battery staple 100", { after: 0, fresh: "hang" });
+  assert.equal(hang.err, null, hang.err?.message);
+  assert.match(hang.steps[0], /at 3 sat\/vB$/);
+  // a coin that covered 3 sat/vB but not 500: a retryable failure; nothing signed, sent or recorded, the coin free
+  const short = await repriceRun(t, "correct horse battery staple 101", { coin: 5_000, after: 0, fresh: 400 });
+  assert.equal(short.err?.code, "no_coins");
+  assert.match(short.err.message, /rose to 500 sat\/vB/);
+  assert.equal(short.err.entry, undefined, "nothing was handed out");
+  assert.deepEqual(short.steps, [], "the sign step did not finish");
+  assert.equal(short.payer.calls.length, 0, "nothing was broadcast");
+  assert.deepEqual(mineEntries(short.s), [], "no entry is left: the solution can be claimed again");
+  assert.equal(S.busyMineCoins(short.s.history).size, 0, "the coin is free");
+  assert.equal(MINEVIEW.WAIT_CODES.has("no_coins"), true, "the page keeps the solution and tries again");
+  assert.equal(MINEVIEW.FINAL_CLAIM_CODES.has("no_coins"), false);
 });

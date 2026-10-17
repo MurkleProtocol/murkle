@@ -238,6 +238,8 @@ ul.dep-list { margin: 8px 0 0; padding-left: 18px; list-style: disc; display: gr
 .mine-threads { display: flex; flex-direction: column; gap: 6px; min-width: 180px; flex: 1 1 180px; }
 .mine-threads input[type="range"] { width: 100%; accent-color: var(--btc); }
 .mine-auto { display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--text-2); }
+.mine-gpu-memory { display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--text-2); }
+.mine-gpu-memory select { width: auto; }
 .mine-figures { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 @media (min-width: 768px) { .mine-figures { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 .mine-figures > div { display: flex; flex-direction: column; gap: 2px; padding: 12px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface-2); min-width: 0; }

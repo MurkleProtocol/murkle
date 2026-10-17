@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //
-// Murkle WebGPU miner prototype: the GPU lane as a module Web Worker.
+// Murkle WebGPU miner: the GPU lane as a module Web Worker.
 // Copyright (C) the Murkle contributors.
 //
 // This program is free software: you can redistribute it and/or modify it under the terms of the
@@ -8,12 +8,16 @@
 // the License, or (at your option) any later version. It is distributed WITHOUT ANY WARRANTY; see
 // the GNU General Public License for more details (LICENSE in the repository root).
 //
-// The lab only (web/lab-plugin.mjs). This worker speaks the protocol of web/src/mine-worker.js, so the
+// The GPU (beta) lane of /app/mine and the lab page. This worker speaks the protocol of web/src/mine-worker.js, so the
 // page's MineController can drive it like a CPU worker, plus a few extras. It never touches
-// navigator.gpu before an "open" message, and the page sends that only after a click.
+// navigator.gpu before an "open" message, and /app/mine creates the worker and sends that message only after the
+// user ticks the box (web/src/views/app-mine.js); loading the page alone never fetches this file.
 //
 // Protocol
-//   in  { type: "open", memoryMiB?, hpw?, targetDispatchMs?, verifyVia?: "page" }
+//   in  { type: "open", memoryMiB?, memoryUpToMiB?, hpw?, targetDispatchMs?, verifyVia?: "page", fault?: { afterBatches: 1..1000 } }
+//         Only memoryMiB, memoryUpToMiB, hpw and targetDispatchMs reach the engine options ("stub" is ignored). /app/mine
+//         sends memoryUpToMiB (its "Graphics memory" choice, 2048 / 4096 / 8192; the engine never lifts a vendor above its
+//         default for it) and nothing else, so the engine defaults apply. "fault" is a test hook (below); any other value of it is ignored.
 //   out { type: "gpu-info", info }                          after the engine opened (src/webgpu/engine.mjs)
 //   out { type: "ready", ok: true, impl: "webgpu", name }   after the CPU self-test (hash-wasm, else noble) AND gpuSelfTest passed
 //   out { type: "lane-off", reason, wrong? }                any failure (wrong: true when the GPU gave a wrong answer; the page then bans the lane): no navigator.gpu, no adapter, the self-test, GPU_WRONG,
@@ -23,6 +27,13 @@
 //   out { type: "progress", hashes, ms, id, lane: "gpu" }   about every progressMs (1000)
 //   out { type: "found", nonce: hex16, powHash: hex64, hashes, id, lane: "gpu" }
 //         powHash is the CPU Argon2 value that GpuLane returned (hash-wasm, else noble), never the GPU's.
+//   Fault hook (tests, and the lab build's ?gpufault=n; the production page cannot arm it: it reaches this worker only through
+//         the lab build's virtual module): armed only after "ready" was posted. From the n-th batch read back after that, every
+//         tag of every batch is zeroed, so every candidate the engine reports is a wrong hash, whatever the difficulty (a zero
+//         tag meets any target). It is not a one-batch fault on purpose: a batch read back while another one already holds a hit
+//         is discarded (pipeline depth 2), and at low difficulty the n-th batch is often that one, so a one-shot fault there
+//         never reached the lane. GpuLane re-hashes the candidate it reports, sees the mismatch, and the lane goes off with
+//         wrong: true; nothing is found or paid. After that the worker idles, so nothing more is read back.
 //   in  { type: "verify", id, password }                    answered { type: "verified", id, error }: verify on a CPU worker
 //   out { type: "error", message }                          malformed input
 // Lab extras (the lab page, never /app/mine). Each request has an id; the answer is
@@ -99,6 +110,14 @@ export function createGpuWorker({ post, getGpu = () => globalThis.navigator?.gpu
   const waiting = new Map(); // rid -> { resolve, reject }
   let engineOpts = {};
 
+  let fault = null; // { n, count, armed }: the test hook, see the header
+  // The engine's _afterReadback: runs on every batch read back; it acts only while armed, from the n-th batch on, and not once off.
+  const faultHook = (out) => {
+    if (!fault?.armed || state === "off") return;
+    fault.count += 1;
+    if (fault.count >= fault.n) out.fill(0);
+  };
+
   const off = (reason, wrong = false) => {
     state = "off";
     job = null;
@@ -145,7 +164,12 @@ export function createGpuWorker({ post, getGpu = () => globalThis.navigator?.gpu
     state = "opening";
     verifyVia = msg.verifyVia === "page" ? "page" : "cpu";
     engineOpts = {};
-    for (const k of ["memoryMiB", "hpw", "targetDispatchMs"]) if (msg[k] != null) engineOpts[k] = Number(msg[k]);
+    for (const k of ["memoryMiB", "memoryUpToMiB", "hpw", "targetDispatchMs"]) if (msg[k] != null) engineOpts[k] = Number(msg[k]);
+    const n = msg.fault?.afterBatches;
+    if (Number.isInteger(n) && n >= 1 && n <= 1000) {
+      fault = { n, count: 0, armed: false };
+      engineOpts._afterReadback = faultHook;
+    }
     let device = null;
     let gpuAnswered = false; // the GPU's own self-test is running: a failure there is a wrong answer
     try {
@@ -165,6 +189,7 @@ export function createGpuWorker({ post, getGpu = () => globalThis.navigator?.gpu
     if (state !== "opening") return;
     state = "ready";
     post({ type: "ready", ok: true, impl: "webgpu", name: lane.device.info.name });
+    if (fault) fault.armed = true;
     if (pendingStart) {
       const m = pendingStart;
       pendingStart = null;

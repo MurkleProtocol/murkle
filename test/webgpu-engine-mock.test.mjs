@@ -498,3 +498,27 @@ test("MURKLE_SLOW_TESTS=1: two banks of one slot with HPW 1 on the real kernel t
     await dev.close();
   }
 });
+
+test("graphics memory: NVIDIA opens with 4 GiB by default (never 8), memoryUpToMiB is the browser's request and never lifts AMD or an unmeasured vendor, memoryMiB stays exact", { timeout: 240_000 }, async () => {
+  const GiB = 1024 * 1024 * 1024;
+  const limits = { maxStorageBufferBindingSize: 2 * GiB - 4, maxBufferSize: 2 ** 40 };
+  const slotsOf = async (vendor, extra) => {
+    const fake = createFakeGpu({ tagOf, limits, vendor, description: `${vendor} test card` });
+    const dev = await openWebGpu({ gpu: fake.gpu, mode: "gpu", env: GPU_ENV, platform: "linux", segments: undefined, targetBatchMs: 1e8, maxDispatchMs: 1e8, hangMs: 1e9, ...extra });
+    try {
+      return { slots: dev.info.slots, hpw: dev.info.hpw };
+    } finally {
+      await dev.close();
+    }
+  };
+  // 4 MiB a slot: 4 GiB = 1,024 slots, 8 GiB = 2,048
+  assert.deepEqual(await slotsOf("nvidia", {}), { slots: 1024, hpw: 1 }, "the NVIDIA default is 4 GiB with 1 hash per workgroup");
+  assert.equal((await slotsOf("nvidia", { memoryUpToMiB: 2048 })).slots, 512);
+  assert.equal((await slotsOf("nvidia", { memoryUpToMiB: 4096 })).slots, 1024);
+  assert.equal((await slotsOf("nvidia", { memoryUpToMiB: 8192 })).slots, 2048, "8 GiB only when asked for");
+  assert.equal((await slotsOf("nvidia", { memoryMiB: 8192 })).slots, 2048, "an explicit memoryMiB (the bench) is exact");
+  assert.equal((await slotsOf("amd", { memoryUpToMiB: 8192 })).slots, 1024, "AMD is not lifted above its 4 GiB");
+  assert.equal((await slotsOf("amd", {})).slots, 1024);
+  assert.equal((await slotsOf("intel", { memoryUpToMiB: 8192 })).slots, 256, "an unmeasured vendor stays at 1 GiB");
+  assert.equal((await slotsOf("intel", {})).slots, 256);
+});

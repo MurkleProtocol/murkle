@@ -81,8 +81,8 @@ export class Esplora {
     return Number(await (await this.request("/blocks/tip/height")).text());
   }
 
-  async blockHash(height) {
-    return (await (await this.request(`/block-height/${height}`)).text()).trim();
+  async blockHash(height, { signal } = {}) {
+    return (await (await this.request(`/block-height/${height}`, signal ? { signal } : undefined)).text()).trim();
   }
 
   /** Raw block bytes; `signal` aborts the download (an abort is never retried). */
@@ -124,8 +124,9 @@ export class Esplora {
     return Math.max(1, Math.ceil(Number(est[target])));
   }
 
-  async broadcast(hex) {
-    return (await (await this.request("/tx", { method: "POST", body: hex })).text()).trim();
+  /** POST /tx. `signal` aborts the request (a caller that stops waiting; the node may still have taken the transaction). */
+  async broadcast(hex, { signal } = {}) {
+    return (await (await this.request("/tx", { method: "POST", body: hex, ...(signal ? { signal } : {}) })).text()).trim();
   }
 
   /**

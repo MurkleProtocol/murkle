@@ -10,7 +10,7 @@
 //
 // A standalone page for measuring the WebGPU Argon2 miner in a real browser: no wallet, no indexer, no app
 // shell. It is built only with MURKLE_LAB=1 (web/lab-plugin.mjs). Nothing here touches navigator.gpu: the
-// engine runs in web/src/lab/gpu-worker.js, which is spawned and told to open the GPU only after a click on
+// engine runs in web/src/gpu/gpu-worker.js, which is spawned and told to open the GPU only after a click on
 // "Open GPU". The Argon2 reference for the self-test and the correctness run is a PowPool of
 // web/src/lab/pow-pool-worker.js workers, hash-wasm in Web Workers.
 //
@@ -27,7 +27,7 @@ export const poolSizeOf = (hc = globalThis.navigator?.hardwareConcurrency) => Ma
 
 /**
  * The lab's logic, independent of the page (tests drive it with fake workers).
- *   spawnGpu()   -> a worker-like object running web/src/lab/gpu-worker.js
+ *   spawnGpu()   -> a worker-like object running web/src/gpu/gpu-worker.js
  *   spawnPow()   -> a worker-like object running web/src/lab/pow-pool-worker.js
  *   visibility() -> "visible" | "hidden" (document.visibilityState)
  *   random(n)    -> n random bytes
@@ -205,7 +205,7 @@ function wirePage(doc) {
     return value;
   };
   const lab = new LabController({
-    spawnGpu: () => new Worker(new URL("./gpu-worker.js", import.meta.url), { type: "module" }),
+    spawnGpu: () => new Worker(new URL("../gpu/gpu-worker.js", import.meta.url), { type: "module" }),
     spawnPow: () => new Worker(new URL("./pow-pool-worker.js", import.meta.url), { type: "module" }),
     onLog: log,
     onTick: (t) => log(`${t.second} s: ${Math.round(t.hs)} H/s (${t.visibility})`),

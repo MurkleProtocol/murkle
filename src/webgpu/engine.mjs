@@ -88,7 +88,7 @@ export async function openWebGpu(opts = {}) {
     gpu,
     mode = "gpu",
     powerPreference = "high-performance",
-    hpw = 2,
+    hpw: hpwOpt,
     maxSlots = 4096,
     targetDispatchMs = 50,
     maxDispatchMs = 500,
@@ -98,7 +98,7 @@ export async function openWebGpu(opts = {}) {
     log = () => {},
   } = opts;
   if (!gpu || typeof gpu.requestAdapter !== "function") throw new GpuError("no WebGPU object was given (navigator.gpu or create() from the webgpu package)", "GPU_NO_DEVICE");
-  if (![1, 2, 4, 8].includes(hpw)) throw new RangeError("hpw must be 1, 2, 4 or 8");
+  if (hpwOpt !== undefined && ![1, 2, 4, 8].includes(hpwOpt)) throw new RangeError("hpw must be 1, 2, 4 or 8");
   if (!Number.isInteger(pipelineDepth) || pipelineDepth < 1 || pipelineDepth > 3) throw new RangeError("pipelineDepth must be 1 .. 3");
   if (opts.segments !== undefined) segmentEdges(opts.segments);
 
@@ -119,6 +119,17 @@ export async function openWebGpu(opts = {}) {
   const ai = adapter.info ?? (await adapter.requestAdapterInfo?.()) ?? {};
   const vendor = String(ai.vendor ?? "");
   const name = String(ai.description || [ai.vendor, ai.architecture, ai.device].filter(Boolean).join(" ") || "WebGPU adapter");
+
+  // NVIDIA is measured with 1 hash per workgroup: 4 GiB of slots is the default (RTX 4090 about 95,000 H/s in Chrome, RTX 3060
+  // about 31,800), and 8 GiB was faster on the measured cards (RTX 4090 103,000, RTX 3060 35,900) but asks a card with 8 GB for
+  // all of it, where Windows may overcommit instead of failing. So 8 GiB is never the default: it is a request (memoryMiB, or
+  // memoryUpToMiB from the browser's "Graphics memory" choice). The engine halves the slots when the GPU refuses the allocation.
+  // Other vendors are not measured and keep 2 per workgroup and the smaller memory.
+  const nvidia = /nvidia/i.test(vendor);
+  const amd = /amd|advanced micro/i.test(vendor);
+  const hpw = hpwOpt ?? (nvidia ? 1 : 2);
+  // memoryUpToMiB: a request that never lifts a vendor above its default (AMD 4 GiB, any other 1 GiB, unmeasured); NVIDIA may go to 8 GiB.
+  const memoryMiB = opts.memoryMiB ?? Math.min(opts.memoryUpToMiB ?? 4096, nvidia ? 8192 : amd ? 4096 : 1024);
 
   // 3. limits
   const aLim = adapter.limits ?? {};
@@ -149,7 +160,7 @@ export async function openWebGpu(opts = {}) {
   });
   try {
     await dev._build({
-      memoryMiB: opts.memoryMiB ?? (/nvidia|amd|advanced micro/i.test(vendor) ? 4096 : 1024),
+      memoryMiB,
       maxSlots, targetDispatchMs, maxDispatchMs, targetBatchMs, segments: opts.segments,
     });
   } catch (e) {

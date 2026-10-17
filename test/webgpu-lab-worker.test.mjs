@@ -1,4 +1,4 @@
-// The lab's browser side without a browser or a GPU: web/src/lab/gpu-worker.js (the GPU lane worker) over the real engine
+// The GPU lane's browser side without a browser or a GPU: web/src/gpu/gpu-worker.js (the GPU lane worker) over the real engine
 // on the stand-in WebGPU of test/fixtures/fake-webgpu.mjs, web/src/lab/pow-pool-worker.js, and the lab page's controller
 // (web/src/lab/lab-gpu.js) wired to both through in-memory message channels. The CPU reference is a stand-in whose
 // Argon2 is sha256 (known vectors answer with their true tags). navigator.gpu is never read.
@@ -9,7 +9,7 @@ import { hex, unhex } from "../src/bytes.mjs";
 import { GPU_SELF_TEST_VECTORS } from "../src/gpu-gate.mjs";
 import { SELF_TEST_VECTORS, nonceOf, passwordOf } from "../src/mine.mjs";
 import { openWebGpu } from "../src/webgpu/engine.mjs";
-import { createGpuWorker } from "../web/src/lab/gpu-worker.js";
+import { createGpuWorker } from "../web/src/gpu/gpu-worker.js";
 import { createPowPoolWorker } from "../web/src/lab/pow-pool-worker.js";
 import { LabController, poolSizeOf } from "../web/src/lab/lab-gpu.js";
 import { createFakeGpu } from "./fixtures/fake-webgpu.mjs";
@@ -208,6 +208,144 @@ test("a device that keeps getting lost runs the restarts out: lane-off", async (
   await until(() => of("lane-off").length, 15_000);
   assert.match(of("lane-off")[0].reason, /disabled/);
   assert.equal(w.state().state, "off");
+});
+
+/** A rig whose open() stand-in records the options the engine was opened with. */
+function recordingRig(extra = {}) {
+  const opened = [];
+  const f = createFakeGpu({ tagOf });
+  const out = [];
+  const w = createGpuWorker({
+    post: (m) => out.push(m),
+    getGpu: () => f.gpu,
+    open: (o) => {
+      opened.push(o);
+      return openWebGpu({ ...o });
+    },
+    openOpts: { browser: true, mode: "gpu", segments: 3, hpw: 2 },
+    mine: mineStub,
+    ...extra,
+  });
+  return { w, out, opened, of: (type) => out.filter((m) => m.type === type), fake: f };
+}
+
+test("open passes only memoryMiB, hpw and targetDispatchMs (and the fault hook) to the engine; stub and every other key are ignored", async () => {
+  const r = recordingRig();
+  r.w.onMessage({
+    type: "open", memoryMiB: 32, hpw: 2, targetDispatchMs: 40, stub: "ok", segments: 99, mode: "fallback", env: { MURKLE_WEBGPU: "fallback" },
+    powerPreference: "low-power", maxSlots: 1, hangMs: 1, pipelineDepth: 3, _slotsPerBankMax: 1, fault: { afterBatches: 5 },
+  });
+  await until(() => r.of("ready").length || r.of("lane-off").length);
+  assert.equal(r.of("lane-off").length, 0, JSON.stringify(r.of("lane-off")));
+  assert.deepEqual(Object.keys(r.opened[0]).sort(), ["_afterReadback", "browser", "gpu", "hpw", "memoryMiB", "mode", "segments", "targetDispatchMs"]);
+  assert.equal(r.opened[0].mode, "gpu");
+  assert.equal(r.opened[0].segments, 3);
+  assert.equal(r.opened[0].memoryMiB, 32);
+  assert.equal(r.opened[0].targetDispatchMs, 40);
+  // the page sends memoryUpToMiB only (its "Graphics memory" choice): the engine decides what a vendor may take of it
+  const choice = recordingRig();
+  choice.w.onMessage({ type: "open", memoryUpToMiB: 8192 });
+  await until(() => choice.of("ready").length || choice.of("lane-off").length);
+  assert.equal(choice.opened[0].memoryUpToMiB, 8192);
+  assert.deepEqual(Object.keys(choice.opened[0]).sort(), ["browser", "gpu", "hpw", "memoryUpToMiB", "mode", "segments"]);
+  // with none of them the engine defaults apply (nothing but the worker's own options)
+  const plain = recordingRig();
+  plain.w.onMessage({ type: "open" });
+  await until(() => plain.of("ready").length || plain.of("lane-off").length);
+  assert.deepEqual(Object.keys(plain.opened[0]).sort(), ["browser", "gpu", "hpw", "mode", "segments"]);
+});
+
+test("fault hook: not armed before ready; from batch n after ready every tag of every batch is zeroed", async () => {
+  const r = recordingRig();
+  r.w.onMessage({ ...OPEN, fault: { afterBatches: 3 } });
+  await until(() => r.of("ready").length || r.of("lane-off").length);
+  assert.equal(r.of("lane-off").length, 0, "the self-test ran through the hook without being touched");
+  const hook = r.opened[0]._afterReadback;
+  assert.equal(typeof hook, "function");
+  const batch = () => new Uint8Array(64).fill(0xab);
+  const seen = [batch(), batch(), batch(), batch(), batch()];
+  seen.forEach((b) => hook(b));
+  assert.deepEqual([...seen[0].subarray(0, 32)], new Array(32).fill(0xab), "batch 1 untouched");
+  assert.deepEqual([...seen[1].subarray(0, 32)], new Array(32).fill(0xab), "batch 2 untouched");
+  assert.deepEqual([...seen[2]], new Array(64).fill(0), "batch 3: every tag is zeros (a zero tag meets any target)");
+  // A batch read back while another one already holds a hit is discarded, so a one-batch fault can be lost: it goes on.
+  assert.deepEqual([...seen[3]], new Array(64).fill(0), "batch 4 too");
+  assert.deepEqual([...seen[4]], new Array(64).fill(0), "batch 5 too");
+  // a device that is lost is reopened with the same hook (far from firing here)
+  const far = recordingRig();
+  far.w.onMessage({ ...OPEN, fault: { afterBatches: 1000 } });
+  await until(() => far.of("ready").length);
+  far.w.onMessage({ type: "start", id: 1, challenge: CH, target: "00".repeat(32), nonceStart: "0000000000000000", progressMs: 20 });
+  await until(() => far.of("progress").length >= 1);
+  far.fake.state.devices[0].lose("GPU reset");
+  await until(() => far.opened.length >= 2, 15_000);
+  assert.equal(far.opened[1]._afterReadback, far.opened[0]._afterReadback);
+  far.w.onMessage({ type: "stop" });
+});
+
+test("fault hook: a zeroed tag after ready gives lane-off with wrong: true, and nothing is found", async () => {
+  const r = recordingRig();
+  r.w.onMessage({ ...OPEN, fault: { afterBatches: 2 } });
+  await until(() => r.of("ready").length);
+  // a target no honest tag meets: only the zeroed tag is a candidate
+  r.w.onMessage({ type: "start", id: 3, challenge: CH, target: "00".repeat(32), nonceStart: "0000000000000005", progressMs: 20 });
+  await until(() => r.of("lane-off").length, 15_000);
+  assert.equal(r.of("lane-off")[0].wrong, true);
+  assert.match(r.of("lane-off")[0].reason, /differs from the reference/);
+  assert.equal(r.of("found").length, 0);
+  assert.equal(r.w.state().state, "off");
+  r.w.onMessage({ type: "start", id: 4, challenge: CH, target: "ff".repeat(32) });
+  await sleep(40);
+  assert.equal(r.of("found").length, 0, "an off lane stays off");
+});
+
+test("fault hook at low difficulty: the hash the lane reports is the corrupted one, even when the n-th batch is the one a search discards", async () => {
+  // A target every tag meets: each search stops after its first batch, and the batch read back behind it (pipeline depth 2)
+  // is thrown away. With n = 2 that discarded batch was the only one the old one-shot fault touched, so nothing ever tripped.
+  const r = recordingRig();
+  r.w.onMessage({ ...OPEN, fault: { afterBatches: 2 } });
+  await until(() => r.of("ready").length);
+  // (progressMs 1000: a round is several batches long, as in the page, so the search has a batch in flight behind its first hit)
+  r.w.onMessage({ type: "start", id: 1, challenge: CH, target: "ff".repeat(32), nonceStart: "0000000000000000", progressMs: 1000 });
+  await until(() => r.of("found").length || r.of("lane-off").length, 15_000);
+  assert.equal(r.of("found").length, 1, "batch 1 was read back before the fault: an honest solution");
+  assert.equal(r.of("lane-off").length, 0);
+  // the page starts the next search: its first batch is at or after the n-th
+  r.w.onMessage({ type: "start", id: 2, challenge: CH, target: "ff".repeat(32), nonceStart: "0000000000000100", progressMs: 1000 });
+  await until(() => r.of("lane-off").length, 15_000);
+  assert.equal(r.of("lane-off")[0].wrong, true);
+  assert.match(r.of("lane-off")[0].reason, /differs from the reference/);
+  assert.equal(r.of("found").length, 1, "the corrupted answer was never reported as found");
+  assert.equal(r.w.state().state, "off");
+
+  // the same at n = 1 and at a target only the fault can meet (high difficulty)
+  for (const [n, target] of [[1, "ff".repeat(32)], [1, "00".repeat(32)], [3, "00".repeat(32)]]) {
+    const q = recordingRig();
+    q.w.onMessage({ ...OPEN, fault: { afterBatches: n } });
+    await until(() => q.of("ready").length);
+    q.w.onMessage({ type: "start", id: 1, challenge: CH, target, nonceStart: "0000000000000000", progressMs: 20 });
+    await until(() => q.of("lane-off").length, 15_000);
+    assert.equal(q.of("lane-off")[0].wrong, true, `n ${n}, target ${target.slice(0, 2)}`);
+    assert.equal(q.of("found").length, 0);
+  }
+});
+
+test("fault hook: any other fault value is ignored (no hook is passed to the engine)", async () => {
+  for (const fault of [undefined, null, 5, "5", {}, { afterBatches: 0 }, { afterBatches: 1001 }, { afterBatches: 1.5 }, { afterBatches: "3" }, { afterBatches: -1 }, { afterBatches: Infinity }, []]) {
+    const r = recordingRig();
+    r.w.onMessage({ ...OPEN, fault });
+    await until(() => r.of("ready").length || r.of("lane-off").length);
+    assert.equal(r.of("lane-off").length, 0, JSON.stringify(fault));
+    assert.equal(r.opened[0]._afterReadback, undefined, `fault ${JSON.stringify(fault)} is ignored`);
+  }
+  const edge = recordingRig();
+  edge.w.onMessage({ ...OPEN, fault: { afterBatches: 1000 } });
+  await until(() => edge.of("ready").length);
+  assert.equal(typeof edge.opened[0]._afterReadback, "function", "1000 is the largest accepted value");
+  const low = recordingRig();
+  low.w.onMessage({ ...OPEN, fault: { afterBatches: 1 } });
+  await until(() => low.of("ready").length);
+  assert.equal(typeof low.opened[0]._afterReadback, "function", "1 is the smallest accepted value");
 });
 
 test("lab extras: info, selftest, hash (GPU only), bench with ticks; they refuse before open", async () => {

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //
-// Murkle WebGPU miner prototype: what the hidden /app/mine toggle imports in a lab build.
+// Murkle WebGPU miner: the lab-only seams of /app/mine (the stub GPU worker and the fault hook).
 // Copyright (C) the Murkle contributors.
 //
 // This program is free software: you can redistribute it and/or modify it under the terms of the
@@ -9,18 +9,27 @@
 // the GNU General Public License for more details (LICENSE in the repository root).
 //
 // web/src/views/app-mine.js reads it through the virtual module "virtual:murkle-lab" (web/lab-plugin.mjs),
-// which is `export const labGpu = null;` in every build that is not a lab build. All the words of the
-// toggle live here, so a default build carries none of them.
+// which is `export const labGpu = null;` in every build that is not a lab build. The GPU (beta) toggle itself
+// is in every build and does not need this module; it is only for visual checks that must never call WebGPU
+// (?gpu=stub, stub-fail, stub-wrong, stub-none) and for the forced-wrong-answer run (?gpufault=n).
 
-/** The words of the /app/mine toggle. */
-export const LAB_TEXT = Object.freeze({
-  toggle: "Use GPU (prototype)",
-  opening: "Opening the GPU and checking it against the reference. This takes a few seconds.",
-  ready: "GPU lane on:",
-  idle: "waiting for a challenge",
-});
+/**
+ * A module worker that speaks the GPU lane's protocol and makes no WebGPU call (web/src/lab/gpu-stub-worker.js).
+ * mode: "ok" | "fail" | "wrong".
+ */
+export const spawnStub = (mode = "ok") => {
+  const w = new Worker(new URL("./gpu-stub-worker.js", import.meta.url), { type: "module" });
+  const post = w.postMessage.bind(w);
+  w.postMessage = (m) => post(m?.type === "open" ? { ...m, mode } : m);
+  return w;
+};
 
-/** A module worker running the GPU lane (web/src/lab/gpu-worker.js); the page sends it { type: "open" } after a click. */
-export const spawnGpuWorker = () => new Worker(new URL("./gpu-worker.js", import.meta.url), { type: "module" });
+/** ?gpufault=n -> { afterBatches: n } for a whole n from 1 to 1000, else null. */
+export function faultOf(query) {
+  const raw = query?.get?.("gpufault");
+  if (!/^\d{1,4}$/.test(String(raw ?? ""))) return null;
+  const n = Number(raw);
+  return n >= 1 && n <= 1000 ? { afterBatches: n } : null;
+}
 
-export const labGpu = Object.freeze({ spawnGpuWorker, LAB_TEXT });
+export const labGpu = Object.freeze({ spawnStub, faultOf });

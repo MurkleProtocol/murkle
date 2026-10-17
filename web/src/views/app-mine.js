@@ -9,6 +9,14 @@
 // key, or Unisat) and is recorded under W-M: one solution, one route.
 //
 // Copy is mining-contract.md §12: the reward goes to a private note; the claim itself is public.
+//
+// The graphics card (beta) is an opt-in box, unticked on every page load and never stored. Its worker
+// (web/src/gpu/gpu-worker.js) is created only inside the box's change handler, so a page load never fetches it,
+// and this file holds no WebGPU code. Claims are proved one at a time, oldest reference block first; a solution that
+// cannot be paid yet (no coin with room in the chain) waits and is tried again on every new block while it stays valid.
+// Memory: ticking the box moves the threads slider to 2, a proof ends the processor workers while it runs (holdCpu), a proof that
+// runs out of memory is a refusal the page retries (prove_memory), and a claim that has not finished after 3 minutes no longer holds the
+// queue (ClaimQueue). The "Graphics memory" choice (2 / 4 / 8 GiB, default 4) is the one thing remembered (share/gpu-memory.js).
 import { html } from "../ui/dom.js";
 import { icon } from "../ui/icons.js";
 import { int, sats, heightText, plural, DASH } from "../ui/format.js";
@@ -21,10 +29,12 @@ import { capRisk, capWarningText, targetHex } from "../../../src/mine.mjs";
 import { MINE_FEE, mineFeeReady } from "../../../src/params.mjs";
 import { IS_SIGNET } from "../config.js";
 import * as api from "../api.js";
-import { mineFeeOutputs, mineQuote, mineWindowLeft, nextBlockRate, MINE_PENDING } from "../session.js";
+import { CHAIN_ROOM, mineCoinSummary, mineFeeOutputs, mineQuote, mineWindowLeft, nextBlockRate, MINE_PENDING, PROVE_MEMORY_TEXT } from "../session.js";
 import { mixState, poolMix, relayOpen } from "../relay.js";
 import { UNISAT_SIGNET_NOTICE } from "../payers.js";
-// A stub (null) in every build but a lab build (web/lab-plugin.mjs): the GPU option below does not exist without it.
+import { GPU_MEMORY_CHOICES, gpuMemoryLabel, readGpuMemory, saveGpuMemory } from "../share/gpu-memory.js";
+// A stub (null) in every build but a lab build (web/lab-plugin.mjs): only the stub GPU worker and the fault hook of the
+// lab checks come from it. The GPU (beta) box itself is in every build.
 import { labGpu } from "virtual:murkle-lab";
 import {
   withWallet, pageHead, wireStreamer, liveSession, amountHTML, amountText, btcHTML, satsHTML, callout, statusChip, MINE_TEXT, mineCopy, RELAY_TEXT,
@@ -50,6 +60,8 @@ export function mineMixBlock(info, linkable = false, refused = false) {
 }
 
 export const POLL_MS = 15_000;
+/** How often the oldest solution that waits for chain room tries again while the queue is idle (a block's carriers may be confirmed a few seconds after the wallet saw the block). */
+export const PROBE_MS = 30_000;
 const RATE_WINDOW_MS = 10_000;
 
 /* ---------- pure helpers (tested in test/mine-web.test.mjs) ---------- */
@@ -59,6 +71,12 @@ export function threadRange(hc = globalThis.navigator?.hardwareConcurrency) {
   const n = Number.isInteger(hc) && hc > 0 ? hc : 2;
   const max = Math.max(1, n - 1);
   return { min: 1, max, value: Math.max(1, Math.min(max, Math.floor(n / 2))) };
+}
+
+/** Threads the slider moves to when the GPU lane turns on: 2, or the slider's own limits if they are tighter, never up. */
+export const GPU_THREADS = 2;
+export function gpuThreads(current, range = threadRange()) {
+  return Math.max(range.min, Math.min(range.max, GPU_THREADS, current));
 }
 
 /**
@@ -156,16 +174,18 @@ const randomNonceHex = () => hex(globalThis.crypto.getRandomValues(new Uint8Arra
  *                         (session.prepareMine); a throw pauses mining with that message
  *   onFound({ draft, nonce, powHash, hashes, lane? })   after every worker was told to stop; lane is "gpu" for a GPU solution
  *   onChange(type)     "ready" | "progress" | "state" | "error" | "gpu"
- *   gpuSpawn()         optional, lab builds only: a worker for the GPU lane (null: no GPU lane, today's behaviour)
+ *   gpuSpawn()         optional: a worker for the GPU lane (null: no GPU lane, e.g. no WebGPU in this browser)
+ *   gpuOpen            extra fields of the GPU worker's "open" message (the lab build's fault hook); none otherwise
  * restart() builds a new challenge and restarts every worker (a new tip, after a solution).
  * The GPU worker is never in `workers` (the thread count and verify() are CPU only), and its messages
  * never touch `ready` or `note`: a GPU failure never stops the CPU lanes.
  */
 export class MineController {
-  constructor({ spawn, prepare, onFound = () => {}, onChange = () => {}, now = () => Date.now(), random = randomNonceHex, gpuSpawn = null } = {}) {
-    Object.assign(this, { spawn, prepare, onFound, onChange, now, random, gpuSpawn });
+  constructor({ spawn, prepare, onFound = () => {}, onChange = () => {}, now = () => Date.now(), random = randomNonceHex, gpuSpawn = null, gpuOpen = {} } = {}) {
+    Object.assign(this, { spawn, prepare, onFound, onChange, now, random, gpuSpawn, gpuOpen });
     this.gpuBanned = false; // set by a wrong GPU answer: the lane stays off for the life of the page
-    this.gpu = null; // { w, state: "opening" | "ready" | "off", name, note }
+    this.gpu = null; // { w, state: "opening" | "ready" | "off", name, note, checked } (checked: the GPU opened, its self-test runs)
+    this.gpuPaused = false; // backpressure: more solutions wait to be paid than the wallet can pay; the lane stops searching, nothing is dropped
     this.workers = [];
     this.running = false;
     this.job = null; // { id, draft, challenge, target }
@@ -179,6 +199,9 @@ export class MineController {
     this.verifies = new Map();
     this.vseq = 0;
     this.threads = 1;
+    this.holds = 0; // proofs running with the GPU lane on: while > 0 the CPU workers are ended (holdCpu)
+    this.settleMs = HOLD_SETTLE_MS; // how long a proof waits after the workers were ended
+    this.settling = null; // the wait in progress for the memory of workers just ended
   }
 
   #grow(n) {
@@ -250,6 +273,7 @@ export class MineController {
     switch (m?.type) {
       case "gpu-info":
         g.name = m.info?.name ?? g.name;
+        g.checked = true;
         return this.onChange("gpu");
       case "ready":
         if (!m.ok) {
@@ -279,11 +303,25 @@ export class MineController {
   }
 
   #startGpu(id, job) {
-    if (this.gpu?.state === "ready") this.gpu.w.postMessage({ type: "start", id, challenge: job.challenge, target: job.target, nonceStart: this.random(), step: 1, progressMs: 1000 });
+    if (this.gpu?.state === "ready" && !this.gpuPaused) this.gpu.w.postMessage({ type: "start", id, challenge: job.challenge, target: job.target, nonceStart: this.random(), step: 1, progressMs: 1000 });
   }
 
   /**
-   * Switches the GPU lane on or off (lab builds: gpuSpawn is set). On: spawn the worker, tell it to open
+   * Backpressure on the GPU lane: while more solutions wait to be paid than the wallet can pay before they expire, the lane
+   * stops searching (the processor lanes go on); when the backlog falls it joins the current challenge again. This holds the
+   * search only: no solution is dropped and no claim is limited. Reports "gpu" when the state changed.
+   */
+  pauseGpu(on) {
+    on = on === true;
+    if (this.gpuPaused === on) return;
+    this.gpuPaused = on;
+    if (on) this.gpu?.w?.postMessage({ type: "stop" });
+    else if (this.running && this.job) this.#startGpu(this.job.id, this.job);
+    this.onChange("gpu");
+  }
+
+  /**
+   * Switches the GPU lane on or off (gpuSpawn is set when this browser has WebGPU). On: spawn the worker, tell it to open
    * the GPU, and give it the current job once it is ready. Off: stop and terminate it; `note` stays
    * as the caption (for example when the reference re-check disagreed with a GPU solution).
    */
@@ -292,12 +330,13 @@ export class MineController {
     if (on) {
       if (!this.gpuSpawn || this.gpu?.w || this.gpuBanned) return;
       const w = this.gpuSpawn();
-      this.gpu = { w, state: "opening", name: null, note: null };
+      this.gpu = { w, state: "opening", name: null, note: null, checked: false };
       w.onmessage = (e) => this.#gpuMessage(w, e?.data ?? e);
-      w.postMessage({ type: "open" });
+      w.postMessage({ type: "open", ...this.gpuOpen });
       return this.onChange("gpu");
     }
     const g = this.gpu;
+    this.gpuPaused = false; // a lane switched off holds nothing back
     if (!g && !(this.gpuBanned && note)) return;
     if (g?.w) {
       g.w.postMessage({ type: "stop" });
@@ -309,9 +348,45 @@ export class MineController {
     this.onChange("gpu");
   }
 
+  /** How many CPU workers there should be: none while a proof holds the CPU lanes (holdCpu), else `threads`. */
+  #want() {
+    return this.holds > 0 ? (this.verifies.size ? 1 : 0) : this.threads;
+  }
+
+  /**
+   * A proof needs memory the mining workers hold: found on a rented GPU box, the proof ran out of memory with 12 mining threads
+   * plus the GPU lane. While the GPU lane is on, this ends the CPU workers (their memory comes free; the GPU lane goes on and
+   * adds nearly all the hashes) and returns release(): when the last proof is done the CPU workers start again on the current
+   * challenge. Without a GPU lane nothing changes and release does nothing.
+   * The browser takes back a terminated worker's memory a moment later, so release.settled is a promise the proof awaits before it
+   * builds (settleMs after workers were ended; already done when none were).
+   */
+  holdCpu() {
+    if (!this.gpu?.w) return Object.assign(() => {}, { settled: Promise.resolve() });
+    this.holds += 1;
+    if (this.holds === 1) {
+      const before = this.workers.length;
+      this.#grow(this.#want()); // a reference check in flight keeps its worker
+      if (this.workers.length < before && this.settleMs > 0) this.settling = new Promise((r) => setTimeout(r, this.settleMs));
+    }
+    let released = false;
+    const release = () => {
+      if (released) return;
+      released = true;
+      this.holds = Math.max(0, this.holds - 1);
+      if (this.holds === 0) this.settling = null;
+      if (this.holds > 0 || !this.running) return;
+      this.#grow(this.threads);
+      const job = this.job;
+      if (job) for (const w of this.workers) w.postMessage({ type: "start", id: job.id, challenge: job.challenge, target: job.target, nonceStart: this.random(), step: 1, progressMs: 1000 });
+      this.onChange("state");
+    };
+    return Object.assign(release, { settled: this.settling ?? Promise.resolve() });
+  }
+
   async start(threads = this.threads) {
     this.threads = Math.max(1, threads | 0);
-    this.#grow(this.threads);
+    this.#grow(this.#want());
     if (!this.running) {
       this.startedAt = this.now();
       this.samples = [];
@@ -359,7 +434,7 @@ export class MineController {
     this.threads = Math.max(1, n | 0);
     if (!this.running) return;
     const before = this.workers.length;
-    this.#grow(this.threads);
+    this.#grow(this.#want());
     if (this.job && this.workers.length > before) {
       for (const w of this.workers.slice(before)) w.postMessage({ type: "start", id: this.job.id, challenge: this.job.challenge, target: this.job.target, nonceStart: this.random(), step: 1, progressMs: 1000 });
     }
@@ -432,7 +507,7 @@ export class MineController {
  */
 export const FINAL_CLAIM_CODES = new Set(["pow_mismatch", "stale_work", "insufficient", "cap_reached", "closed", "solution_taken", "expired", "ended"]);
 
-/** The caption after a GPU solution failed the reference re-check (lab builds). */
+/** The caption after a GPU solution failed the reference re-check. */
 export const GPU_OFF_NOTE = "GPU lane off: its verifier disagreed with the reference";
 
 /**
@@ -466,6 +541,250 @@ export function syncAction(walletHeight, viewTipHeight) {
 }
 
 const spawnWorker = () => new Worker(new URL("../mine-worker.js", import.meta.url), { type: "module" });
+// Called only from the box's change handler: the browser fetches the GPU worker's file when this runs, not before.
+const spawnGpuWorker = () => new Worker(new URL("../gpu/gpu-worker.js", import.meta.url), { type: "module" });
+
+/**
+ * True when this browser exposes WebGPU. A property check only: no adapter is requested and the property's value is
+ * never read, so nothing touches the graphics card.
+ */
+export const gpuSupported = (nav = globalThis.navigator) => Boolean(nav) && typeof nav === "object" && "gpu" in nav;
+
+/** The words of the GPU (beta) box and of what it changes on this page (the claim queue, the coin summary). */
+export const GPU_TEXT = Object.freeze({
+  label: "Use the graphics card (beta)",
+  unsupported: "WebGPU is not available in this browser, so the graphics card cannot be used here. Current Chrome or Edge on a desktop computer have it. Mining with the processor works as before.",
+  off: "Off. The graphics card is used only after you tick the box, and the box is unticked again after a reload.",
+  starting: "Starting the graphics card…",
+  selftest: (name) => `Checking ${name} against known answers. This takes a few seconds.`,
+  ready: (name) => `${name} passed its check. It mines when you start mining.`,
+  mining: (name, rate) => `${name}: ${rate}`,
+  failed: (reason) => `The graphics card stopped: ${reason} Untick the box and tick it again to retry. The processor keeps mining.`,
+  banned: (reason) => `The graphics card is off for this page: ${reason} Nothing was paid for its answer. Reload the page to try again. The processor keeps mining.`,
+  tabNote: "Keep this tab open and in front: how fast a hidden or background tab mines is not measured yet. Solutions waiting for a block are kept only while this tab is open.",
+  cpuPause: "While a claim is being proved with the graphics card on, the processor pauses and reads 0 H/s; it mines again when the proof is done.",
+  unisatNote: "Unisat asks you to confirm every claim; with the graphics card that can be every minute or so. The built-in mining key pays without asking.",
+  memoryLabel: "Graphics memory",
+  memoryNote: "Used the next time you tick the box. 4 GiB is the measured default. 8 GiB was faster on the cards measured, for cards with spare memory; if the card refuses, the page takes less.",
+  lanes: (cpu, gpu) => `processor ${cpu} · graphics card ${gpu}`,
+  waiting: (n) => `${n} waiting to be paid`,
+  paused: (n) => `Graphics card paused: ${n} solutions are waiting to be paid. It searches again when the wallet has caught up. No solution is dropped; each one is paid, or kept while its window is open.`,
+  // The second sentence is true only with automatic claiming on; with it off nothing is claimed until the box is ticked again.
+  older: (n, auto = true) => `${n} older solutions are not listed here. ${auto ? "They are claimed and kept the same way." : "They are kept in this tab. Automatic claiming is off, so they are not claimed."}`,
+  stuck: "Proving this claim is taking longer than 3 minutes, so the next solutions go on without it. It still goes out if its proof finishes; until then its coin and notes stay held, and it is never paid twice.",
+  chip: "Waiting for a block",
+  chipQueued: "Queued",
+  chipCoins: "Waiting for coins",
+  coinsNone: "Check balance to see its coins.",
+  coins: ({ sats, coins, ready, unconfirmed, busy, claimsCovered }, need) =>
+    `Mining key: ${int(sats)} sats in ${int(coins)} coins: ${int(ready)} ready now, ${int(unconfirmed)} unconfirmed, ${int(busy)} held by claims in flight.${claimsCovered == null || need == null ? "" : ` Enough for about ${int(claimsCovered)} claims at ~${int(need)} sats each.`}`,
+  rate: (perBlock, satsPerBlock, room = CHAIN_ROOM) =>
+    `With the graphics card this tab finds about ${perBlock} solutions per block, about ${int(satsPerBlock)} sats per block at today's cost. Confirmed coins pay at once; once ${room} of this wallet's transactions are unconfirmed, the rest wait for the next block and are paid then while still valid. More coins mean fewer waits.`,
+  chain: "Bitcoin nodes accept about 25 unconfirmed transactions in one chain; claims beyond that wait for the next block.",
+});
+
+const sentence = (t) => {
+  const r = String(t ?? "").trim() || "it stopped without saying why.";
+  return /[.!?]$/.test(r) ? r : `${r}.`;
+};
+
+/**
+ * What the GPU (beta) box shows: { phase, text, disabled, checked } from
+ *   supported  this browser exposes WebGPU (gpuSupported)
+ *   gpu        MineController.gpu ({ state, name, note, checked }) or null
+ *   banned     MineController.gpuBanned (a wrong answer: the lane is off for the life of the page)
+ *   running    the controller is mining
+ *   rate       the GPU lane's H/s
+ *   paused     null, or how many solutions wait to be paid while the lane holds its search back (MineController.gpuPaused)
+ */
+export function gpuState({ supported, gpu = null, banned = false, running = false, rate = 0, paused = null } = {}) {
+  if (!supported) return { phase: "unsupported", text: GPU_TEXT.unsupported, disabled: true, checked: false };
+  if (banned) return { phase: "banned", text: GPU_TEXT.banned(sentence(gpu?.note)), disabled: true, checked: false };
+  if (!gpu) return { phase: "off", text: GPU_TEXT.off, disabled: false, checked: false };
+  const name = gpu.name || "the graphics card";
+  const Name = gpu.name || "The graphics card";
+  const on = (phase, text) => ({ phase, text, disabled: false, checked: true });
+  if (gpu.state === "opening") return gpu.checked ? on("selftest", GPU_TEXT.selftest(name)) : on("starting", GPU_TEXT.starting);
+  if (gpu.state === "ready" && running && paused != null) return on("paused", GPU_TEXT.paused(int(paused)));
+  if (gpu.state === "ready") return running ? on("mining", GPU_TEXT.mining(Name, rateText(rate))) : on("ready", GPU_TEXT.ready(Name));
+  return on("failed", GPU_TEXT.failed(sentence(gpu.note)));
+}
+
+/** Refusals that leave a solution valid and unpaid: it waits for the next block (a coin with room in the chain, or coins). */
+export const WAIT_CODES = new Set(["chain_wait", "no_coins", "coin_busy"]);
+/**
+ * Refusals before the hand-out that a later block can fix without the user: the indexer or an explorer did not answer in time, the
+ * wallet and the indexer sat on different blocks, or the browser had no memory for the proof (prove_memory).
+ */
+export const RETRY_CODES = new Set(["indexer", "refhash", "behind", "prove_memory"]);
+/** A proof that ran out of memory is tried again after this long (the mining workers were ended for it), at most PROVE_RETRIES times; then on the next block. */
+export const PROVE_RETRY_MS = 20_000;
+export const PROVE_RETRIES = 3;
+
+/**
+ * A claim failure, as the page records it on the solution: onClaimError plus `wait` (the solution is valid and unpaid, so
+ * it is tried again on the next block). Waits: WAIT_CODES, RETRY_CODES, and a plain failure with no code (a network error, a
+ * 429 or 5xx from an explorer) on the self-paid and relayer routes. A Unisat failure stays manual (a declined popup must not reopen
+ * every block), and so does every other coded refusal (Unisat not connected, a final refusal, a fee policy). -> { again, retryInMs }:
+ * again is true once for coin_busy, which is tried again at once; retryInMs is set for a memory failure of the proof (prove_memory),
+ * which is tried again after that many ms, up to PROVE_RETRIES times.
+ */
+export function applyClaimFailure(sol, err, ctl = null, route = null) {
+  Object.assign(sol, onClaimError(err, ctl, sol));
+  const plain = !err?.code && !err?.entry && route !== "unisat";
+  sol.wait = sol.status === "found" && (WAIT_CODES.has(err?.code) || RETRY_CODES.has(err?.code) || plain);
+  sol.waitCode = sol.wait ? err?.code ?? null : null;
+  const memory = err?.code === "prove_memory" && sol.wait;
+  if (memory) sol.memoryRetries = (sol.memoryRetries ?? 0) + 1;
+  const soon = memory && sol.memoryRetries <= PROVE_RETRIES;
+  if (sol.wait) {
+    sol.message = WAIT_CODES.has(err?.code)
+      ? String(err.message)
+      : memory
+        ? `${String(err.message ?? PROVE_MEMORY_TEXT)} ${soon ? "It is tried again in a few seconds." : "It is tried again after the next block, while it stays valid."}`
+        : `${String(err?.message ?? err).replace(/[.\s]+$/, "")}. Nothing was paid; it is tried again after the next block, while it stays valid.`;
+  }
+  const again = err?.code === "coin_busy" && sol.wait && !sol.busyRetried;
+  if (err?.code === "coin_busy") sol.busyRetried = true;
+  return { again, retryInMs: soon ? PROVE_RETRY_MS : null };
+}
+
+/** How long the queue waits for one claim before it goes on to the next (a proof that never ends, see ClaimQueue). */
+export const CLAIM_WATCHDOG_MS = 180_000;
+/** After the processor workers are ended for a proof, the proof starts this much later so their memory is back first. */
+export const HOLD_SETTLE_MS = 300;
+/** Before the proof begins (checks, the bind step, the first key download) a claim has this long: those steps have no timeouts of their own. */
+export const CLAIM_PRE_PROVE_MS = 300_000;
+const STUCK = Symbol("stuck");
+
+/**
+ * Claims one at a time, the oldest reference block first (a solution the user clicked, force, goes before the rest), so a backlog never proves many claims at once.
+ * run(sol, { proving }) -> Promise (the page's claim(), which handles its own errors). add(sol) queues a solution once (by key).
+ * Watchdog: a claim that has not finished no longer holds the queue. It has preMs (5 minutes) for the steps before the proof
+ * (a slow explorer call or the first key download is not a stuck proof); proving() restarts the clock with watchdogMs (3 minutes)
+ * when the proof begins. A run that never calls proving() gets preMs. The claim itself is not
+ * cancelled and nothing is undone: its W-M entry stays pending (notes and coin held until it lands or its window ends), it still
+ * goes out if its proof ever finishes, and the same solution is never claimed a second time (solution_taken). onStuck(sol) tells the page.
+ * live(sol) -> false drops a solution that can no longer be paid (its window closed) before any claim step runs: it costs no check,
+ * no request and no reference hash.
+ */
+export class ClaimQueue {
+  constructor(run, { watchdogMs = CLAIM_WATCHDOG_MS, preMs = watchdogMs, onStuck = () => {}, live = () => true } = {}) {
+    this.run = run;
+    this.live = live;
+    this.watchdogMs = watchdogMs;
+    this.preMs = preMs;
+    this.onStuck = onStuck;
+    this.items = [];
+    this.pumping = false;
+  }
+
+  add(sol) {
+    if (!this.has(sol)) this.items.push(sol);
+    return this.pump();
+  }
+
+  /** True while the solution waits in the queue (not once its claim started). */
+  has(sol) {
+    return this.items.some((x) => x.key === sol.key);
+  }
+
+  async #guarded(sol) {
+    let timer = null;
+    let resolveStuck;
+    const stuck = new Promise((resolve) => (resolveStuck = resolve));
+    let over = false; // an abandoned claim may still report its proof later: that must not start a clock again
+    const arm = (ms) => {
+      clearTimeout(timer);
+      if (!over && ms > 0 && Number.isFinite(ms)) {
+        timer = setTimeout(() => resolveStuck(STUCK), ms);
+        timer?.unref?.(); // Node (tests): a pending watchdog must not keep the process alive
+      }
+    };
+    arm(this.preMs);
+    try {
+      // A late rejection of an abandoned claim is handled by the race: it never becomes an unhandled rejection.
+      if ((await Promise.race([Promise.resolve().then(() => this.run(sol, { proving: () => arm(this.watchdogMs) })), stuck])) === STUCK) {
+        try {
+          this.onStuck(sol);
+        } catch {
+          // the page's notice must not stop the queue
+        }
+      }
+    } catch {
+      // run() reports its own failures; the queue goes on
+    } finally {
+      over = true;
+      clearTimeout(timer);
+    }
+  }
+
+  async pump() {
+    if (this.pumping) return;
+    this.pumping = true;
+    try {
+      await null; // solutions added in the same tick are all in before the first is picked
+      for (;;) {
+        this.items = this.items.filter((x) => x.status === "found" && this.live(x));
+        if (!this.items.length) break;
+        // A solution the user asked for (a click on Claim sets force) goes before the backlog; among those, and among the rest, the oldest reference block first.
+        const next = this.items.reduce((a, b) => (Boolean(b.force) !== Boolean(a.force) ? (b.force ? b : a) : b.ref < a.ref ? b : a));
+        this.items = this.items.filter((x) => x !== next);
+        await this.#guarded(next);
+      }
+    } finally {
+      this.pumping = false;
+    }
+  }
+}
+
+/**
+ * On a new block: send again the carriers a node refused for chain length, then (automatic claiming on) queue every
+ * waiting solution whose window is still open, oldest first.
+ */
+export async function retryOnTip({ s, solutions, autoSubmit, queue, route }) {
+  try {
+    await s.resendHeldClaims?.();
+  } catch {
+    // a failed resend is tried again on the next block
+  }
+  if (!autoSubmit) return;
+  const open = (sol) => !(s.view && mineWindowLeft(sol.ref, s.view.height, route) < 0);
+  const waiting = solutions.filter((x) => x.status === "found" && x.wait && open(x)).sort((a, b) => a.ref - b.ref);
+  for (const sol of waiting) {
+    sol.busyRetried = false;
+    sol.memoryRetries = 0; // a new block gives the quick retries after a memory failure again
+    queue.add(sol);
+  }
+}
+
+/** Solutions waiting to be paid: valid and unpaid, plus carriers held for the next block. */
+export const waitingCount = (solutions, history) =>
+  solutions.filter((x) => x.status === "found" && x.wait).length + (history ?? []).filter((h) => h.kind === "mine" && h.held === "chain" && MINE_PENDING.has(h.status)).length;
+
+/** Solutions per block at a hashrate, 600 x H / D, and the sats a block of them costs at `need` sats a claim. */
+export function gpuYield({ hashrate, difficulty, need }) {
+  const h = Number(hashrate);
+  const d = Number(difficulty);
+  if (!(h > 0) || !(d > 0)) return null;
+  const perBlock = (600 * h) / d;
+  return { perBlock, text: perBlock < 100 ? perBlock.toFixed(1).replace(/\.0$/, "") : int(Math.round(perBlock)), sats: need == null ? null : Math.round(perBlock * Number(need)) };
+}
+
+/** The "Prepare coins" number to suggest while the GPU lane mines: max(4, ceil(3 x solutions per block)), at most 50. */
+export const suggestedCoins = (perBlock) => Math.min(50, Math.max(4, Math.ceil(3 * perBlock)));
+
+/** The solutions list draws this many of the newest rows; the rest is one count line (at very low difficulty there can be thousands). */
+export const SOLUTION_ROWS = 200;
+/**
+ * Backpressure on the GPU lane (not a limit on claims): it stops searching while more than BACKLOG_FACTOR x the room
+ * solutions wait to be paid, and searches again once the backlog is down to the room. The room is what the wallet can start in
+ * one block: CHAIN_ROOM transactions in a chain plus each confirmed coin that starts a chain of its own.
+ */
+export const BACKLOG_FACTOR = 2;
+export function gpuBacklogPaused({ paused = false, backlog = 0, room = CHAIN_ROOM } = {}) {
+  return paused ? backlog > room : backlog > BACKLOG_FACTOR * room;
+}
 
 /* ---------- the page ---------- */
 
@@ -483,7 +802,21 @@ const SOL_TEXT = {
   failed: "Not claimed",
 };
 
-export function mineView(root, s, query, { spawn = spawnWorker, lab = labGpu } = {}) {
+/**
+ * The chip of a solution row that has no claim entry yet: { text, kind }. A found solution that waits for chain room reads
+ * "Waiting for a block"; one that needs coins reads "Waiting for coins", which a block does not fix; one that only waits its turn
+ * in the claim queue (behind a claim that is proving) reads "Queued": it waits for the queue, not for a block.
+ */
+export function solChip(sol, status, { queued = false } = {}) {
+  if (status === "found" && sol.wait) return { text: sol.waitCode === "no_coins" ? GPU_TEXT.chipCoins : GPU_TEXT.chip, kind: "btc" };
+  if (status === "found" && queued) return { text: GPU_TEXT.chipQueued, kind: "btc" };
+  return { text: SOL_TEXT[status] ?? status, kind: status === "failed" || status === "stale" ? "warn" : status === "expired" ? "neutral" : "btc" };
+}
+
+// The thread count the user chose on the slider, kept when the page is drawn again (a route change inside the app).
+let chosenThreads = null;
+
+export function mineView(root, s, query, { spawn = spawnWorker, gpuSpawn = spawnGpuWorker, gpuDetect = gpuSupported, lab = labGpu } = {}) {
   let alive = true;
   let want = query?.get?.("t")?.toUpperCase() ?? null;
   let list = null; // GET /api/mine assets
@@ -495,8 +828,9 @@ export function mineView(root, s, query, { spawn = spawnWorker, lab = labGpu } =
   let mineLinkable = false; // L1 consent: relayed claims while the relay pool is thin
   let minePoolThin = false; // the relayer refused a claim with pool_thin
   let coinsN = 4;
+  let coinsEdited = false; // the user typed a number: the GPU suggestion no longer overwrites it
   const tr = threadRange();
-  let threads = tr.value;
+  let threads = chosenThreads ? Math.min(tr.max, Math.max(tr.min, chosenThreads)) : tr.value;
   const solutions = []; // { key, draft, nonce, powHash, status, message, step, entryId, ref, reward }
   const phone = typeof matchMedia === "function" && matchMedia("(pointer: coarse)").matches;
 
@@ -510,11 +844,19 @@ export function mineView(root, s, query, { spawn = spawnWorker, lab = labGpu } =
   };
   const routeNow = () => route ?? defaultRoute({ relayMine: s.relayInfo?.mine, balance: s.relayBalance, serviceSats: service() });
 
-  // The hidden GPU option: only in a lab build (lab is null otherwise) and only with ?gpu=1 in the address.
-  const gpuUi = Boolean(lab) && query?.get?.("gpu") === "1";
+  // The GPU (beta) box: in every build, read once here. Only a lab build lets the address pick a stub worker that never
+  // calls WebGPU (?gpu=stub, stub-fail, stub-wrong; stub-none: no WebGPU) and arm the fault hook (?gpufault=n).
+  const stubMode = lab ? { stub: "ok", "stub-fail": "fail", "stub-wrong": "wrong" }[query?.get?.("gpu")] : undefined;
+  const gpuOk = lab && query?.get?.("gpu") === "stub-none" ? false : stubMode ? true : gpuDetect();
+  const fault = lab ? lab.faultOf?.(query) ?? null : null;
+  // The "Graphics memory" choice (2 / 4 / 8 GiB, remembered; default 4 GiB). Sent with the open message as a request the engine
+  // never lifts a vendor above its default for. The box itself is not remembered.
+  let gpuMemory = readGpuMemory();
+  const gpuOpenOf = () => ({ memoryUpToMiB: gpuMemory, ...(fault ? { fault } : {}) });
   const ctl = new MineController({
     spawn,
-    gpuSpawn: gpuUi ? lab.spawnGpuWorker : null,
+    gpuSpawn: gpuOk ? (stubMode ? () => lab.spawnStub(stubMode) : gpuSpawn) : null,
+    gpuOpen: gpuOpenOf(),
     prepare: async () => {
       if (!view || view.status !== "mining") throw new Error(`${view?.ticker ?? "This token"} is not open for mining right now.`);
       if (!s.view || s.view.height !== view.tip?.height) throw new Error(`Waiting for the wallet and the indexer to reach the same block${view.tip ? ` (${heightText(view.tip.height)})` : ""}.`);
@@ -533,11 +875,103 @@ export function mineView(root, s, query, { spawn = spawnWorker, lab = labGpu } =
     s.holdDraft(draft); // its notes stay out of the next challenge (W-M)
     const sol = { key: `${draft.refHeight}:${nonce}`, draft, nonce, powHash, status: "found", ref: draft.refHeight, reward: draft.reward, at: Date.now(), ...(lane ? { lane } : {}) };
     solutions.unshift(sol);
-    if (autoSubmit) claim(sol);
+    checkBackpressure(); // before anything else: a flood must stop the lane at once
+    if (autoSubmit) queueClaim(sol);
     else paint();
   }
 
-  async function claim(sol) {
+  // One claim at a time, the oldest reference block first (a backlog never proves many claims at once). A claim that has not
+  // finished after 3 minutes (a proof that never ends) no longer holds the queue: see ClaimQueue.
+  const claimQueue = new ClaimQueue((sol, hooks) => claim(sol, hooks), { preMs: CLAIM_PRE_PROVE_MS, onStuck: (sol) => stuck(sol), live: (sol) => !expireIfClosed(sol) });
+  const queueClaim = (sol) => claimQueue.add(sol);
+  const timers = new Set(); // retries after a proof ran out of memory
+  const later = (ms, fn) => {
+    const t = setTimeout(() => {
+      timers.delete(t);
+      if (alive) fn();
+    }, ms);
+    timers.add(t);
+  };
+  const windowOpen = (sol) => !(s.view && mineWindowLeft(sol.ref, s.view.height, routeNow()) < 0);
+  // the oldest reference block first; among solutions of one block the earlier found (solutions lists the newest first).
+  // The positions are read once per sort: an indexOf inside the comparator is quadratic, and with thousands of solutions it froze the page.
+  const oldestFirstOf = () => {
+    const at = new Map(solutions.map((x, i) => [x, i]));
+    return (a, b) => a.ref - b.ref || at.get(b) - at.get(a);
+  };
+  /**
+   * A found solution whose window closed can never be paid: it leaves the claim queue at once and frees its notes, without a
+   * check, a request or a reference hash. (Before, only the rows on screen were marked expired, so thousands of closed
+   * solutions stayed in the queue and each cost a full claim attempt.) True when the solution was or is now expired.
+   */
+  function expireIfClosed(sol) {
+    if (sol.status === "expired") return true;
+    if (sol.status !== "found" || windowOpen(sol)) return false;
+    sol.status = "expired";
+    s.releaseDraft(sol.draft);
+    return true;
+  }
+  function sweepExpired() {
+    for (const sol of solutions) expireIfClosed(sol);
+  }
+  /** Queues every solution that waits for chain room (oldest first): after a claim went out there is room, and after each block there is more. */
+  function requeueWaiting() {
+    if (!autoSubmit) return;
+    for (const sol of solutions.filter((x) => x.status === "found" && x.wait && x.waitCode === "chain_wait" && windowOpen(x)).sort(oldestFirstOf())) {
+      sol.busyRetried = false;
+      queueClaim(sol);
+    }
+  }
+
+  // The wallet's own answer "no room / no coins", per block: it is the same for every solution, so once one claim got it the others
+  // wait without asking (no check, no request) until a claim goes out, a block comes, PROBE_MS pass, or the user clicks Claim.
+  let walletWait = null; // { height, at, route, code, message }
+  const walletWaits = () => {
+    const w = walletWait;
+    return Boolean(w) && w.height === (s.view?.height ?? null) && w.route === routeNow() && Date.now() - w.at < PROBE_MS;
+  };
+
+  // Backpressure: while more solutions wait to be paid than the wallet can pay before they expire, the GPU lane holds its search back.
+  let gpuPausedN = null; // the backlog when it paused (shown in the box), else null
+  const heldCarriers = () => s.history.filter((h) => h.kind === "mine" && h.held === "chain" && MINE_PENDING.has(h.status)).length;
+  const backlogNow = () => {
+    let n = heldCarriers();
+    for (const x of solutions) if (x.status === "found" && windowOpen(x)) n++;
+    return n;
+  };
+  const roomNow = () => {
+    const coins = routeNow() === "key" && s.mineCoins ? mineCoinSummary({ utxos: s.mineCoins.utxos, history: s.history, need: keyNeed() }) : null;
+    return CHAIN_ROOM + (coins?.ready ?? 0);
+  };
+  function checkBackpressure() {
+    if (!alive || !ctl.gpu?.w) return;
+    const backlog = backlogNow();
+    const pause = gpuBacklogPaused({ paused: ctl.gpuPaused, backlog, room: roomNow() });
+    gpuPausedN = pause ? backlog : null;
+    if (pause !== ctl.gpuPaused) ctl.pauseGpu(pause); // repaints through onChange
+    else if (pause) paintGpu();
+  }
+  let lastProbe = 0;
+  /** While solutions wait for chain room and the queue is idle, the oldest one tries again every PROBE_MS: the explorer may confirm a block's carriers a few seconds after the wallet saw the block. */
+  function probeWaiting() {
+    if (!autoSubmit || claimQueue.pumping || Date.now() - lastProbe < PROBE_MS) return;
+    const oldest = solutions.filter((x) => x.status === "found" && x.wait && x.waitCode === "chain_wait" && windowOpen(x)).sort(oldestFirstOf())[0];
+    if (!oldest) return;
+    lastProbe = Date.now();
+    oldest.busyRetried = false;
+    oldest.force = true; // the probe really asks the wallet again
+    queueClaim(oldest);
+  }
+  /** The watchdog fired: this claim goes on by itself (or fails later); the queue went on without it. */
+  function stuck(sol) {
+    sol.release?.(); // give the processor lanes back
+    sol.release = null;
+    sol.stuck = true;
+    sol.message = GPU_TEXT.stuck;
+    if (alive) paint();
+  }
+
+  async function claim(sol, hooks) {
     if (sol.status !== "found") return;
     // Close to the supply cap: say so before anything is paid. The solution stays "found" (also with
     // automatic claiming); only a second click, on "Claim anyway", goes on.
@@ -546,29 +980,64 @@ export function mineView(root, s, query, { spawn = spawnWorker, lab = labGpu } =
       sol.message = capWarning(view);
       return paint();
     }
-    if (sol.capSeen) sol.message = null;
+    if (expireIfClosed(sol)) return paintSolutions();
+    // The wallet already said, in this block, that it has no room or no coins: this solution waits too, without asking again.
+    if (!sol.force && walletWaits()) {
+      sol.wait = true;
+      sol.waitCode = walletWait.code;
+      sol.message = walletWait.message;
+      if (alive && !claimQueue.items.length) paintSolutions(); // one repaint when the queue is through, not one per solution
+      return;
+    }
+    sol.force = false;
+    if (sol.capSeen || sol.wait) sol.message = null;
+    sol.wait = false;
+    let again = false;
+    let retryIn = null;
+    let room = false;
     sol.status = "checking";
     paint();
     try {
       const entry = await s.claimMine({
         draft: sol.draft, nonce: sol.nonce, powHash: sol.powHash, route: routeNow(), referenceHash: (pw) => ctl.verify(pw),
         linkable: routeNow() === "relay" && mineLinkable && (minePoolThin || mixState(s.relayInfo) === "thin"),
+        beforeProve: () => sol.release?.settled,
         onStep: (st) => {
           sol.step = st.id;
-          if (st.id === "prove" && st.status === "running") sol.status = "proving";
+          if (st.id === "prove" && st.status === "running") {
+            sol.status = "proving";
+            hooks?.proving(); // the queue's watchdog counts from here
+            // With the GPU lane on, the processor workers are ended while the proof runs: it needs their memory.
+            sol.release ??= ctl.holdCpu();
+          }
           if (alive) paintSolutions();
         },
       });
       sol.entryId = entry.id;
       sol.status = entry.status;
+      // A carrier that went out (not one a node held back for chain length) shows there is room for the claims that wait.
+      room = !entry.held && MINE_PENDING.has(entry.status);
+      if (room) walletWait = null;
     } catch (e) {
       if (e?.code === "pool_thin") minePoolThin = true;
-      Object.assign(sol, onClaimError(e, ctl, sol));
+      ({ again, retryInMs: retryIn } = applyClaimFailure(sol, e, ctl, routeNow()));
+      if (sol.wait && (e?.code === "chain_wait" || e?.code === "no_coins")) walletWait = { height: s.view?.height ?? null, at: Date.now(), route: routeNow(), code: e.code, message: sol.message };
       if (e?.entry) sol.entryId = e.entry.id;
       // Nothing was handed out: the solution's notes stay out of the next challenge until it is claimed or expires (W-M).
       if (sol.status === "found") s.holdDraft(sol.draft);
+    } finally {
+      sol.release?.();
+      sol.release = null;
+      if (sol.stuck) {
+        sol.stuck = false;
+        if (sol.message === GPU_TEXT.stuck) sol.message = null;
+      }
     }
+    checkBackpressure();
     if (alive) paint();
+    if (again && alive) queueClaim(sol);
+    if (retryIn && alive) later(retryIn, () => queueClaim(sol));
+    if (room && alive) requeueWaiting();
   }
 
   /* ----- data ----- */
@@ -704,31 +1173,52 @@ export function mineView(root, s, query, { spawn = spawnWorker, lab = labGpu } =
     if (!el) return;
     const off = ctl.ready?.ok === false;
     const reason = off ? MINE_TEXT.off : !view ? "Pick a token first." : view.status !== "mining" ? `${view.ticker} is not open for mining right now.` : null;
+    const g = gpuNow();
     el.innerHTML = html`<header class="panel-head"><div class="panel-titles"><div class="eyebrow">CONTROLS</div></div></header>
       <div class="mine-controls">
         ${ctl.running ? button({ label: "Stop", kind: "secondary", size: "lg", icon: "cross", action: "mine-stop" }) : button({ label: "Start mining", kind: "btc", size: "lg", icon: "block", action: "mine-start", disabled: Boolean(reason), reason })}
         <label class="mine-threads"><span class="field-label">Threads <span class="mono" data-threads-out>${threads}</span> of ${tr.max}</span><input type="range" name="mine-threads" min="${tr.min}" max="${tr.max}" value="${threads}"></label>
         <label class="mine-auto"><input type="checkbox" name="mine-auto"${autoSubmit ? html` checked` : ""}><span>Claim each solution automatically</span></label>
-        ${gpuUi ? html`<label class="mine-auto"><input type="checkbox" name="mine-gpu"${ctl.gpu?.w ? html` checked` : ""}><span>${lab.LAB_TEXT.toggle}</span></label>` : ""}
+        <label class="mine-auto"><input type="checkbox" name="mine-gpu"${g.checked ? html` checked` : ""}${g.disabled ? html` disabled` : ""}><span>${GPU_TEXT.label}</span></label>
+        ${gpuOk ? html`<label class="mine-gpu-memory"><span>${GPU_TEXT.memoryLabel}</span><select class="input" name="mine-gpu-memory"${g.checked || g.disabled ? html` disabled` : ""}>${GPU_MEMORY_CHOICES.map((m) => html`<option value="${m}"${m === gpuMemory ? html` selected` : ""}>${gpuMemoryLabel(m)}</option>`)}</select></label>` : ""}
       </div>
-      ${gpuUi ? html`<p class="caption t-3" data-mine-gpu></p>` : ""}
+      <p class="caption t-3" data-mine-gpu>${g.text}</p>
+      ${gpuOk && !g.checked && !g.disabled ? html`<p class="caption t-3" data-mine-gpu-memory-note>${GPU_TEXT.memoryNote}</p>` : ""}
+      ${g.checked ? html`<p class="caption t-3" data-mine-gpu-note>${GPU_TEXT.tabNote}</p><p class="caption t-3" data-mine-gpu-cpu-pause>${GPU_TEXT.cpuPause}</p>${routeNow() === "unisat" ? html`<p class="caption t-3" data-mine-gpu-unisat>${GPU_TEXT.unisatNote}</p>` : ""}` : ""}
       <p class="caption t-3">${MINE_TEXT.gpu}</p>`;
     paintGpu();
   }
 
-  // The one caption line of the GPU option: the GPU name and its rate, or why the lane is off.
-  function gpuCaption() {
-    const g = ctl.gpu;
-    if (!g) return "";
-    if (g.state === "opening") return lab.LAB_TEXT.opening;
-    if (g.state === "off") return g.note ?? "";
-    return `${lab.LAB_TEXT.ready} ${g.name ?? "GPU"}, ${ctl.running ? rateText(ctl.hashrateByLane().gpu) : lab.LAB_TEXT.idle}`;
-  }
+  const gpuNow = () => gpuState({ supported: gpuOk, gpu: ctl.gpu, banned: ctl.gpuBanned, running: ctl.running, rate: ctl.gpu?.w ? ctl.hashrateByLane().gpu : 0, paused: ctl.gpuPaused ? gpuPausedN ?? backlogNow() : null });
 
+  /** Mining-key claim cost now: the page's own quote when the rate is known, else the last claim's. */
+  const keyNeed = () => mineQuote({ route: "key", feeRate, serviceSats: service() })?.total ?? s.mineCoins?.need ?? null;
+  /** Solutions per block of the GPU lane right now, or null. */
+  const gpuRateNow = () => {
+    if (!(ctl.gpu?.state === "ready" && ctl.running)) return null;
+    return gpuYield({ hashrate: ctl.hashrateByLane().gpu, difficulty: view?.difficulty, need: keyNeed() });
+  };
+  const rateLine = () => {
+    const y = gpuRateNow();
+    return y && y.sats != null && routeNow() === "key" ? GPU_TEXT.rate(y.text, y.sats) : "";
+  };
+
+  // The one caption line of the GPU box, the live rate line and the suggested coin count: updated without redrawing the panel.
   function paintGpu() {
-    if (!gpuUi) return;
     const el = $("[data-mine-gpu]");
-    if (el) el.textContent = gpuCaption();
+    if (el) el.textContent = gpuNow().text;
+    const rl = $("[data-mine-gpu-rate]");
+    if (rl) {
+      const text = rateLine();
+      rl.textContent = text;
+      rl.hidden = !text;
+    }
+    const y = gpuRateNow();
+    if (y && !coinsEdited) {
+      coinsN = suggestedCoins(y.perBlock);
+      const inp = $("#mine-coins-n");
+      if (inp) inp.value = String(coinsN);
+    }
   }
 
   function paintLive() {
@@ -736,12 +1226,13 @@ export function mineView(root, s, query, { spawn = spawnWorker, lab = labGpu } =
     const el = $("[data-mine-live]");
     if (!el) return;
     const mine = ctl.hashrate();
+    const lanes = ctl.gpu?.w ? ctl.hashrateByLane() : null;
     const fig = liveFigures({ hashrate: mine, difficulty: view?.difficulty });
     const landed = s.history.filter((h) => h.kind === "mine" && h.status === "landed" && view && h.assetId === String(view.asset));
     const earned = landed.reduce((x, h) => x + BigInt(h.reward ?? 0), 0n);
     el.innerHTML = html`<header class="panel-head"><div class="panel-titles"><div class="eyebrow">LIVE ${prov("YOU")}</div></div></header>
       <div class="mine-figures">
-        <div><span class="caption t-3">This tab</span><b class="mono">${rateText(mine)}</b><span class="caption t-3">10-second average</span></div>
+        <div><span class="caption t-3">This tab</span><b class="mono">${rateText(mine)}</b><span class="caption t-3">${lanes ? GPU_TEXT.lanes(rateText(lanes.cpu), rateText(lanes.gpu)) : "10-second average"}</span></div>
         <div><span class="caption t-3">Network</span><b class="mono">${rateText(view?.hashrateEstimate)}</b><span class="caption t-3">estimate ${prov("IDX")}</span></div>
         <div><span class="caption t-3">Time per solution</span><b class="mono">${fig.perSolution === null ? DASH : roughDuration(fig.perSolution)}</b><span class="caption t-3">expected, at this rate</span></div>
         <div><span class="caption t-3">Next block</span><b class="mono">${pct(fig.nextBlock)}</b><span class="caption t-3">chance of a solution</span></div>
@@ -760,7 +1251,8 @@ export function mineView(root, s, query, { spawn = spawnWorker, lab = labGpu } =
   function paintSolutions() {
     const el = $("[data-mine-solutions]");
     if (!el) return;
-    const head = html`<header class="panel-head"><div class="panel-titles"><div class="eyebrow">SOLUTIONS</div><h2 class="h3">Found in this tab</h2></div></header>`;
+    const waitingN = waitingCount(solutions, s.history);
+    const head = html`<header class="panel-head"><div class="panel-titles"><div class="eyebrow">SOLUTIONS</div><h2 class="h3">Found in this tab</h2>${waitingN > 0 ? html`<span class="caption t-3" data-mine-waiting>${GPU_TEXT.waiting(waitingN)}</span>` : ""}</div></header>`;
     // Claims of this token recorded before this page opened (other tabs, earlier visits).
     const shown = new Set(solutions.map((x) => x.entryId).filter(Boolean));
     const older = s.history.filter((h) => h.kind === "mine" && view && h.assetId === String(view.asset) && !shown.has(h.id)).slice(0, 10);
@@ -774,18 +1266,21 @@ export function mineView(root, s, query, { spawn = spawnWorker, lab = labGpu } =
         sol.status = "expired";
         s.releaseDraft(sol.draft);
       }
-      const chip = entry ? statusChip(entry) : tag(SOL_TEXT[status] ?? status, status === "failed" || status === "stale" ? "warn" : status === "expired" ? "neutral" : "btc");
+      const chip = entry ? statusChip(entry) : (({ text, kind }) => tag(text, kind))(solChip(sol, status, { queued: claimQueue.has(sol) }));
       const left = s.view ? mineWindowLeft(sol.ref, s.view.height, routeNow()) : null;
-      return html`<li class="mine-sol">
+      // data-key, data-nonce and data-lane say which solution this is and which lane found it (the E2E reads them).
+      return html`<li class="mine-sol" data-key="${sol.key}" data-nonce="${sol.nonce}" data-lane="${sol.lane ?? "cpu"}">
         <span class="mine-sol-main"><b>+${amountHTML(sol.reward, view?.divisibility ?? 0)}</b> <span class="caption t-3">block ${heightText(sol.ref)}</span>${chip}${sol.step && (status === "checking" || status === "proving") ? html`<span class="caption t-3">${sol.step}</span>` : ""}</span>
         ${status === "found" ? button({ label: `${sol.capSeen && capWarning(view) ? "Claim anyway" : "Claim"} · ${ROUTE_LABEL[routeNow()]}`, kind: "btc", size: "sm", action: "mine-claim", attrs: { "data-key": sol.key }, disabled: left !== null && left < 0, reason: left !== null && left < 0 ? MINE_TEXT.window : null }) : ""}
         ${sol.message ? html`<p class="caption ${status === "failed" || status === "stale" || (status === "found" && sol.capSeen) ? "t-warn" : "t-3"}">${sol.message}</p>` : ""}
         ${entry?.via === "relay" && MINE_PENDING.has(entry.status) ? html`<p class="caption t-3">${MINE_TEXT.pendingRelay}</p>` : ""}
+        ${entry?.held && entry.reason ? html`<p class="caption t-3">${entry.reason}</p>` : ""}
         ${entry?.txid ? html`<a class="caption" href="/tx/${entry.txid}" data-link>Receipt →</a>` : ""}
       </li>`;
     };
-    const oldRow = (h) => html`<li class="mine-sol"><span class="mine-sol-main"><b>+${amountHTML(h.reward, h.div ?? 0)}</b> <span class="caption t-3">block ${heightText(h.ref)}</span>${statusChip(h)}</span>${h.txid ? html`<a class="caption" href="/tx/${h.txid}" data-link>Receipt →</a>` : ""}</li>`;
-    el.innerHTML = html`${head}<ul class="mine-sols">${solutions.slice(0, 50).map(row)}${older.map(oldRow)}</ul>`;
+    const oldRow = (h) => html`<li class="mine-sol"><span class="mine-sol-main"><b>+${amountHTML(h.reward, h.div ?? 0)}</b> <span class="caption t-3">block ${heightText(h.ref)}</span>${statusChip(h)}</span>${h.held && h.reason ? html`<p class="caption t-3">${h.reason}</p>` : ""}${h.txid ? html`<a class="caption" href="/tx/${h.txid}" data-link>Receipt →</a>` : ""}</li>`;
+    const rest = solutions.length - SOLUTION_ROWS;
+    el.innerHTML = html`${head}<ul class="mine-sols">${solutions.slice(0, SOLUTION_ROWS).map(row)}${older.map(oldRow)}</ul>${rest > 0 ? html`<p class="caption t-3" data-mine-sols-more>${GPU_TEXT.older(int(rest), autoSubmit)}</p>` : ""}`;
   }
 
   function paintRoute() {
@@ -815,8 +1310,10 @@ export function mineView(root, s, query, { spawn = spawnWorker, lab = labGpu } =
       ${r === "key"
         ? html`<p class="caption t-3">${MINE_TEXT.keyApart}</p>
           <div class="inline-actions">${button({ label: "Check balance", kind: "ghost", size: "sm", icon: "refresh", action: "mine-check-btc" })}${button({ label: "Add BTC", kind: "secondary", size: "sm", icon: "plus", action: "mine-add-btc" })}</div>
-          <div class="mine-coins"><label class="field-label" for="mine-coins-n">Prepare coins</label><input class="input mono" id="mine-coins-n" type="number" min="1" max="50" name="mine-coins" value="${coinsN}">${button({ label: "Split", kind: "ghost", size: "sm", action: "mine-prepare" })}</div>
-          <p class="caption t-3">Each self-paid claim spends its own coin. Splitting the mining key's balance into several coins lets several claims be in flight at once. One coin can carry at most about 25 unconfirmed claims in a chain.</p>`
+          <p class="caption t-3" data-mine-coins>${s.mineCoins ? GPU_TEXT.coins(mineCoinSummary({ utxos: s.mineCoins.utxos, history: s.history, need: keyNeed() }), keyNeed()) : GPU_TEXT.coinsNone}</p>
+          <p class="caption t-3" data-mine-gpu-rate${rateLine() ? "" : html` hidden`}>${rateLine()}</p>
+          <div class="mine-coins"><label class="field-label" for="mine-coins-n">Prepare coins</label><input class="input mono" id="mine-coins-n" type="number" min="1" max="50" name="mine-coins" value="${gpuRateNow() && !coinsEdited ? suggestedCoins(gpuRateNow().perBlock) : coinsN}">${button({ label: "Split", kind: "ghost", size: "sm", action: "mine-prepare" })}</div>
+          <p class="caption t-3">Each self-paid claim spends its own coin. Splitting the mining key's balance into several coins lets several claims be in flight at once. ${GPU_TEXT.chain}</p>`
         : ""}
       ${r === "unisat" && !s.unisat ? html`<div class="inline-actions">${button({ label: "Connect Unisat", kind: "secondary", size: "sm", action: "mine-unisat" })}</div>` : ""}
       ${r === "relay" && bal && q && BigInt(bal.balance) < q.total ? callout(`Your relay balance is ${int(bal.balance)} sats; a claim needs about ${int(q.total)}. Top up, or pay with the mining key.`, "warn") : ""}
@@ -856,7 +1353,11 @@ export function mineView(root, s, query, { spawn = spawnWorker, lab = labGpu } =
           return paint();
         case "mine-claim": {
           const sol = solutions.find((x) => x.key === b.dataset.key);
-          if (sol) await claim(sol);
+          if (sol) {
+            sol.force = true; // the user asked: the wallet is asked again, whatever it said before in this block, and this solution goes next in the queue
+            queueClaim(sol);
+            if (sol.status === "found" && alive) paintSolutions(); // the row reads Queued at once
+          }
           return;
         }
         case "mine-check-btc":
@@ -896,16 +1397,36 @@ export function mineView(root, s, query, { spawn = spawnWorker, lab = labGpu } =
       paint();
     } else if (t.name === "mine-auto") {
       autoSubmit = t.checked;
+      paintSolutions(); // the note under a long list says whether the rest is claimed
     } else if (t.name === "mine-gpu") {
       ctl.enableGpu(t.checked === true);
+      // The processor lanes and the GPU lane share the tab's memory with the prover: with the GPU on, the slider moves down to a
+      // small number (the user can still change it, and 12 threads plus the GPU ran the first claim out of memory).
+      if (t.checked === true && ctl.gpu?.w) {
+        const small = gpuThreads(threads, tr);
+        if (small !== threads) {
+          threads = small;
+          ctl.setThreads(threads);
+        }
+      }
+      paintControls();
+    } else if (t.name === "mine-gpu-memory") {
+      const m = Number(t.value);
+      if (GPU_MEMORY_CHOICES.includes(m)) {
+        gpuMemory = m;
+        saveGpuMemory(m);
+        ctl.gpuOpen = gpuOpenOf();
+      }
       paintControls();
     } else if (t.name === "mine-linkable") {
       mineLinkable = t.checked === true;
     } else if (t.name === "mine-coins") {
       const n = Number(t.value);
+      coinsEdited = true;
       if (Number.isInteger(n) && n >= 1 && n <= 50) coinsN = n;
     } else if (t.name === "mine-threads") {
       threads = Number(t.value) || 1;
+      chosenThreads = threads;
       ctl.setThreads(threads);
       paintControls();
     }
@@ -923,7 +1444,15 @@ export function mineView(root, s, query, { spawn = spawnWorker, lab = labGpu } =
   paint();
   loadList();
   if (!s.relayInfo) s.loadRelayInfo().then(() => alive && paint()).catch(() => {});
-  const poll = setInterval(() => alive && loadView(), POLL_MS);
+  // Carriers held for the next block survive a reload (their hex is in the history): send them again once the wallet is synced.
+  if (s.view) s.resendHeldClaims?.().catch?.(() => {});
+  const poll = setInterval(() => {
+    if (!alive) return;
+    loadView();
+    sweepExpired();
+    checkBackpressure();
+    probeWaiting();
+  }, POLL_MS);
   let lastTip = s.view?.height ?? null;
   const offLive = liveSession(s, (type) => {
     if (!alive) return;
@@ -934,6 +1463,9 @@ export function mineView(root, s, query, { spawn = spawnWorker, lab = labGpu } =
       lastTip = s.view?.height ?? null;
       if (syncAction(s.view?.height, view?.tip?.height) === "reload") loadView();
       else if (ctl.running) ctl.restart();
+      sweepExpired();
+      checkBackpressure();
+      retryOnTip({ s, solutions, autoSubmit, queue: claimQueue, route: routeNow() }).catch(() => {});
     }
     paint();
   });
@@ -941,6 +1473,8 @@ export function mineView(root, s, query, { spawn = spawnWorker, lab = labGpu } =
   return () => {
     alive = false;
     clearInterval(poll);
+    for (const t of timers) clearTimeout(t);
+    timers.clear();
     ctl.terminate();
     for (const sol of solutions) if (sol.status === "found" || sol.status === "expired") s.releaseDraft(sol.draft);
     root.removeEventListener("click", onClick);

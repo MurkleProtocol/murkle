@@ -25,6 +25,7 @@
  *   publicFeeRate(esplora?) -> Promise<number>     next-block sat/vB, as the wallet reads it
  *   durationText(seconds), speedNote(a) -> string  expected time per solution = difficulty / hash rate
  *   GPU_HASHRATE, GPU_RUN_HASHRATE, gpuSpeedNote(a), gpuCommands({ network, ticker }) -> { clone, fetch, create, prepare, mine, ... }   the GPU section
+ *   WEBGPU_CHROME_4090, WEBGPU_RUN, WEBGPU_RUN_CHECKED_3090, WEBGPU_8GIB, gpuTabNote(a)  the graphics card in the browser tab (beta): measured rates (4 GiB, and 8 GiB) and the per-difficulty sentence
  *   minedPill(a), minedCard(a, { walletReady }), mineBlock(a, { walletReady })
  */
 import { html } from "../ui/dom.js";
@@ -173,6 +174,26 @@ export function gpuSpeedNote(a) {
   const d = Number(a?.difficulty);
   if (!(d > 0)) return `Expected time per solution = difficulty / ${int(GPU_RUN_HASHRATE)} seconds.`;
   return `At difficulty ${int(a.difficulty)} that is ${durationText(d / GPU_RUN_HASHRATE)} per solution at the full-run rate (difficulty / ${int(GPU_RUN_HASHRATE)} seconds).`;
+}
+
+/** Headless Chrome on Linux, one RTX 4090, 4 GiB, 1 hash per workgroup, kernel bench (no re-check): 95,119 H/s (the WebGPU lane in the browser tab). */
+export const WEBGPU_CHROME_4090 = 95_000;
+/**
+ * The same engine in Node (Dawn) on Linux, 1 hash per workgroup and 4 GiB of graphics memory, the page's default: about 90,800 H/s on an
+ * RTX 4090, 51,800 on an RTX 3090 and 31,800 on an RTX 3060.
+ */
+export const WEBGPU_RUN = Object.freeze([["RTX 4090", 90_800], ["RTX 3090", 51_800], ["RTX 3060", 31_800]]);
+/** A full GpuLane run with every answer re-checked, in Node on Linux with 4 GiB: about 44,500 H/s on an RTX 3090 (44,550 measured). */
+export const WEBGPU_RUN_CHECKED_3090 = 44_500;
+/** With 8 GiB, which only fits cards with spare memory, the two cards measured with it were faster: RTX 4090 about 103,000 H/s, RTX 3060 about 35,900. */
+export const WEBGPU_8GIB = Object.freeze([["RTX 4090", 103_000], ["RTX 3060", 35_900]]);
+
+/** The per-difficulty sentence of the graphics-card-in-the-tab section (the bare formula without a difficulty). */
+export function gpuTabNote(a) {
+  const d = Number(a?.difficulty);
+  if (!(d > 0)) return "Expected time per solution = difficulty / hashes per second.";
+  const [fast, slow] = [WEBGPU_RUN[0], WEBGPU_RUN[2]];
+  return `At difficulty ${int(a.difficulty)} that is ${durationText(d / fast[1])} per solution on an ${fast[0]} and ${durationText(d / slow[1])} on an ${slow[0]}, against ${durationText(d / TAB_HASHRATE)} for the processor alone.`;
 }
 
 /** Coins a split makes by default in the page's command (`mine <wallet> <TICKER> --prepare-coins 20`). */

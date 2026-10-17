@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //
-// Murkle WebGPU miner prototype: the build gate of the hidden lab.
+// Murkle WebGPU miner: the build gate of the lab.
 // Copyright (C) the Murkle contributors.
 //
 // This program is free software: you can redistribute it and/or modify it under the terms of the
@@ -11,7 +11,8 @@
 // murkleLab(enabled) is the only door through which lab code can enter a build:
 //   - the virtual module "virtual:murkle-lab" (imported by web/src/views/app-mine.js) is an empty stub,
 //     `export const labGpu = null;`, unless the build was made with MURKLE_LAB=1; then it is
-//     web/src/lab/index.js, which pulls in the GPU lane worker;
+//     web/src/lab/index.js, which carries only the stub GPU worker and the fault hook (the GPU (beta) box itself
+//     is in every build: its worker is web/src/gpu/gpu-worker.js, fetched only when the box is ticked);
 //   - the standalone lab page web/lab-gpu.html is added to the build inputs only then;
 //   - in the dev server the lab page answers 404 unless the lab is on.
 // The lab code lives in web/src/lab/, never in web/src/views/ (app.js globs ./views/*.js).

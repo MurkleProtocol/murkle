@@ -4,7 +4,8 @@
  * live numbers, the other mined tokens, how it works in four steps, what one claim costs and an
  * honest note on speed. "Start mining" goes to the wallet's Mine page with the ticker preselected
  * (/app/mine?t=MURK); a visitor without a wallet meets the wallet gate there and returns to it. "Mine on a GPU"
- * (below the panels) explains the command-line miner for NVIDIA cards, with copyable commands for this network.
+ * (below the panels) explains the command-line miner for NVIDIA cards, with copyable commands for this network. "Mine with your
+ * graphics card in this tab (beta)" (above it) describes the opt-in box on the Mine page, with the measured rates and what is not measured.
  */
 import "../share/public.css";
 import * as api from "../api.js";
@@ -22,8 +23,8 @@ import { ACTIVATION_HEIGHT, ADDRESS_HRP, BRAND, NETWORK } from "../config.js";
 import { CLAIM_VSIZE, feeEstimate } from "../share/mine-fee.js";
 import {
   COIN_CHANGE_SATS, GPU_COINS, GPU_DRIVERS, GPU_HASHRATE, GPU_HASHRATE_3090, GPU_README_URL, GPU_RELEASE_URL, GPU_RUN_HASHRATE, GPU_SOURCE_URL, claimsText, closedReason,
-  difficultyText, durationText, featuredMined, fetchMined, firstRunText, gpuCommands, gpuSpeedNote, isOpen, issuedShareText, mineHref, minedCard, minedPill,
-  miningOn, publicFeeRate, rankMined, rewardText, serviceSats, speedNote, supplyText, wholeTokens,
+  TAB_HASHRATE, WEBGPU_8GIB, WEBGPU_CHROME_4090, WEBGPU_RUN, WEBGPU_RUN_CHECKED_3090, difficultyText, durationText, featuredMined, fetchMined, firstRunText, gpuCommands, gpuSpeedNote, gpuTabNote, isOpen, issuedShareText,
+  mineHref, minedCard, minedPill, miningOn, publicFeeRate, rankMined, rewardText, serviceSats, speedNote, supplyText, wholeTokens,
 } from "../share/mined.js";
 
 /** The four steps (icon, title, text). */
@@ -92,6 +93,32 @@ export function speedPanel(a) {
     <header class="panel-head"><div class="panel-titles"><div class="eyebrow">HOW FAST</div><h2 class="h3" id="mi-speed-h">Your browser is one miner among many</h2></div></header>
     <p class="small" data-speed>${speedNote(a)}</p>
   </section>`;
+}
+
+/**
+ * "Mine with your graphics card in this tab (beta)": the opt-in box on the Mine page. Measured numbers only (WEBGPU_RUN,
+ * WEBGPU_CHROME_4090, TAB_HASHRATE in share/mined.js), what is not measured, how every answer is re-checked, and how many
+ * claims a graphics card makes. `a` is the featured token (its live difficulty and ticker), `rate` the next-block fee rate.
+ */
+export function gpuTabPanel(a, { rate = null } = {}) {
+  const ticker = a?.ticker ?? "MURK";
+  const d = Number(a?.difficulty);
+  const est = feeEstimate({ rate });
+  const [fast, mid, slow] = WEBGPU_RUN;
+  const [fast8, slow8] = WEBGPU_8GIB;
+  const perBlock = d > 0 ? html`: about ${int(Math.round((600 * fast[1]) / d))} for an ${fast[0]} at difficulty ${int(a.difficulty)}.` : ".";
+  const cost = est ? html`about ${sats(est.totalSats)}` : "the claim cost above";
+  return html`<div class="container" data-gpu-tab data-ticker="${ticker}">
+    <div class="ld-sec-head"><div class="eyebrow">GRAPHICS CARD IN THE BROWSER</div><h2 class="h2-landing" id="gpu-tab-h">Mine with your graphics card in this tab (beta)</h2></div>
+    <div class="mi-gpu">
+      <p class="lead">On the Mine page, tick "Use the graphics card (beta)" and this tab searches with your graphics card as well as the processor. It runs on WebGPU, which current Chrome and Edge have on desktop computers. It is off by default and is off again after every reload.</p>
+      <p class="small" data-gpu-tab-measured>Measured on Linux with NVIDIA cards, 1 hash per workgroup and 4 GiB of graphics memory in use: one ${fast[0]} computed about ${int(WEBGPU_CHROME_4090)} hashes per second in Chrome and about ${int(fast[1])} measured with the same code outside the browser; an ${mid[0]} gave about ${int(mid[1])} and an ${slow[0]} about ${int(slow[1])} there. A full mining run with every answer re-checked, measured outside the browser, gave about ${int(WEBGPU_RUN_CHECKED_3090)} on the ${mid[0]}. With 8 GiB, which suits cards with spare memory, the ${fast8[0]} was faster (about ${int(fast8[1])}) and so was the ${slow8[0]} (about ${int(slow8[1])}). The page uses 4 GiB unless you pick another size beside the box. A desktop browser tab without the graphics card does about ${int(TAB_HASHRATE)}. ${gpuTabNote(a)}</p>
+      <p class="small" data-gpu-tab-unmeasured>Not measured yet: Windows (where Chrome draws on Direct3D 12), macOS, AMD and Intel graphics, phones, and how fast a hidden or background tab mines. Keep the tab open and in front.</p>
+      <p class="small" data-gpu-tab-checks>The graphics card's answers are never used as they are. Before it mines, it must reproduce a set of known answers. While it mines, every solution it reports and one random answer about every second are computed again on the processor. Before a claim is paid, the wallet checks the solution once more with the reference code. One wrong answer turns the graphics card off for the page, and nothing is paid for it.</p>
+      <p class="small" data-gpu-tab-pay>A graphics card finds many solutions per block${perBlock} Each one is a claim paid from your mining address, ${cost} each. Bitcoin nodes accept only about 25 unconfirmed transactions in a chain, so the wallet pays from confirmed coins first and keeps the rest waiting for the next block, while they stay valid. The Split button on the Mine page makes coins so fewer claims wait. Solutions that wait are kept only while the tab stays open.</p>
+      <div class="cluster">${button({ label: "Open the Mine page", href: mineHref(ticker), kind: "secondary", size: "lg", icon: "pick" })}</div>
+    </div>
+  </div>`;
 }
 
 /** A copyable command block, as /verify's "Copy command" blocks. */
@@ -177,6 +204,10 @@ export function render(root) {
   let paintKey = null;
   let gpuFeatured;
   let tip = null;
+  const paintGpuTab = () => {
+    const slot = $("[data-gpu-tab-slot]");
+    if (slot) slot.innerHTML = gpuTabPanel(gpuFeatured ?? null, { rate });
+  };
 
   root.innerHTML = html`<div class="mi">
     <section class="mi-hero container" aria-labelledby="mi-h1">
@@ -202,6 +233,7 @@ export function render(root) {
       <div data-cost>${costPanel({ rate })}</div>
       <div data-speed-slot>${speedPanel(null)}</div>
     </section>
+    <section class="ld-sec" id="gpu-tab" aria-labelledby="gpu-tab-h" data-gpu-tab-slot>${gpuTabPanel(null)}</section>
     <section class="ld-sec" id="gpu" aria-labelledby="mi-gpu-h" data-gpu-slot>${gpuPanel(null)}</section>
   </div>`;
 
@@ -234,6 +266,7 @@ export function render(root) {
     $("[data-others-grid]").innerHTML = html`${others.map((a) => minedCard(a, { walletReady }))}`;
     $("[data-speed-slot]").innerHTML = speedPanel(featured);
     gpuFeatured = featured;
+    paintGpuTab();
     $("[data-gpu-slot]").innerHTML = gpuPanel(featured, { rate, height: tip });
   }
 
@@ -254,7 +287,10 @@ export function render(root) {
       rate = r;
       if (!alive) return;
       $("[data-cost]").innerHTML = costPanel({ rate });
-      if (gpuFeatured !== undefined) $("[data-gpu-slot]").innerHTML = gpuPanel(gpuFeatured, { rate, height: tip });
+      if (gpuFeatured !== undefined) {
+        paintGpuTab();
+        $("[data-gpu-slot]").innerHTML = gpuPanel(gpuFeatured, { rate, height: tip });
+      }
     })
     .catch(() => {});
 

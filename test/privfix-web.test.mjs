@@ -351,7 +351,7 @@ test("L5: a carrier from the built-in key: RBF on every input, envelope at outpu
   assert.equal(PAYERS.RBF_SEQUENCE, 0xfffffffd);
   const s = code("web/src/session.js");
   assert.match(s, /firstInput, feeRate, sequence: RBF_SEQUENCE \}\)/, "a self-paid send");
-  assert.match(s, /firstInput: coin, feeRate, sequence: RBF_SEQUENCE \}\)/, "a self-paid claim");
+  assert.match(s, /firstInput: coin, feeRate: rate, sequence: RBF_SEQUENCE \}\)/, "a self-paid claim (rate: the bind-step rate, raised at signing after a long proof)");
   assert.ok(!/order: "given"/.test(s) && !/order: "given"/.test(code("web/src/payers.js")), "the web wallet never pins a layout");
   if (funding.FEE_HEADROOM !== undefined) assert.equal(SESSION.MINE_FEE_HEADROOM, funding.FEE_HEADROOM, "one headroom for every route");
 });
